@@ -1,0 +1,26 @@
+appId: com.plateerlab.xgen.connector
+productName: XGEN Connector
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - '**/node_modules/keytar/**'
+publish:
+  provider: github
+  owner: PlateerLab
+  repo: xgen-connector
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+win:
+  target:
+    - nsis
+mac:
+  target:
+    - dmg
+  category: public.app-category.productivity
