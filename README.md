@@ -13,6 +13,19 @@ agent execution stream. Avatar/overlay support is intentionally left as an
 > XGEN itself is a private product; this connector is the public client that
 > talks to a deployed XGEN instance over its HTTP gateway.
 
+## Download
+
+Grab an installer from the [**Releases**](https://github.com/PlateerLab/xgen-connector/releases/latest) page:
+
+| OS | File | Install |
+|---|---|---|
+| Windows | `XGEN-Connector-Setup-*.exe` | Run it → if SmartScreen appears, **More info → Run anyway** (unsigned). |
+| macOS | `XGEN-Connector-*.dmg` | Open, drag **XGEN Connector.app** to **Applications** → first launch **right-click → Open**. If it says *"damaged"*, run `xattr -dr com.apple.quarantine "/Applications/XGEN Connector.app"`. |
+| Linux | `XGEN-Connector-*.AppImage` / `*.deb` | AppImage: `chmod +x` then run · deb: `sudo dpkg -i`. |
+
+The app auto-updates from these releases (toggle in Settings). On first launch,
+enter your **XGEN server URL** and **account**, then pick an agent and chat.
+
 ## Features
 
 - **Server URL setup** — point the connector at any XGEN gateway
@@ -80,14 +93,27 @@ npm run dev       # run the app (needs a display)
 
 ## Package
 
+Build installers locally (only your own OS can be fully built locally):
+
 ```bash
 npm run dist:linux   # AppImage + deb
 npm run dist:win     # nsis
-npm run dist:mac     # dmg (unsigned)
+npm run dist:mac     # dmg (macOS ad-hoc signed via build/afterPack.cjs)
 ```
 
-Releases publish to GitHub Releases (`PlateerLab/xgen-connector`), which feeds
-the in-app auto-updater.
+### Cutting a release
+
+Bump `version` in `package.json`, then push a matching `v*` tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The [`Release Installers`](.github/workflows/release.yml) workflow builds
+macOS/Windows/Linux on GitHub runners, then publishes every installer plus the
+`latest*.yml` update feeds to a **GitHub Release**. Those releases feed the
+in-app auto-updater (`electron-updater`). macOS is ad-hoc signed and Windows is
+unsigned (Developer ID + notarization land later).
 
 ## Using the transport core directly
 
