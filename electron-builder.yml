@@ -3,24 +3,49 @@ productName: XGEN Connector
 directories:
   buildResources: build
   output: release
-files:
-  - out/**
-  - package.json
-asarUnpack:
-  - '**/node_modules/keytar/**'
+# Explicit publish provider so electron-builder can resolve update-info even
+# with GH_TOKEN present. Actual upload is done by the release workflow via
+# action-gh-release; the packaging step runs with `--publish never`.
 publish:
   provider: github
   owner: PlateerLab
   repo: xgen-connector
+# Ad-hoc sign the macOS .app so Apple Silicon doesn't hard-block the
+# un-notarized build as "손상됨 — 휴지통으로 이동". No-op once a Developer ID
+# (CSC_LINK / CSC_IDENTITY) is configured.
+afterPack: build/afterPack.cjs
+files:
+  - out/**
+  - package.json
+# Native .node addons (keytar) must be unpacked from the asar or they fail to
+# load at runtime ("cannot find module .node").
+asarUnpack:
+  - '**/*.node'
+  - '**/node_modules/keytar/**'
+# Hyphenated, space-free artifact names. productName has a space ("XGEN
+# Connector"), and electron-updater 404s when the built file, latest*.yml and
+# the GitHub asset disagree on how spaces are encoded — a literal hyphenated
+# name is identical everywhere.
 linux:
   target:
     - AppImage
     - deb
   category: Utility
+  maintainer: PlateerLab <noreply@plateerlab.dev>
+  synopsis: XGEN desktop connector — log in, browse your agents, chat
+  artifactName: XGEN-Connector-${version}.${ext}
 win:
   target:
     - nsis
+  artifactName: XGEN-Connector-Setup-${version}.${ext}
+nsis:
+  # NSIS auto-selects installer UI language by OS locale among these.
+  installerLanguages:
+    - en_US
+    - ko_KR
+  unicode: true
 mac:
   target:
     - dmg
   category: public.app-category.productivity
+  artifactName: XGEN-Connector-${version}.${ext}

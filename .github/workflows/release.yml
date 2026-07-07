@@ -1,0 +1,113 @@
+name: Release Installers
+
+# Builds the XGEN Connector for macOS, Windows and Linux and publishes the
+# installers to a GitHub Release. Public repo → all three OS runners are free.
+# Triggered by pushing a `v*` tag (e.g. v0.1.0), or manually.
+#
+# macOS is ad-hoc signed (build/afterPack.cjs) so Apple Silicon no longer
+# hard-blocks it as "damaged"; users still bypass the "unidentified developer"
+# prompt (right-click → Open, or `xattr -dr com.apple.quarantine`). Windows is
+# unsigned ("More info → Run anyway"). Developer ID + notarization land later.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # latest*.yml + blockmaps are the electron-updater feed — upload them
+          # alongside the installers so auto-update can find new releases.
+          - os: ubuntu-latest
+            flag: --linux
+            glob: |
+              release/*.AppImage
+              release/*.deb
+              release/latest-linux.yml
+          - os: windows-latest
+            flag: --win
+            glob: |
+              release/*.exe
+              release/*.blockmap
+              release/latest.yml
+          - os: macos-latest
+            flag: --mac
+            glob: |
+              release/*.dmg
+              release/*.blockmap
+              release/latest-mac.yml
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck + tests
+        run: npm run typecheck && npm test
+
+      - name: Build renderer + main
+        run: npm run build
+
+      - name: Package installer
+        run: npx --no-install electron-builder ${{ matrix.flag }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Unsigned mac build — don't attempt to auto-discover signing certs.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: ${{ matrix.glob }}
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read connector version
+        id: ver
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: XGEN Connector v${{ steps.ver.outputs.version }}
+          files: artifacts/**/*
+          fail_on_unmatched_files: true
+          body: |
+            **XGEN desktop connector** — installers (macOS ad-hoc signed; Windows unsigned).
+
+            | OS | File | Install |
+            |---|---|---|
+            | Windows | `XGEN-Connector-Setup-*.exe` | Run it → if SmartScreen appears, **More info → Run anyway** |
+            | macOS | `XGEN-Connector-*.dmg` | Open it, drag **XGEN Connector.app** to **Applications** → on first launch **right-click → Open** (or System Settings → Privacy & Security → **Open Anyway**) |
+            | Linux | `XGEN-Connector-*.AppImage` / `*.deb` | AppImage: `chmod +x` then run / deb: `sudo dpkg -i` |
+
+            > **If macOS says "damaged / move to Trash"** (from an older build, or when right-click → Open won't work):
+            > run `xattr -dr com.apple.quarantine "/Applications/XGEN Connector.app"` in Terminal, then open it again.
+
+            On first launch, enter your **XGEN server URL** + your **account (email / password)** to connect,
+            then pick an agent and chat. The connector ships with no default server — point it at your own XGEN deployment.

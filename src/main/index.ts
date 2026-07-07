@@ -98,6 +98,8 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
   if (ok) {
     const rotated = c.getAccessTokenAfterRotation();
     if (rotated && rotated !== access) await tokenStore.setAccess(rotated);
+    const rotatedRefresh = c.getRefreshToken();
+    if (rotatedRefresh && rotatedRefresh !== refresh) await tokenStore.setRefresh(rotatedRefresh);
     return { user: c.user };
   }
   await tokenStore.clear();

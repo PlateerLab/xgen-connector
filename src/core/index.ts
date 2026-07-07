@@ -126,6 +126,11 @@ export class XgenClient {
     return (this.http as unknown as { accessToken: string }).accessToken ?? '';
   }
 
+  /** The current refresh token, so the host can persist it (e.g. keychain). */
+  getRefreshToken(): string | undefined {
+    return this.refreshToken;
+  }
+
   async logout(): Promise<void> {
     const token = this.getAccessTokenAfterRotation();
     if (token) await this.auth.logout(token);
