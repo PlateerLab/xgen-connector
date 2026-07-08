@@ -112,7 +112,7 @@ export const Chat: React.FC<{
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
-    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`;
   }, [input]);
 
   const newConversation = useCallback(() => {
@@ -293,39 +293,43 @@ export const Chat: React.FC<{
       </div>
 
       <div className="chat-input">
-        <div className="chat-input-inner">
-          <div className="chat-input-wrap">
-            <textarea
-              ref={taRef}
-              value={input}
-              placeholder="메시지를 입력하세요…"
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-              rows={1}
-            />
-            {streaming ? (
-              <button className="send-btn stop" onClick={stop} title="중지" aria-label="중지">
-                <StopIcon size={15} />
-              </button>
-            ) : (
-              <button
-                className="send-btn"
-                onClick={() => void send()}
-                disabled={!input.trim()}
-                title="전송"
-                aria-label="전송"
-              >
-                <SendIcon size={17} />
-              </button>
-            )}
-          </div>
+        <div className="composer">
+          <textarea
+            ref={taRef}
+            className="composer-input"
+            value={input}
+            placeholder="메시지를 입력하세요…"
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            rows={1}
+            spellCheck={false}
+          />
+          {streaming ? (
+            <button className="composer-send stop" onClick={stop} title="중지" aria-label="중지">
+              <StopIcon size={15} />
+            </button>
+          ) : (
+            <button
+              className="composer-send"
+              onClick={() => void send()}
+              disabled={!input.trim()}
+              title="전송"
+              aria-label="전송"
+            >
+              <SendIcon size={17} />
+            </button>
+          )}
         </div>
-        <div className="chat-input-hint">Enter 전송 · Shift+Enter 줄바꿈</div>
+        <div className="composer-foot">
+          <span className="kbd-hint">
+            <kbd>Enter</kbd> 전송 · <kbd>Shift + Enter</kbd> 줄바꿈
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -74,22 +74,22 @@ app.whenReady().then(async () => {
 
   // Drive a chat turn
   await win.webContents.executeJavaScript(`(() => {
-    const ta = document.querySelector('.chat-input-wrap textarea');
+    const ta = document.querySelector('.composer-input');
     if (ta) { setNativeValue(ta, '안녕하세요!'); }
     return !!ta;
   })()`);
   await sleep(150);
   await win.webContents.executeJavaScript(`(() => {
-    const ta = document.querySelector('.chat-input-wrap textarea');
+    const ta = document.querySelector('.composer-input');
     ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     return true;
   })()`);
   await sleep(1900); // let the scripted stream finish
   await snap(win, 'chat.png');
 
-  // Collapse the sidebar (2nd icon-btn in the header actions)
+  // Collapse the sidebar
   await win.webContents.executeJavaScript(`(() => {
-    const btn = [...document.querySelectorAll('.sidebar-head-actions .icon-btn')][1];
+    const btn = [...document.querySelectorAll('.sidebar-head-actions .icon-btn')].find((b) => b.title.includes('접기'));
     if (btn) btn.click();
     return !!btn;
   })()`);
@@ -125,7 +125,7 @@ app.whenReady().then(async () => {
 
   // Settings modal
   await win.webContents.executeJavaScript(`(() => {
-    const btn = [...document.querySelectorAll('.sidebar-head-actions .icon-btn')][0];
+    const btn = [...document.querySelectorAll('.sidebar-head-actions .icon-btn')].find((b) => b.title.includes('설정'));
     if (btn) btn.click();
     return !!btn;
   })()`);

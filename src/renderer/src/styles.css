@@ -74,8 +74,9 @@
     'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
   --font-mono: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
 
-  /* Shared top-bar height so the sidebar header and chat header align exactly. */
+  /* Shared bar heights so the sidebar and chat columns align at top and bottom. */
   --header-h: 61px;
+  --footer-h: 84px;
 
   color-scheme: light;
 }
@@ -696,8 +697,10 @@ button {
   cursor: default;
 }
 .sidebar-foot {
-  padding: 10px 14px;
-  border-top: 1px solid var(--border-soft);
+  height: var(--footer-h);
+  flex-shrink: 0;
+  padding: 0 16px;
+  border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -790,7 +793,7 @@ button {
 .chat-log {
   flex: 1;
   overflow-y: auto;
-  padding: 24px clamp(16px, 6vw, 80px);
+  padding: 22px 28px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -799,9 +802,7 @@ button {
 .msg-row {
   display: flex;
   gap: 12px;
-  max-width: min(860px, 100%);
   width: 100%;
-  margin: 0 auto;
 }
 .msg-row.user {
   flex-direction: row-reverse;
@@ -832,7 +833,7 @@ button {
 }
 .msg-row.user .msg-col {
   align-items: flex-end;
-  max-width: min(680px, 82%);
+  max-width: 82%;
 }
 .bubble {
   padding: 11px 15px;
@@ -966,80 +967,104 @@ button {
   font-size: 13px;
 }
 
+/* Composer — the docked chat input, Geny quick-chat-bar quality. Its resting
+   height matches --footer-h so its top border lines up with the sidebar footer. */
 .chat-input {
-  padding: 12px clamp(16px, 6vw, 80px) 18px;
+  min-height: var(--footer-h);
+  box-sizing: border-box;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 28px;
   border-top: 1px solid var(--border);
   background: var(--panel);
 }
-.chat-input-inner {
-  max-width: min(860px, 100%);
-  margin: 0 auto;
-}
-.chat-input-wrap {
+.composer {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
+  border-radius: 14px;
   background: var(--input-bg);
-  padding: 7px 7px 7px 16px;
-  min-height: 52px;
-  box-shadow: var(--shadow-sm);
+  padding: 5px 5px 5px 16px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
-.chat-input-wrap:focus-within {
+.composer:focus-within {
   border-color: var(--primary-end);
   box-shadow: 0 0 0 3px var(--violet-ring);
   background: var(--panel);
 }
-.chat-input-wrap textarea {
+.composer-input {
   flex: 1;
+  min-width: 0;
   resize: none;
   border: none;
   outline: none;
   background: transparent;
   color: var(--text);
   font-family: inherit;
-  font-size: 14px;
-  line-height: 1.5;
-  padding: 8px 0;
-  max-height: 160px;
+  font-size: 15px;
+  line-height: 1.45;
+  padding: 6px 0;
+  max-height: 150px;
 }
-.chat-input-wrap textarea::placeholder {
+.composer-input::placeholder {
   color: var(--gray-400);
 }
-.send-btn {
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-lg);
+.composer-send {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   border: none;
   background: var(--primary-grad);
   color: #fff;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  transition: filter 0.15s ease;
+  box-shadow: 0 4px 14px rgba(48, 94, 235, 0.34);
+  transition: filter 0.15s ease, transform 0.08s ease, opacity 0.15s ease;
 }
-.send-btn:hover:not(:disabled) {
-  filter: brightness(1.06);
+.composer-send:hover:not(:disabled) {
+  filter: brightness(1.1);
 }
-.send-btn:disabled {
+.composer-send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.composer-send:disabled {
   opacity: 0.4;
   cursor: default;
+  box-shadow: none;
 }
-.send-btn.stop {
+.composer-send.stop {
   background: var(--panel);
   color: var(--error);
   border: 1px solid var(--error-border);
+  box-shadow: none;
 }
-.chat-input-hint {
-  max-width: min(860px, 100%);
-  margin: 6px auto 0;
+.composer-foot {
+  padding: 0 4px;
+  min-height: 15px;
+}
+.kbd-hint {
   font-size: 11px;
   color: var(--muted);
-  text-align: center;
+  line-height: 1.4;
+}
+.kbd-hint kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 0 1px;
 }
 
 /* ─── Settings modal ─── */
