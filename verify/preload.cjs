@@ -75,6 +75,31 @@ const api = {
       return { cancel: () => { cancelled = true; } };
     },
   },
+  overlay: {
+    getEnabled: async () => true,
+    setEnabled: async () => true,
+    pushState: () => {},
+    setClickThrough: () => {},
+    moveBy: () => {},
+    focusMain: () => {},
+    hide: () => {},
+    onState: (cb) => {
+      const full =
+        '안녕하세요! 😊 무엇을 도와드릴까요? 한국마사회 관련 자료나 경마에 대해 궁금하신 점이 있으시면 언제든지 질문해 주세요!';
+      let i = 0;
+      const iv = setInterval(() => {
+        i += 5;
+        cb({
+          workflowId: 'wf1',
+          workflowName: '한국마사회 RAG 상담',
+          streamingText: full.slice(0, i),
+          speaking: i < full.length,
+        });
+        if (i >= full.length) clearInterval(iv);
+      }, 80);
+      return () => clearInterval(iv);
+    },
+  },
   updater: {
     check: async () => ({}),
     getEnabled: async () => true,

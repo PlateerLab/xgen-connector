@@ -14,7 +14,7 @@ import type { ConnectorConfig } from '../../../main/config';
 import { Chat, type ChatSession } from './Chat';
 import { Settings } from './Settings';
 import { XgenWordmark, XgenMark } from '../brand/Logo';
-import { SettingsIcon, RefreshIcon, LogoutIcon, PanelLeftIcon, ChatIcon } from '../brand/icons';
+import { SettingsIcon, RefreshIcon, LogoutIcon, PanelLeftIcon, ChatIcon, BotIcon } from '../brand/icons';
 
 type Tab = 'agents' | 'history';
 
@@ -59,6 +59,17 @@ export const Workspace: React.FC<{
   // the open chat session
   const [session, setSession] = useState<ChatSession | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [overlayOn, setOverlayOn] = useState(config.avatarOverlay ?? false);
+
+  const toggleOverlay = useCallback(async () => {
+    const next = !overlayOn;
+    setOverlayOn(next);
+    await xgen.overlay.setEnabled(next);
+    void onConfigChange();
+  }, [overlayOn, onConfigChange]);
+
+  // Keep the toggle in sync if the overlay is closed from its own ✕ button.
+  useEffect(() => xgen.config.onChange((c) => setOverlayOn(!!c.avatarOverlay)), []);
 
   const load = useCallback(
     async (p: number) => {
@@ -154,6 +165,13 @@ export const Workspace: React.FC<{
               <span className="brand-tag">Connector</span>
             </div>
             <div className="sidebar-head-actions">
+              <button
+                className={`icon-btn ${overlayOn ? 'active' : ''}`}
+                title={overlayOn ? '아바타 오버레이 끄기' : '아바타 오버레이 켜기'}
+                onClick={() => void toggleOverlay()}
+              >
+                <BotIcon size={18} />
+              </button>
               <button className="icon-btn" title="설정" onClick={() => setShowSettings(true)}>
                 <SettingsIcon size={18} />
               </button>

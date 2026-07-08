@@ -10,6 +10,16 @@ import { CHANNELS } from '../main/ipc';
 import type { ChatEvent, ChatRequest, CurrentUser, AgentListQuery, AgentListResult, HistoryTurn, Conversation } from '../core/index';
 import type { ConnectorConfig } from '../main/config';
 
+/** Live avatar/chat state pushed from the main window to the floating overlay. */
+export interface OverlayState {
+  workflowId: string;
+  workflowName: string;
+  /** Assistant text streamed so far this turn. */
+  streamingText: string;
+  /** True while a turn is actively streaming. */
+  speaking: boolean;
+}
+
 let streamSeq = 0;
 
 const api = {
@@ -71,6 +81,31 @@ const api = {
         },
       };
     },
+  },
+
+  /** Floating avatar overlay (Geny-style). Used by the main window
+   * (setEnabled / pushState) and the overlay window (onState / windowControl). */
+  overlay: {
+    getEnabled: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.overlayGetEnabled),
+    setEnabled: (enabled: boolean): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.overlaySetEnabled, enabled),
+    /** Main window → overlay: push the live avatar/chat state. */
+    pushState: (state: OverlayState): void => ipcRenderer.send(CHANNELS.overlayPushState, state),
+    /** Overlay window: subscribe to state updates. */
+    onState: (cb: (s: OverlayState) => void): (() => void) => {
+      const h = (_e: unknown, s: OverlayState) => cb(s);
+      ipcRenderer.on(CHANNELS.overlayState, h);
+      return () => ipcRenderer.removeListener(CHANNELS.overlayState, h);
+    },
+    /** Overlay window: toggle native click-through (false over interactive UI). */
+    setClickThrough: (ignore: boolean): void =>
+      ipcRenderer.send(CHANNELS.overlaySetIgnoreMouse, ignore),
+    /** Overlay window: drag the OS window by a delta. */
+    moveBy: (dx: number, dy: number): void => ipcRenderer.send(CHANNELS.overlayMoveBy, dx, dy),
+    /** Overlay window: raise/focus the main chat window. */
+    focusMain: (): void => ipcRenderer.send(CHANNELS.overlayFocusMain),
+    /** Overlay window: close the floating space. */
+    hide: (): void => ipcRenderer.send(CHANNELS.overlayHide),
   },
 
   updater: {

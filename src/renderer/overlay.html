@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Overlay composites onto the desktop: it must never paint a background. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'"
+    />
+    <title>XGEN Avatar</title>
+  </head>
+  <body class="overlay-html">
+    <div id="root"></div>
+    <script type="module" src="/src/overlay.tsx"></script>
+  </body>
+</html>

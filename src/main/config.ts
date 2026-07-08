@@ -20,6 +20,12 @@ export interface ConnectorConfig {
   lastWorkflowId?: string;
   /** Persisted window bounds. */
   window?: { width: number; height: number; x?: number; y?: number };
+  /** Show the floating avatar overlay window (Geny-style). Default false. */
+  avatarOverlay?: boolean;
+  /** Show the live subtitle bubble on the overlay. Default true. */
+  subtitles?: boolean;
+  /** Persisted floating-overlay bounds. */
+  overlayBounds?: { width: number; height: number; x?: number; y?: number };
 }
 
 const DEFAULTS: ConnectorConfig = {

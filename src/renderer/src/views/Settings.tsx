@@ -12,6 +12,7 @@ export const Settings: React.FC<{
   const [serverUrl, setServerUrl] = useState(config.serverUrl);
   const [theme, setTheme] = useState<Theme>(config.theme ?? 'system');
   const [autoUpdate, setAutoUpdate] = useState(config.autoUpdate ?? true);
+  const [overlay, setOverlay] = useState(config.avatarOverlay ?? false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -69,6 +70,22 @@ export const Settings: React.FC<{
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="field-row">
+          <span>아바타 오버레이 (플로팅)</span>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={overlay}
+              onChange={(e) => {
+                setOverlay(e.target.checked);
+                void xgen.overlay.setEnabled(e.target.checked);
+                void onChanged();
+              }}
+            />
+            <span className="track" />
+          </label>
         </div>
 
         <div className="field-row">

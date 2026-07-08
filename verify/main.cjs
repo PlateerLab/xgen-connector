@@ -33,6 +33,22 @@ function setNativeValue(el, value){
 
 app.whenReady().then(async () => {
   fs.mkdirSync(OUT, { recursive: true });
+
+  // Overlay stage: capture the floating avatar window on a "desktop" backdrop.
+  if (STAGE === 'overlay') {
+    const ov = new BrowserWindow({
+      width: 360, height: 480, show: false,
+      backgroundColor: '#2f3d57', // stand-in wallpaper so the floating card is visible
+      webPreferences: { offscreen: true, preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: false },
+    });
+    ov.webContents.setFrameRate(30);
+    await ov.loadFile(path.join(__dirname, '..', 'out', 'renderer', 'overlay.html'));
+    await sleep(1700);
+    await snap(ov, 'overlay.png');
+    app.quit();
+    return;
+  }
+
   const win = new BrowserWindow({
     width: W, height: H, show: false,
     webPreferences: {

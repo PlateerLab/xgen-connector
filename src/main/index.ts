@@ -8,7 +8,7 @@
  * transport lives here in the main process (Node fetch), so tokens stay out of
  * the renderer.
  */
-import { app, BrowserWindow, ipcMain, shell, nativeTheme } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, nativeTheme, screen } from 'electron';
 import { join } from 'node:path';
 import { XgenClient, type ChatEvent } from '../core/index';
 import { loadConfig, saveConfig, normalizeServerUrl, type ConnectorConfig } from './config';
@@ -17,8 +17,20 @@ import { initUpdater, setAutoUpdate, getAutoUpdate, checkNow, disposeUpdater } f
 import { CHANNELS } from './ipc';
 
 let mainWindow: BrowserWindow | null = null;
+let overlayWindow: BrowserWindow | null = null;
 let client: XgenClient | null = null;
 const aborters = new Map<string, AbortController>();
+
+/** The last avatar/chat state pushed from the main window, replayed to a
+ * freshly-opened overlay so it isn't blank until the next stream event. */
+let lastOverlayState: unknown = null;
+
+/** Load a renderer page in either dev (Vite server) or prod (bundled file). */
+function loadRendererPage(win: BrowserWindow, page: string): void {
+  const devUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (devUrl) void win.loadURL(`${devUrl}/${page}`);
+  else void win.loadFile(join(__dirname, `../renderer/${page}`));
+}
 
 function getClient(): XgenClient {
   const cfg = loadConfig();
@@ -58,15 +70,104 @@ function createWindow(): void {
     if (!mainWindow) return;
     const b = mainWindow.getBounds();
     saveConfig({ window: { width: b.width, height: b.height, x: b.x, y: b.y } });
+    // The overlay is a helper of the main window — tear it down so the app quits.
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
+    overlayWindow = null;
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
   });
 
-  const devUrl = process.env['ELECTRON_RENDERER_URL'];
-  if (devUrl) void mainWindow.loadURL(devUrl);
-  else void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+  loadRendererPage(mainWindow, 'index.html');
+}
+
+// ── Floating avatar overlay (Geny-style) ─────────────────────────
+// A transparent, frameless, always-on-top, click-through window that floats the
+// avatar (extension point) + a live subtitle of the active chat stream. When no
+// avatar renderer is registered it shows just the streaming reply as a floating
+// bubble ("아바타가 없으면 채팅만"). TTS/STT/screen-capture are intentionally omitted.
+let overlayBoundsTimer: ReturnType<typeof setTimeout> | null = null;
+function saveOverlayBounds(): void {
+  if (overlayBoundsTimer) clearTimeout(overlayBoundsTimer);
+  overlayBoundsTimer = setTimeout(() => {
+    if (!overlayWindow || overlayWindow.isDestroyed()) return;
+    const b = overlayWindow.getBounds();
+    saveConfig({ overlayBounds: { width: b.width, height: b.height, x: b.x, y: b.y } });
+  }, 400);
+}
+
+function createOverlay(): void {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.show();
+    return;
+  }
+  const wa = screen.getPrimaryDisplay().workArea;
+  const saved = loadConfig().overlayBounds;
+  const width = saved?.width ?? 340;
+  const height = saved?.height ?? 460;
+  const x = saved?.x ?? wa.x + wa.width - width - 28;
+  const y = saved?.y ?? wa.y + wa.height - height - 28;
+
+  overlayWindow = new BrowserWindow({
+    width,
+    height,
+    x,
+    y,
+    minWidth: 240,
+    minHeight: 220,
+    transparent: true,
+    frame: false,
+    resizable: true,
+    movable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  // Float above full-screen apps too (macOS).
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+  // Click-through by default; the renderer flips this off over interactive regions.
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+
+  overlayWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  overlayWindow.on('moved', saveOverlayBounds);
+  overlayWindow.on('resized', saveOverlayBounds);
+  overlayWindow.on('closed', () => {
+    overlayWindow = null;
+  });
+  overlayWindow.once('ready-to-show', () => {
+    overlayWindow?.show();
+    if (lastOverlayState) overlayWindow?.webContents.send(CHANNELS.overlayState, lastOverlayState);
+  });
+
+  loadRendererPage(overlayWindow, 'overlay.html');
+}
+
+function setOverlayEnabled(enabled: boolean): void {
+  const next = saveConfig({ avatarOverlay: enabled });
+  if (enabled) createOverlay();
+  else if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.destroy();
+    overlayWindow = null;
+  }
+  // Keep the main window's toggle in sync (e.g. when closed via the overlay ✕).
+  mainWindow?.webContents.send(CHANNELS.configChanged, next);
 }
 
 // ── IPC: config ──────────────────────────────────────────────────
@@ -166,12 +267,43 @@ ipcMain.handle(CHANNELS.updaterSetEnabled, (_e, enabled: boolean) => {
 });
 ipcMain.handle(CHANNELS.openExternal, (_e, url: string) => shell.openExternal(url));
 
+// ── IPC: floating avatar overlay ─────────────────────────────────
+ipcMain.handle(CHANNELS.overlayGetEnabled, () => !!loadConfig().avatarOverlay);
+ipcMain.handle(CHANNELS.overlaySetEnabled, (_e, enabled: boolean) => {
+  setOverlayEnabled(!!enabled);
+  return !!enabled;
+});
+// Main window pushes the live avatar/chat state; relay it to the overlay.
+ipcMain.on(CHANNELS.overlayPushState, (_e, state: unknown) => {
+  lastOverlayState = state;
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send(CHANNELS.overlayState, state);
+  }
+});
+// Overlay renderer → native window controls.
+ipcMain.on(CHANNELS.overlaySetIgnoreMouse, (_e, ignore: boolean) => {
+  overlayWindow?.setIgnoreMouseEvents(!!ignore, { forward: true });
+});
+ipcMain.on(CHANNELS.overlayMoveBy, (_e, dx: number, dy: number) => {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const b = overlayWindow.getBounds();
+  overlayWindow.setBounds({ ...b, x: Math.round(b.x + dx), y: Math.round(b.y + dy) });
+});
+ipcMain.on(CHANNELS.overlayFocusMain, () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+ipcMain.on(CHANNELS.overlayHide, () => setOverlayEnabled(false));
+
 // ── app lifecycle ────────────────────────────────────────────────
 app.whenReady().then(() => {
   const cfg = loadConfig();
   if (cfg.theme) nativeTheme.themeSource = cfg.theme;
   initUpdater(cfg.autoUpdate ?? true);
   createWindow();
+  if (cfg.avatarOverlay) createOverlay();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

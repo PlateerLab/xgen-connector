@@ -13,7 +13,12 @@ export default defineConfig({
   renderer: {
     root: resolve('src/renderer'),
     build: {
-      rollupOptions: { input: { index: resolve('src/renderer/index.html') } },
+      rollupOptions: {
+        input: {
+          index: resolve('src/renderer/index.html'),
+          overlay: resolve('src/renderer/overlay.html'),
+        },
+      },
     },
     plugins: [react()],
   },

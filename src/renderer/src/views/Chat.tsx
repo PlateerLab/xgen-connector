@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import type { Agent, ChatEvent, ToolEvent, Citation } from '../../../core/index';
-import { AvatarSlot, hasAvatarRenderer, type AvatarState } from '../avatar/AvatarSlot';
+import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
 import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon, PanelLeftIcon } from '../brand/icons';
 
@@ -198,6 +198,11 @@ export const Chat: React.FC<{
     };
   }, [messages, streaming, agent]);
 
+  // Feed the live state to the floating avatar overlay (a no-op if it's closed).
+  useEffect(() => {
+    xgen.overlay.pushState(avatarState);
+  }, [avatarState]);
+
   const kind = AGENT_KIND[agent.workflowType ?? ''] ?? (agent.workflowType || 'Agent');
 
   return (
@@ -232,8 +237,6 @@ export const Chat: React.FC<{
           </button>
         </div>
       </div>
-
-      {hasAvatarRenderer() && <AvatarSlot state={avatarState} />}
 
       <div className="chat-log" ref={scrollRef}>
         {loadingHistory ? (

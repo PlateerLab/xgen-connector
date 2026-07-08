@@ -97,3 +97,14 @@ export const HistoryIcon: React.FC<P> = ({ size = 15, className }) => (
     <path d="M12 7v5l4 2" />
   </svg>
 );
+export const BotIcon: React.FC<P> = ({ size = 18, className }) => (
+  <svg {...base(size)} className={className}>
+    <rect x="4" y="8" width="16" height="12" rx="3" />
+    <path d="M12 4v4" />
+    <circle cx="12" cy="4" r="1" />
+    <path d="M9 13h.01" />
+    <path d="M15 13h.01" />
+    <path d="M2 14v2" />
+    <path d="M22 14v2" />
+  </svg>
+);
