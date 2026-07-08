@@ -123,10 +123,10 @@ export const Chat: React.FC<{
     setStreaming(false);
   }, [agent.workflowId]);
 
-  const send = useCallback(() => {
-    const text = input.trim();
+  const send = useCallback((override?: string) => {
+    const text = (override ?? input).trim();
     if (!text || streaming) return;
-    setInput('');
+    if (override === undefined) setInput('');
     setMessages((m) => [
       ...m,
       { role: 'user', text },
@@ -202,6 +202,9 @@ export const Chat: React.FC<{
   useEffect(() => {
     xgen.overlay.pushState(avatarState);
   }, [avatarState]);
+
+  // Quick-chat: a message from the global hotkey bar sends to this agent.
+  useEffect(() => xgen.quickChat.onQuickSend((t) => send(t)), [send]);
 
   const kind = AGENT_KIND[agent.workflowType ?? ''] ?? (agent.workflowType || 'Agent');
 

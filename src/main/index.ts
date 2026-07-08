@@ -8,7 +8,7 @@
  * transport lives here in the main process (Node fetch), so tokens stay out of
  * the renderer.
  */
-import { app, BrowserWindow, ipcMain, shell, nativeTheme, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, nativeTheme, screen, globalShortcut } from 'electron';
 import { join } from 'node:path';
 import { XgenClient, type ChatEvent } from '../core/index';
 import { loadConfig, saveConfig, normalizeServerUrl, type ConnectorConfig } from './config';
@@ -70,9 +70,13 @@ function createWindow(): void {
     if (!mainWindow) return;
     const b = mainWindow.getBounds();
     saveConfig({ window: { width: b.width, height: b.height, x: b.x, y: b.y } });
-    // The overlay is a helper of the main window — tear it down so the app quits.
+    // The overlay + quick-chat are helpers of the main window — tear them down
+    // so closing the main window actually quits the app.
+    appQuitting = true;
     if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
     overlayWindow = null;
+    if (quickChatWindow && !quickChatWindow.isDestroyed()) quickChatWindow.destroy();
+    quickChatWindow = null;
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -167,6 +171,170 @@ function setOverlayEnabled(enabled: boolean): void {
     overlayWindow = null;
   }
   // Keep the main window's toggle in sync (e.g. when closed via the overlay ✕).
+  mainWindow?.webContents.send(CHANNELS.configChanged, next);
+}
+
+// ── Quick-chat: Spotlight-style floating input bar (Geny-style) ───────────────
+// A permanent, transparent, top-most, click-through window: the WINDOW stays
+// alive/on-screen at all times (so it layers above full-screen apps); only its
+// card paints while summoned. A global hotkey toggles it; submit relays the text
+// into the active agent chat in the main window.
+const QUICKCHAT_W = 600;
+const QUICKCHAT_H = 176;
+const DEFAULT_QUICKCHAT = 'CommandOrControl+Shift+Enter';
+let quickChatWindow: BrowserWindow | null = null;
+let quickChatOpen = false;
+let quickChatShownAt = 0;
+let quickChatPosTimer: ReturnType<typeof setTimeout> | null = null;
+let suppressQuickChatPosSave = false;
+let appQuitting = false;
+
+function persistQuickChatPos(): void {
+  if (suppressQuickChatPosSave) return;
+  if (quickChatPosTimer) clearTimeout(quickChatPosTimer);
+  quickChatPosTimer = setTimeout(() => {
+    if (!quickChatWindow || quickChatWindow.isDestroyed() || !quickChatOpen) return;
+    const [x, y] = quickChatWindow.getPosition();
+    saveConfig({ quickChatBar: { x, y } });
+  }, 350);
+}
+
+function positionQuickChat(): void {
+  if (!quickChatWindow) return;
+  suppressQuickChatPosSave = true;
+  const saved = loadConfig().quickChatBar;
+  if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+    quickChatWindow.setBounds({ x: saved.x, y: saved.y, width: QUICKCHAT_W, height: QUICKCHAT_H });
+  } else {
+    const pt = screen.getCursorScreenPoint();
+    const wa = screen.getDisplayNearestPoint(pt).workArea;
+    const x = Math.round(wa.x + (wa.width - QUICKCHAT_W) / 2);
+    const y = Math.round(wa.y + wa.height * 0.22);
+    quickChatWindow.setBounds({ x, y, width: QUICKCHAT_W, height: QUICKCHAT_H });
+  }
+  setTimeout(() => {
+    suppressQuickChatPosSave = false;
+  }, 120);
+}
+
+function createQuickChat(): void {
+  if (quickChatWindow && !quickChatWindow.isDestroyed()) return;
+  quickChatWindow = new BrowserWindow({
+    width: QUICKCHAT_W,
+    height: QUICKCHAT_H,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  quickChatWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    quickChatWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+  quickChatWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  quickChatWindow.on('blur', () => {
+    if (!quickChatOpen) return;
+    if (Date.now() - quickChatShownAt < 450) return;
+    dismissQuickChat();
+  });
+  quickChatWindow.on('move', persistQuickChatPos);
+  quickChatWindow.on('moved', persistQuickChatPos);
+  quickChatWindow.on('close', (e) => {
+    if (!appQuitting) {
+      e.preventDefault();
+      dismissQuickChat();
+    }
+  });
+  quickChatWindow.on('closed', () => {
+    quickChatWindow = null;
+  });
+  loadRendererPage(quickChatWindow, 'quickchat.html');
+  positionQuickChat();
+  quickChatWindow.setIgnoreMouseEvents(true, { forward: true });
+  quickChatWindow.showInactive();
+}
+
+function dismissQuickChat(): void {
+  if (!quickChatWindow || quickChatWindow.isDestroyed()) return;
+  quickChatOpen = false;
+  quickChatWindow.setIgnoreMouseEvents(true, { forward: true });
+  quickChatWindow.webContents.send(CHANNELS.quickChatDismissed);
+}
+
+function showQuickChatOnTop(): void {
+  if (!quickChatWindow) return;
+  quickChatOpen = true;
+  quickChatShownAt = Date.now();
+  quickChatWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    quickChatWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+  quickChatWindow.setIgnoreMouseEvents(false);
+  quickChatWindow.moveTop();
+  quickChatWindow.webContents.send(CHANNELS.quickChatOpened);
+  setTimeout(() => {
+    if (!quickChatWindow || !quickChatOpen) return;
+    quickChatWindow.focus();
+    quickChatWindow.moveTop();
+  }, 110);
+}
+
+function toggleQuickChat(): void {
+  if (!quickChatWindow || quickChatWindow.isDestroyed()) createQuickChat();
+  if (quickChatOpen) {
+    dismissQuickChat();
+    return;
+  }
+  positionQuickChat();
+  showQuickChatOnTop();
+}
+
+/** Relay a quick-chat message into the main window's active agent chat. */
+function deliverQuickChat(text: string): { ok: boolean; error?: string } {
+  const body = (text ?? '').trim();
+  if (!body) return { ok: false, error: '메시지를 입력하세요.' };
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: '앱 창을 열어주세요.' };
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.webContents.send(CHANNELS.quickSend, body);
+  return { ok: true };
+}
+
+function registerQuickChatHotkey(): void {
+  const cfg = loadConfig();
+  globalShortcut.unregister(cfg.quickChatHotkey ?? DEFAULT_QUICKCHAT);
+  if (!cfg.quickChat) return;
+  const acc = cfg.quickChatHotkey ?? DEFAULT_QUICKCHAT;
+  try {
+    globalShortcut.register(acc, () => toggleQuickChat());
+  } catch {
+    /* ignore invalid accelerator */
+  }
+}
+
+function setQuickChatEnabled(enabled: boolean): void {
+  const next = saveConfig({ quickChat: enabled });
+  if (enabled) {
+    createQuickChat();
+    registerQuickChatHotkey();
+  } else {
+    globalShortcut.unregister(next.quickChatHotkey ?? DEFAULT_QUICKCHAT);
+    if (quickChatOpen) dismissQuickChat();
+  }
   mainWindow?.webContents.send(CHANNELS.configChanged, next);
 }
 
@@ -286,8 +454,31 @@ ipcMain.on(CHANNELS.overlaySetIgnoreMouse, (_e, ignore: boolean) => {
 });
 ipcMain.on(CHANNELS.overlayMoveBy, (_e, dx: number, dy: number) => {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  // Use getPosition/setPosition (NOT setBounds): on fractional-DPI displays
+  // (e.g. Windows 150% scaling) setBounds round-trips width/height through the
+  // scale factor and the window creeps larger on every drag delta. setPosition
+  // only touches x/y, so the size is rock-stable while moving. (Geny's fix.)
+  const [x, y] = overlayWindow.getPosition();
+  overlayWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
+});
+ipcMain.on(CHANNELS.overlayResizeBy, (_e, edge: string, dx: number, dy: number) => {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const MIN = 200;
   const b = overlayWindow.getBounds();
-  overlayWindow.setBounds({ ...b, x: Math.round(b.x + dx), y: Math.round(b.y + dy) });
+  let { x, y, width, height } = b;
+  if (edge.includes('e')) width = Math.max(MIN, width + Math.round(dx));
+  if (edge.includes('s')) height = Math.max(MIN, height + Math.round(dy));
+  if (edge.includes('w')) {
+    const nw = Math.max(MIN, width - Math.round(dx));
+    x += width - nw;
+    width = nw;
+  }
+  if (edge.includes('n')) {
+    const nh = Math.max(MIN, height - Math.round(dy));
+    y += height - nh;
+    height = nh;
+  }
+  overlayWindow.setBounds({ x, y, width, height });
 });
 ipcMain.on(CHANNELS.overlayFocusMain, () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -297,6 +488,20 @@ ipcMain.on(CHANNELS.overlayFocusMain, () => {
 });
 ipcMain.on(CHANNELS.overlayHide, () => setOverlayEnabled(false));
 
+// ── IPC: quick-chat ──────────────────────────────────────────────
+ipcMain.handle(CHANNELS.quickChatGetEnabled, () => !!loadConfig().quickChat);
+ipcMain.handle(CHANNELS.quickChatSetEnabled, (_e, enabled: boolean) => {
+  setQuickChatEnabled(!!enabled);
+  return !!enabled;
+});
+ipcMain.handle(CHANNELS.quickChatGetHotkey, () => loadConfig().quickChatHotkey ?? DEFAULT_QUICKCHAT);
+ipcMain.handle(CHANNELS.quickChatSubmit, (_e, text: string) => {
+  const r = deliverQuickChat(text);
+  if (r.ok) dismissQuickChat();
+  return r;
+});
+ipcMain.on(CHANNELS.quickChatClose, () => dismissQuickChat());
+
 // ── app lifecycle ────────────────────────────────────────────────
 app.whenReady().then(() => {
   const cfg = loadConfig();
@@ -304,6 +509,10 @@ app.whenReady().then(() => {
   initUpdater(cfg.autoUpdate ?? true);
   createWindow();
   if (cfg.avatarOverlay) createOverlay();
+  if (cfg.quickChat) {
+    createQuickChat();
+    registerQuickChatHotkey();
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -312,4 +521,10 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('will-quit', () => disposeUpdater());
+app.on('before-quit', () => {
+  appQuitting = true;
+});
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  disposeUpdater();
+});

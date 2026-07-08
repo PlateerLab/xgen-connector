@@ -100,12 +100,46 @@ const api = {
     /** Overlay window: toggle native click-through (false over interactive UI). */
     setClickThrough: (ignore: boolean): void =>
       ipcRenderer.send(CHANNELS.overlaySetIgnoreMouse, ignore),
-    /** Overlay window: drag the OS window by a delta. */
+    /** Overlay window: drag the OS window by a pixel delta (DPI-safe in main). */
     moveBy: (dx: number, dy: number): void => ipcRenderer.send(CHANNELS.overlayMoveBy, dx, dy),
+    /** Overlay window: resize from an edge/corner (edge = combo of n/s/e/w). */
+    resizeBy: (edge: string, dx: number, dy: number): void =>
+      ipcRenderer.send(CHANNELS.overlayResizeBy, edge, dx, dy),
     /** Overlay window: raise/focus the main chat window. */
     focusMain: (): void => ipcRenderer.send(CHANNELS.overlayFocusMain),
     /** Overlay window: close the floating space. */
     hide: (): void => ipcRenderer.send(CHANNELS.overlayHide),
+  },
+
+  /** Quick-chat — the Spotlight-style floating input bar (global hotkey). */
+  quickChat: {
+    getEnabled: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.quickChatGetEnabled),
+    setEnabled: (enabled: boolean): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.quickChatSetEnabled, enabled),
+    getHotkey: (): Promise<string> => ipcRenderer.invoke(CHANNELS.quickChatGetHotkey),
+    /** Quick-chat window → send the typed text to the active agent chat. */
+    submit: (text: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.quickChatSubmit, text),
+    /** Quick-chat window → dismiss the bar. */
+    close: (): void => ipcRenderer.send(CHANNELS.quickChatClose),
+    /** Quick-chat window: fired each time the bar is summoned. */
+    onOpened: (cb: () => void): (() => void) => {
+      const h = () => cb();
+      ipcRenderer.on(CHANNELS.quickChatOpened, h);
+      return () => ipcRenderer.removeListener(CHANNELS.quickChatOpened, h);
+    },
+    /** Quick-chat window: fired when main dismisses the bar. */
+    onDismissed: (cb: () => void): (() => void) => {
+      const h = () => cb();
+      ipcRenderer.on(CHANNELS.quickChatDismissed, h);
+      return () => ipcRenderer.removeListener(CHANNELS.quickChatDismissed, h);
+    },
+    /** Main window: subscribe to quick-chat relays → send into the active chat. */
+    onQuickSend: (cb: (text: string) => void): (() => void) => {
+      const h = (_e: unknown, text: string) => cb(text);
+      ipcRenderer.on(CHANNELS.quickSend, h);
+      return () => ipcRenderer.removeListener(CHANNELS.quickSend, h);
+    },
   },
 
   updater: {

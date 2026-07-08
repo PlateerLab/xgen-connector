@@ -13,10 +13,15 @@ export const Settings: React.FC<{
   const [theme, setTheme] = useState<Theme>(config.theme ?? 'system');
   const [autoUpdate, setAutoUpdate] = useState(config.autoUpdate ?? true);
   const [overlay, setOverlay] = useState(config.avatarOverlay ?? false);
+  const [quickChat, setQuickChat] = useState(config.quickChat ?? false);
+  const [hotkey, setHotkey] = useState('');
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => xgen.updater.onMessage((m) => setUpdateMsg(m)), []);
+  useEffect(() => {
+    xgen.quickChat.getHotkey().then(setHotkey).catch(() => setHotkey(''));
+  }, []);
 
   const apply = async (patch: Partial<ConnectorConfig>) => {
     await xgen.config.set(patch);
@@ -81,6 +86,29 @@ export const Settings: React.FC<{
               onChange={(e) => {
                 setOverlay(e.target.checked);
                 void xgen.overlay.setEnabled(e.target.checked);
+                void onChanged();
+              }}
+            />
+            <span className="track" />
+          </label>
+        </div>
+
+        <div className="field-row">
+          <span>
+            빠른 채팅 (단축키)
+            {hotkey && (
+              <span className="small muted" style={{ marginLeft: 8 }}>
+                {hotkey.replace('CommandOrControl', 'Ctrl/Cmd')}
+              </span>
+            )}
+          </span>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={quickChat}
+              onChange={(e) => {
+                setQuickChat(e.target.checked);
+                void xgen.quickChat.setEnabled(e.target.checked);
                 void onChanged();
               }}
             />

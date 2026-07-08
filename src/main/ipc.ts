@@ -30,9 +30,20 @@ export const CHANNELS = {
   overlayPushState: 'overlay:pushState', // main-window → main → overlay
   overlayState: 'overlay:state', // main → overlay (broadcast)
   overlaySetIgnoreMouse: 'overlay:setIgnoreMouse', // overlay → main (click-through)
-  overlayMoveBy: 'overlay:moveBy', // overlay → main (drag)
+  overlayMoveBy: 'overlay:moveBy', // overlay → main (drag; DPI-safe setPosition)
+  overlayResizeBy: 'overlay:resizeBy', // overlay → main (edge resize)
   overlayFocusMain: 'overlay:focusMain', // overlay → main (raise chat window)
   overlayHide: 'overlay:hide', // overlay → main (close the space)
+
+  // Quick-chat (Spotlight-style input bar, global hotkey)
+  quickChatGetEnabled: 'quickchat:getEnabled',
+  quickChatSetEnabled: 'quickchat:setEnabled',
+  quickChatGetHotkey: 'quickchat:getHotkey',
+  quickChatSubmit: 'quickchat:submit', // quickchat window → main
+  quickChatClose: 'quickchat:close', // quickchat window → main
+  quickChatOpened: 'quickchat:opened', // main → quickchat (paint card)
+  quickChatDismissed: 'quickchat:dismissed', // main → quickchat (hide card)
+  quickSend: 'connector:quickSend', // main → main-window Chat (deliver message)
 
   openExternal: 'shell:openExternal',
 } as const;

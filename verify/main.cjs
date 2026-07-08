@@ -37,14 +37,35 @@ app.whenReady().then(async () => {
   // Overlay stage: capture the floating avatar window on a "desktop" backdrop.
   if (STAGE === 'overlay') {
     const ov = new BrowserWindow({
-      width: 360, height: 480, show: false,
-      backgroundColor: '#2f3d57', // stand-in wallpaper so the floating card is visible
+      width: 320, height: 460, show: false,
+      backgroundColor: '#2f3d57', // stand-in wallpaper so the floating avatar is visible
       webPreferences: { offscreen: true, preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: false },
     });
     ov.webContents.setFrameRate(30);
     await ov.loadFile(path.join(__dirname, '..', 'out', 'renderer', 'overlay.html'));
-    await sleep(1700);
-    await snap(ov, 'overlay.png');
+    await sleep(1600);
+    await snap(ov, 'overlay-locked.png');
+    // Unlock → resize frame (dashed outline) + bar (lock + delete)
+    await ov.webContents.executeJavaScript(`(() => { const b = document.querySelector('.ov-lockchip button'); if (b) b.click(); return !!b; })()`);
+    await sleep(400);
+    await snap(ov, 'overlay-unlocked.png');
+    app.quit();
+    return;
+  }
+
+  // Quick-chat stage: the Spotlight-style bar (mock auto-summons it).
+  if (STAGE === 'quickchat') {
+    const qc = new BrowserWindow({
+      width: 600, height: 176, show: false,
+      backgroundColor: '#2f3d57',
+      webPreferences: { offscreen: true, preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: false },
+    });
+    qc.webContents.setFrameRate(30);
+    await qc.loadFile(path.join(__dirname, '..', 'out', 'renderer', 'quickchat.html'));
+    await sleep(700);
+    await qc.webContents.executeJavaScript(`(() => { const ta = document.querySelector('.qc-input'); if (ta) { const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set; set.call(ta,'제주 관광지 추천해줘'); ta.dispatchEvent(new Event('input',{bubbles:true})); } return !!ta; })()`);
+    await sleep(300);
+    await snap(qc, 'quickchat.png');
     app.quit();
     return;
   }

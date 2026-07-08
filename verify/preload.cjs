@@ -75,12 +75,23 @@ const api = {
       return { cancel: () => { cancelled = true; } };
     },
   },
+  quickChat: {
+    getEnabled: async () => true,
+    setEnabled: async () => true,
+    getHotkey: async () => 'CommandOrControl+Shift+Enter',
+    submit: async () => ({ ok: true }),
+    close: () => {},
+    onOpened: (cb) => { setTimeout(cb, 120); return () => {}; },
+    onDismissed: () => () => {},
+    onQuickSend: () => () => {},
+  },
   overlay: {
     getEnabled: async () => true,
     setEnabled: async () => true,
     pushState: () => {},
     setClickThrough: () => {},
     moveBy: () => {},
+    resizeBy: () => {},
     focusMain: () => {},
     hide: () => {},
     onState: (cb) => {

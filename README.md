@@ -41,12 +41,19 @@ enter your **XGEN server URL** and **account**, then pick an agent and chat.
 - **Auto-update** — via GitHub Releases (`electron-updater`); toggle in settings.
 - **Settings** — server URL, theme (system/light/dark), auto-update.
 - **Floating avatar overlay** — a Geny-style transparent, always-on-top,
-  click-through window that floats the avatar over your desktop. Toggle it from
-  the sidebar (bot icon) or Settings. With no avatar registered it floats the
-  live chat reply as a subtitle card ("아바타가 없으면 채팅만"); drag by the top
-  handle. TTS / STT / screen-capture are intentionally excluded.
+  click-through window that floats an **avatar + a visual-novel speech bubble**
+  of what the agent is saying over your desktop. **Locked** by default
+  (click-through; only a small lock chip is interactive); **unlock** to reveal a
+  dashed resize frame (8 handles + "크기 조절") and a bar with just lock + delete.
+  Dragging is DPI-safe (`setPosition`, so it never grows on 150%-scaled displays).
+  Toggle from the sidebar (bot icon) or Settings. TTS / STT / screen-capture are
+  intentionally excluded.
+- **Quick chat** — a Spotlight-style floating input bar summoned by a global
+  hotkey (`Ctrl/Cmd+Shift+Enter`); type + Enter relays the message into the
+  active agent's chat. Enable it in Settings.
 - **Avatar extension point** — `setAvatarRenderer()` mounts a future avatar into
-  the overlay, bound to the active agent + its streamed text. No avatar ships today.
+  the overlay, bound to the active agent + its streamed text. Until then a branded
+  placeholder avatar shows.
 
 ## Architecture
 

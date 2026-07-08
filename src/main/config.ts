@@ -26,6 +26,12 @@ export interface ConnectorConfig {
   subtitles?: boolean;
   /** Persisted floating-overlay bounds. */
   overlayBounds?: { width: number; height: number; x?: number; y?: number };
+  /** Enable the global quick-chat hotkey (Spotlight-style input bar). */
+  quickChat?: boolean;
+  /** Quick-chat global accelerator. Default CommandOrControl+Shift+Enter. */
+  quickChatHotkey?: string;
+  /** Remembered quick-chat bar position. */
+  quickChatBar?: { x: number; y: number };
 }
 
 const DEFAULTS: ConnectorConfig = {
