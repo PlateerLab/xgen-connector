@@ -38,7 +38,17 @@ const api = {
       return { items, pagination: { page: 1, pageSize: 24, totalCount: items.length, totalPages: 1 } };
     },
   },
-  history: { turns: async () => [], conversations: async () => [] },
+  history: {
+    conversations: async () => [
+      { id: 1, interactionId: 'c-1', workflowId: 'wf1', workflowName: '한국마사회 RAG 상담', interactionCount: 6, metadata: {}, createdAt: '', updatedAt: new Date(Date.now() - 12 * 60000).toISOString() },
+      { id: 2, interactionId: 'c-2', workflowId: 'wf2', workflowName: '경마 데이터 분석가', interactionCount: 3, metadata: {}, createdAt: '', updatedAt: new Date(Date.now() - 3 * 3600000).toISOString() },
+      { id: 3, interactionId: 'c-3', workflowId: 'wf4', workflowName: '사내 문서 도우미', interactionCount: 11, metadata: {}, createdAt: '', updatedAt: new Date(Date.now() - 2 * 86400000).toISOString() },
+    ],
+    turns: async (workflowId, interactionId) => [
+      { logId: 1, ioId: 1, interactionId, workflowId, workflowName: '한국마사회 RAG 상담', input: '지난 분기 실적 요약해줘', output: '2023년 4분기 매출은 전년 대비 8.2% 증가했습니다. 주요 요인은 온라인 발매 확대와 신규 지사 오픈입니다.', updatedAt: '' },
+      { logId: 2, ioId: 2, interactionId, workflowId, workflowName: '한국마사회 RAG 상담', input: '온라인 발매 비중은?', output: '전체 발매액의 약 34%가 온라인 채널을 통해 이루어졌습니다.', updatedAt: '' },
+    ],
+  },
   chat: {
     stream: (req, onEvent) => {
       const script = [

@@ -53,7 +53,7 @@ app.whenReady().then(async () => {
     return;
   }
 
-  // workspace lands with an agent auto-selected → empty chat
+  // workspace lands with an agent auto-selected → empty chat (header alignment + input)
   await snap(win, 'workspace-empty.png');
 
   // Drive a chat turn
@@ -71,9 +71,45 @@ app.whenReady().then(async () => {
   await sleep(1900); // let the scripted stream finish
   await snap(win, 'chat.png');
 
+  // Collapse the sidebar (2nd icon-btn in the header actions)
+  await win.webContents.executeJavaScript(`(() => {
+    const btn = [...document.querySelectorAll('.sidebar-head-actions .icon-btn')][1];
+    if (btn) btn.click();
+    return !!btn;
+  })()`);
+  await sleep(400);
+  await snap(win, 'collapsed.png');
+
+  // Expand again (toggle in the chat header)
+  await win.webContents.executeJavaScript(`(() => {
+    const btn = document.querySelector('.chat-title .sidebar-toggle');
+    if (btn) btn.click();
+    return !!btn;
+  })()`);
+  await sleep(300);
+
+  // History tab
+  await win.webContents.executeJavaScript(`(() => {
+    const tabs = [...document.querySelectorAll('.side-tab')];
+    const h = tabs.find((t) => t.textContent.includes('대화 기록'));
+    if (h) h.click();
+    return !!h;
+  })()`);
+  await sleep(500);
+  await snap(win, 'history.png');
+
+  // Open a past conversation → loads its turns
+  await win.webContents.executeJavaScript(`(() => {
+    const it = document.querySelector('.conv-item');
+    if (it) it.click();
+    return !!it;
+  })()`);
+  await sleep(900);
+  await snap(win, 'resumed.png');
+
   // Settings modal
   await win.webContents.executeJavaScript(`(() => {
-    const btn = [...document.querySelectorAll('.sidebar-head .icon-btn')][0];
+    const btn = [...document.querySelectorAll('.sidebar-head-actions .icon-btn')][0];
     if (btn) btn.click();
     return !!btn;
   })()`);

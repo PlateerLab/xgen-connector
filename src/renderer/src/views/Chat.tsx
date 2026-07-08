@@ -2,17 +2,27 @@
  * Chat view — streams a conversation with the selected agent.
  *
  * Node-agnostic: works for agent_geny / agent_xgen / agent_harness because it
- * uses the single execute-stream endpoint. Reuses one `interactionId` per agent
- * session to continue the conversation. Renders streamed text live, tool
- * activity as compact chips, RAG sources as citation pills, and exposes the
- * streaming state to the avatar slot.
+ * uses the single execute-stream endpoint. A session is either a fresh chat with
+ * an agent or a resumed past conversation (loads its turns via history.turns).
+ * Reuses one `interactionId` for the session so follow-ups continue it. Renders
+ * streamed text live, tool activity as chips, RAG sources as citation pills, and
+ * exposes the streaming state to the avatar slot.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import type { Agent, ChatEvent, ToolEvent, Citation } from '../../../core/index';
 import { AvatarSlot, hasAvatarRenderer, type AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
-import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon } from '../brand/icons';
+import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon, PanelLeftIcon } from '../brand/icons';
+
+/** An open chat: a fresh agent chat, or a resumed past conversation. */
+export interface ChatSession {
+  agent: Agent;
+  /** Present when resuming a past conversation. */
+  interactionId?: string;
+  /** True → load this conversation's history on open. */
+  resume?: boolean;
+}
 
 interface Msg {
   role: 'user' | 'assistant';
@@ -40,34 +50,64 @@ function mergeCitations(into: Citation[], add?: Citation[]): Citation[] {
   return [...into];
 }
 
-const AGENT_KIND: Record<string, string> = {
-  canvas: 'Canvas',
-  harness: 'Harness',
-};
+const AGENT_KIND: Record<string, string> = { canvas: 'Canvas', harness: 'Harness' };
 
-export const Chat: React.FC<{ agent: Agent }> = ({ agent }) => {
+export const Chat: React.FC<{
+  session: ChatSession;
+  collapsed?: boolean;
+  onExpandSidebar?: () => void;
+}> = ({ session, collapsed, onExpandSidebar }) => {
+  const { agent } = session;
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [interactionId, setInteractionId] = useState(() => newInteractionId(agent.workflowId));
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [interactionId, setInteractionId] = useState(
+    () => session.interactionId ?? newInteractionId(agent.workflowId),
+  );
   const cancelRef = useRef<{ cancel: () => void } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Reset the conversation when the selected agent changes.
+  // A stable signature of the open session — changing it resets the view.
+  const sessionSig = `${agent.workflowId}::${session.resume ? session.interactionId : 'new'}`;
+
   useEffect(() => {
     cancelRef.current?.cancel();
     cancelRef.current = null;
-    setMessages([]);
-    setInteractionId(newInteractionId(agent.workflowId));
     setStreaming(false);
-  }, [agent.workflowId]);
+    const iid = session.interactionId ?? newInteractionId(agent.workflowId);
+    setInteractionId(iid);
+
+    if (session.resume && session.interactionId) {
+      setMessages([]);
+      setLoadingHistory(true);
+      let alive = true;
+      xgen.history
+        .turns(agent.workflowId, session.interactionId, agent.workflowName)
+        .then((turns) => {
+          if (!alive) return;
+          const msgs: Msg[] = [];
+          for (const t of turns) {
+            if (t.input) msgs.push({ role: 'user', text: t.input });
+            if (t.output) msgs.push({ role: 'assistant', text: t.output });
+          }
+          setMessages(msgs);
+        })
+        .catch(() => alive && setMessages([]))
+        .finally(() => alive && setLoadingHistory(false));
+      return () => {
+        alive = false;
+      };
+    }
+    setMessages([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionSig]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
 
-  // Auto-grow the textarea.
   useEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
@@ -164,13 +204,25 @@ export const Chat: React.FC<{ agent: Agent }> = ({ agent }) => {
     <div className="chat">
       <div className="chat-header">
         <div className="chat-title">
+          {collapsed && (
+            <button
+              className="icon-btn sidebar-toggle"
+              title="사이드바 펼치기"
+              onClick={onExpandSidebar}
+            >
+              <PanelLeftIcon size={18} />
+            </button>
+          )}
           <span className="agent-mark">
             <XgenMark height={18} variant="color" />
           </span>
           <div className="chat-title-text">
             <strong>{agent.workflowName}</strong>
             <div className="agent-meta">
-              {kind} · 노드 {agent.nodeCount}개{agent.isShared ? ' · 공유' : ''}
+              {kind}
+              {agent.nodeCount ? ` · 노드 ${agent.nodeCount}개` : ''}
+              {agent.isShared ? ' · 공유' : ''}
+              {session.resume ? ' · 이어보기' : ''}
             </div>
           </div>
         </div>
@@ -184,7 +236,11 @@ export const Chat: React.FC<{ agent: Agent }> = ({ agent }) => {
       {hasAvatarRenderer() && <AvatarSlot state={avatarState} />}
 
       <div className="chat-log" ref={scrollRef}>
-        {messages.length === 0 ? (
+        {loadingHistory ? (
+          <div className="chat-empty">
+            <p>대화를 불러오는 중…</p>
+          </div>
+        ) : messages.length === 0 ? (
           <div className="chat-empty">
             <ChatIcon size={44} className="mark" />
             <h3>{agent.workflowName}</h3>
@@ -193,9 +249,11 @@ export const Chat: React.FC<{ agent: Agent }> = ({ agent }) => {
         ) : (
           messages.map((m, i) => (
             <div key={i} className={`msg-row ${m.role}`}>
-              <div className={`msg-avatar ${m.role}`}>
-                {m.role === 'assistant' ? <XgenMark height={18} variant="mono" /> : '나'}
-              </div>
+              {m.role === 'assistant' && (
+                <div className="msg-avatar assistant">
+                  <XgenMark height={18} variant="mono" />
+                </div>
+              )}
               <div className="msg-col">
                 {m.tools && m.tools.length > 0 && (
                   <div className="tools">
@@ -232,36 +290,39 @@ export const Chat: React.FC<{ agent: Agent }> = ({ agent }) => {
       </div>
 
       <div className="chat-input">
-        <div className="chat-input-wrap">
-          <textarea
-            ref={taRef}
-            value={input}
-            placeholder="메시지를 입력하세요…  (Enter 전송 · Shift+Enter 줄바꿈)"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            rows={1}
-          />
-          {streaming ? (
-            <button className="send-btn stop" onClick={stop} title="중지" aria-label="중지">
-              <StopIcon size={15} />
-            </button>
-          ) : (
-            <button
-              className="send-btn"
-              onClick={() => void send()}
-              disabled={!input.trim()}
-              title="전송"
-              aria-label="전송"
-            >
-              <SendIcon size={17} />
-            </button>
-          )}
+        <div className="chat-input-inner">
+          <div className="chat-input-wrap">
+            <textarea
+              ref={taRef}
+              value={input}
+              placeholder="메시지를 입력하세요…"
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              rows={1}
+            />
+            {streaming ? (
+              <button className="send-btn stop" onClick={stop} title="중지" aria-label="중지">
+                <StopIcon size={15} />
+              </button>
+            ) : (
+              <button
+                className="send-btn"
+                onClick={() => void send()}
+                disabled={!input.trim()}
+                title="전송"
+                aria-label="전송"
+              >
+                <SendIcon size={17} />
+              </button>
+            )}
+          </div>
         </div>
+        <div className="chat-input-hint">Enter 전송 · Shift+Enter 줄바꿈</div>
       </div>
     </div>
   );

@@ -84,3 +84,16 @@ export const ServerIcon: React.FC<P> = ({ size = 14, className }) => (
     <line x1="6" y1="18" x2="6.01" y2="18" />
   </svg>
 );
+export const PanelLeftIcon: React.FC<P> = ({ size = 18, className }) => (
+  <svg {...base(size)} className={className}>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <path d="M9 3v18" />
+  </svg>
+);
+export const HistoryIcon: React.FC<P> = ({ size = 15, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M3 3v5h5" />
+    <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
+    <path d="M12 7v5l4 2" />
+  </svg>
+);
