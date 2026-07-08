@@ -46,8 +46,10 @@ enter your **XGEN server URL** and **account**, then pick an agent and chat.
   (click-through; only a small lock chip is interactive); **unlock** to reveal a
   dashed resize frame (8 handles + "크기 조절") and a bar with just lock + delete.
   Dragging is DPI-safe (`setPosition`, so it never grows on 150%-scaled displays).
-  Toggle from the sidebar (bot icon) or Settings. TTS / STT / screen-capture are
-  intentionally excluded.
+  The speech bubble **types out at a fixed, user-set pace** (Settings → 자막 출력
+  속도) so even a fast burst of many tokens stays readable. Toggle from the
+  sidebar (bot icon) or Settings. TTS / STT / screen-capture are intentionally
+  excluded.
 - **Quick chat** — a Spotlight-style floating input bar summoned by a global
   hotkey (`Ctrl/Cmd+Shift+Enter`, **rebindable** via the recorder in Settings);
   type + Enter relays the message into the active agent's chat.

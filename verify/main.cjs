@@ -43,9 +43,13 @@ app.whenReady().then(async () => {
     });
     ov.webContents.setFrameRate(30);
     await ov.loadFile(path.join(__dirname, '..', 'out', 'renderer', 'overlay.html'));
+    // The full reply bursts at ~150ms; the typewriter throttles it. Two frames
+    // show the reveal progressing (proving the burst isn't dumped all at once).
+    await sleep(900);
+    await snap(ov, 'sub-partial.png');
     await sleep(1600);
-    await snap(ov, 'overlay-locked.png');
-    // Unlock → resize frame (dashed outline) + bar (lock + delete)
+    await snap(ov, 'sub-more.png');
+    // Unlock → resize frame (dashed outline) + bar
     await ov.webContents.executeJavaScript(`(() => { const b = document.querySelector('.ov-lockchip button'); if (b) b.click(); return !!b; })()`);
     await sleep(400);
     await snap(ov, 'overlay-unlocked.png');

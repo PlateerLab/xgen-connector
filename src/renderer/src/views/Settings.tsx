@@ -14,6 +14,8 @@ export const Settings: React.FC<{
   const [theme, setTheme] = useState<Theme>(config.theme ?? 'system');
   const [autoUpdate, setAutoUpdate] = useState(config.autoUpdate ?? true);
   const [overlay, setOverlay] = useState(config.avatarOverlay ?? false);
+  const [subtitles, setSubtitles] = useState(config.subtitles !== false);
+  const [charMs, setCharMs] = useState(config.subtitleCharMs ?? 50);
   const [quickChat, setQuickChat] = useState(config.quickChat ?? false);
   const [hotkey, setHotkey] = useState('CommandOrControl+Shift+Enter');
   const [autostart, setAutostart] = useState(false);
@@ -101,6 +103,44 @@ export const Settings: React.FC<{
             />
             <span className="track" />
           </label>
+        </div>
+
+        <div className="field-row">
+          <span>말풍선 자막</span>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={subtitles}
+              onChange={(e) => {
+                setSubtitles(e.target.checked);
+                void apply({ subtitles: e.target.checked });
+              }}
+            />
+            <span className="track" />
+          </label>
+        </div>
+
+        <div className="field-row">
+          <span>
+            자막 출력 속도
+            <span className="small muted" style={{ marginLeft: 8 }}>
+              {charMs >= 80 ? '느림' : charMs <= 30 ? '빠름' : '보통'}
+            </span>
+          </span>
+          <div className="seg">
+            {([['느림', 90], ['보통', 50], ['빠름', 25]] as const).map(([label, ms]) => (
+              <button
+                key={ms}
+                className={charMs === ms ? 'active' : ''}
+                onClick={() => {
+                  setCharMs(ms);
+                  void apply({ subtitleCharMs: ms });
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="field-row">

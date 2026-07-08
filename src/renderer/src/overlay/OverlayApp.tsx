@@ -72,16 +72,77 @@ function GearIcon(): React.ReactElement {
   );
 }
 
-// Speech bubble — types out the streaming reply; auto-hides after it settles.
-function Subtitle({ text, speaking }: { text: string; speaking: boolean }): React.ReactElement | null {
+/**
+ * Speech bubble — types the streaming reply out at a FIXED, user-set pace
+ * (charMs = ms/char), so even when the model emits many tokens at once the
+ * bubble reveals them steadily and stays readable. A new turn (text that isn't a
+ * prefix-extension of the previous) restarts the reveal from 0. Auto-hides ~4s
+ * after it settles (typewriter caught up AND streaming stopped). Ported from
+ * Geny's AvatarSubtitle.
+ */
+function Subtitle({
+  text,
+  speaking,
+  charMs,
+}: {
+  text: string;
+  speaking: boolean;
+  charMs: number;
+}): React.ReactElement | null {
   const [visible, setVisible] = useState(false);
+  const [shown, setShown] = useState(0);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fullRef = useRef(text);
+  fullRef.current = text;
+  const charMsRef = useRef(charMs);
+  charMsRef.current = charMs;
+  const shownRef = useRef(0);
+  const prevRef = useRef('');
+
+  // Restart the reveal only when NEW content arrives (not a live prefix-grow).
+  useEffect(() => {
+    if (!text.startsWith(prevRef.current)) {
+      shownRef.current = 0;
+      setShown(0);
+    }
+    prevRef.current = text;
+  }, [text]);
+
+  // Typewriter loop — advances `shown` toward the full length at a fixed pace,
+  // then idles (stops scheduling frames) until `text` changes.
+  useEffect(() => {
+    if (!text) return;
+    let raf = 0;
+    let last = 0;
+    const tick = (ts: number) => {
+      if (!last) last = ts;
+      const dt = Math.min(0.1, (ts - last) / 1000);
+      last = ts;
+      const target = fullRef.current;
+      let s = shownRef.current;
+      if (s > target.length) s = 0;
+      if (s < target.length) {
+        const cps = 1000 / Math.max(20, charMsRef.current); // chars per second
+        s = Math.min(target.length, s + cps * dt);
+        if (Math.floor(s) !== Math.floor(shownRef.current)) setShown(Math.floor(s));
+        shownRef.current = s;
+        raf = requestAnimationFrame(tick);
+      } else {
+        shownRef.current = s;
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [text]);
+
+  const revealed = text.slice(0, shown);
+  const revealDone = shown >= text.length;
   const full = text.trim();
 
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
-  }, [text]);
+  }, [revealed]);
 
   useEffect(() => {
     if (!full) {
@@ -90,18 +151,20 @@ function Subtitle({ text, speaking }: { text: string; speaking: boolean }): Reac
     }
     setVisible(true);
     if (timer.current) clearTimeout(timer.current);
-    if (!speaking) timer.current = setTimeout(() => setVisible(false), SUBTITLE_DISMISS_MS);
+    // Settled = the reveal caught up AND streaming finished.
+    if (revealDone && !speaking) timer.current = setTimeout(() => setVisible(false), SUBTITLE_DISMISS_MS);
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [full, speaking]);
+  }, [full, revealDone, speaking]);
 
   if (!full) return null;
+  const showCursor = speaking || !revealDone;
   return (
     <div className="ov-subtitle-wrap">
       <div className={`ov-subtitle ${visible ? 'show' : ''}`} ref={bodyRef}>
-        {text}
-        {speaking && <span className="cursor" />}
+        {revealed}
+        {showCursor && <span className="cursor" />}
       </div>
     </div>
   );
@@ -155,14 +218,19 @@ export function OverlayApp(): React.ReactElement {
   const [state, setState] = useState<OverlayState>(EMPTY);
   const [locked, setLocked] = useState(true);
   const [subtitles, setSubtitles] = useState(true);
+  const [charMs, setCharMs] = useState(50);
   const dragging = useRef(false);
   const hasAvatar = hasAvatarRenderer();
 
   useEffect(() => xgen.overlay.onState((s) => setState(s)), []);
 
   useEffect(() => {
-    xgen.config.get().then((c) => setSubtitles(c.subtitles !== false));
-    return xgen.config.onChange((c) => setSubtitles(c.subtitles !== false));
+    const apply = (c: { subtitles?: boolean; subtitleCharMs?: number }) => {
+      setSubtitles(c.subtitles !== false);
+      setCharMs(typeof c.subtitleCharMs === 'number' ? c.subtitleCharMs : 50);
+    };
+    xgen.config.get().then(apply);
+    return xgen.config.onChange(apply);
   }, []);
 
   // Apply the lock state to the OS window: locked → click-through, unlocked →
@@ -213,7 +281,7 @@ export function OverlayApp(): React.ReactElement {
             <div className="ov-name">{name}</div>
           </div>
         )}
-        {subtitles && <Subtitle text={state.streamingText} speaking={state.speaking} />}
+        {subtitles && <Subtitle text={state.streamingText} speaking={state.speaking} charMs={charMs} />}
       </div>
 
       {!locked && <ResizeFrame />}

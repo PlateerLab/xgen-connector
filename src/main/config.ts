@@ -24,6 +24,9 @@ export interface ConnectorConfig {
   avatarOverlay?: boolean;
   /** Show the live subtitle bubble on the overlay. Default true. */
   subtitles?: boolean;
+  /** Subtitle typewriter pace — ms per character (throttles fast streams so the
+   * speech bubble stays readable). Lower = faster. Default 50. */
+  subtitleCharMs?: number;
   /** Persisted floating-overlay bounds. */
   overlayBounds?: { width: number; height: number; x?: number; y?: number };
   /** Enable the global quick-chat hotkey (Spotlight-style input bar). */
