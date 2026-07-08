@@ -11,6 +11,8 @@ import type { Agent, CurrentUser } from '../../../core/index';
 import type { ConnectorConfig } from '../../../main/config';
 import { Chat } from './Chat';
 import { Settings } from './Settings';
+import { XgenWordmark, XgenMark } from '../brand/Logo';
+import { SettingsIcon, RefreshIcon, LogoutIcon } from '../brand/icons';
 
 export const Workspace: React.FC<{
   user: CurrentUser;
@@ -66,25 +68,30 @@ export const Workspace: React.FC<{
     void xgen.config.set({ lastWorkflowId: a.workflowId });
   }, []);
 
+  const displayName = user.username || '사용자';
+  const initial = displayName.trim().charAt(0) || 'U';
+
   return (
     <div className="workspace">
       <aside className="sidebar">
         <div className="sidebar-head">
-          <div className="brand">XGEN</div>
-          <div className="account">
-            <span className="muted small">{user.username}</span>
-            <button className="link" onClick={() => setShowSettings(true)}>
-              설정
-            </button>
+          <div className="brand-row">
+            <XgenWordmark height={22} variant="color" title="XGEN" />
+            <span className="brand-tag">Connector</span>
           </div>
+          <button className="icon-btn" title="설정" onClick={() => setShowSettings(true)}>
+            <SettingsIcon size={18} />
+          </button>
         </div>
 
-        <input
-          className="search"
-          placeholder="에이전트 검색…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+        <div className="sidebar-search">
+          <input
+            className="search"
+            placeholder="에이전트 검색…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
         <div className="filter-row">
           {(['all', 'personal', 'shared'] as const).map((o) => (
             <button
@@ -95,8 +102,8 @@ export const Workspace: React.FC<{
               {o === 'all' ? '전체' : o === 'personal' ? '개인' : '공유'}
             </button>
           ))}
-          <button className="chip" onClick={() => void load(page)} title="새로고침">
-            ↻
+          <button className="chip ghost" onClick={() => void load(page)} title="새로고침">
+            <RefreshIcon size={13} />
           </button>
         </div>
 
@@ -110,14 +117,20 @@ export const Workspace: React.FC<{
                 className={`agent-item ${selected?.workflowId === a.workflowId ? 'active' : ''}`}
                 onClick={() => pick(a)}
               >
-                <div className="agent-name">{a.workflowName}</div>
-                <div className="agent-meta muted small">
-                  {a.isShared ? '공유' : '개인'} · {a.nodeCount}개 노드
-                  {a.isDeployed ? ' · 배포' : ''}
-                </div>
+                <span className="agent-mark">
+                  <XgenMark height={17} variant={selected?.workflowId === a.workflowId ? 'color' : 'mono'} />
+                </span>
+                <span className="agent-body">
+                  <div className="agent-name">{a.workflowName}</div>
+                  <div className="agent-meta">
+                    {a.isDeployed && <span className="dot" />}
+                    {a.isShared ? '공유' : '개인'} · 노드 {a.nodeCount}개
+                    {a.isDeployed ? ' · 배포됨' : ''}
+                  </div>
+                </span>
               </button>
             ))}
-          {!loading && agents.length === 0 && (
+          {!loading && !error && agents.length === 0 && (
             <div className="muted small pad">에이전트가 없습니다.</div>
           )}
         </div>
@@ -136,16 +149,32 @@ export const Workspace: React.FC<{
           </div>
         )}
 
-        <button className="logout link" onClick={onLogout}>
-          로그아웃
-        </button>
+        <div className="sidebar-foot">
+          <div className="account">
+            <span className="avatar-badge">{initial}</span>
+            <span className="small" style={{ fontWeight: 600 }}>
+              {displayName}
+            </span>
+          </div>
+          <button className="icon-btn" title="로그아웃" onClick={onLogout}>
+            <LogoutIcon size={16} />
+          </button>
+        </div>
       </aside>
 
       <main className="main-pane">
         {selected ? (
           <Chat agent={selected} />
         ) : (
-          <div className="center muted">왼쪽에서 에이전트를 선택하세요.</div>
+          <div className="welcome">
+            <XgenMark height={48} variant="color" />
+            <h1>
+              반갑습니다, {displayName}님!
+              <br />
+              <span className="xgen-gradient-text">어떤 Agent와 대화를 시작할까요?</span>
+            </h1>
+            <p>왼쪽 목록에서 에이전트를 선택하면 바로 대화를 시작할 수 있습니다.</p>
+          </div>
         )}
       </main>
 

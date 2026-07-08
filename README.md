@@ -135,6 +135,18 @@ for await (const ev of xgen.chat.stream({
 }
 ```
 
+## Design
+
+The UI follows the **XGEN design system** — the brand gradient (`#305eeb → #783ced`),
+Pretendard typography, gray scale, chat bubbles and citation pills are copied 1:1
+from `xgen-frontend` (`packages/ui/src/styles/globals.css`). The XGEN logo is the
+official mark from `@xgen/icons`, re-authored as clean React SVGs in
+[`src/renderer/src/brand/Logo.tsx`](src/renderer/src/brand/Logo.tsx). Light and dark
+themes are both supported (Settings → 테마).
+
 ## License
 
 Apache-2.0
+
+Bundled font **Pretendard** (`src/renderer/src/assets/fonts/PretendardVariable.woff2`)
+is © Kil Hyung-jin, licensed under the SIL Open Font License 1.1.

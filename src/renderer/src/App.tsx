@@ -16,6 +16,7 @@ import type { ConnectorConfig } from '../../main/config';
 import { ServerSetup } from './views/ServerSetup';
 import { Login } from './views/Login';
 import { Workspace } from './views/Workspace';
+import { XgenMark } from './brand/Logo';
 
 type Stage = 'loading' | 'server' | 'login' | 'workspace';
 
@@ -29,6 +30,15 @@ export const App: React.FC = () => {
     setConfig(c);
     return c;
   }, []);
+
+  // Apply the theme preference to <html data-theme>. 'system' clears the
+  // override so the OS `prefers-color-scheme` decides (see styles.css).
+  useEffect(() => {
+    const root = document.documentElement;
+    const theme = config?.theme ?? 'system';
+    if (theme === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', theme);
+  }, [config?.theme]);
 
   useEffect(() => {
     (async () => {
@@ -69,7 +79,12 @@ export const App: React.FC = () => {
   }, []);
 
   if (stage === 'loading') {
-    return <div className="center muted">불러오는 중…</div>;
+    return (
+      <div className="center">
+        <XgenMark height={40} variant="color" />
+        <span className="muted small">불러오는 중…</span>
+      </div>
+    );
   }
   if (stage === 'server' || !config?.serverUrl) {
     return <ServerSetup initialUrl={config?.serverUrl ?? ''} onSaved={handleServerSaved} />;
