@@ -33,7 +33,21 @@ export const CHANNELS = {
   overlayMoveBy: 'overlay:moveBy', // overlay → main (drag; DPI-safe setPosition)
   overlayResizeBy: 'overlay:resizeBy', // overlay → main (edge resize)
   overlayFocusMain: 'overlay:focusMain', // overlay → main (raise chat window)
+  overlayOpenSettings: 'overlay:openSettings', // overlay → main (raise + open settings modal)
   overlayHide: 'overlay:hide', // overlay → main (close the space)
+
+  // Window / app management (tray, autostart, reset, restart)
+  openSettingsModal: 'app:openSettingsModal', // main → main-window (open settings modal)
+  autostartGet: 'app:autostartGet',
+  autostartSet: 'app:autostartSet',
+  resetPositions: 'app:resetPositions',
+  appRestart: 'app:restart',
+  appQuit: 'app:quit',
+
+  // Hotkeys
+  quickChatSetHotkey: 'quickchat:setHotkey',
+  hotkeyPause: 'hotkey:pause', // suspend global shortcuts while recording
+  hotkeyResume: 'hotkey:resume',
 
   // Quick-chat (Spotlight-style input bar, global hotkey)
   quickChatGetEnabled: 'quickchat:getEnabled',

@@ -71,6 +71,9 @@ export const Workspace: React.FC<{
   // Keep the toggle in sync if the overlay is closed from its own ✕ button.
   useEffect(() => xgen.config.onChange((c) => setOverlayOn(!!c.avatarOverlay)), []);
 
+  // The tray / avatar overlay can ask to open the settings modal.
+  useEffect(() => xgen.appctl.onOpenSettings(() => setShowSettings(true)), []);
+
   const load = useCallback(
     async (p: number) => {
       setLoading(true);

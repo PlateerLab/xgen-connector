@@ -107,8 +107,33 @@ const api = {
       ipcRenderer.send(CHANNELS.overlayResizeBy, edge, dx, dy),
     /** Overlay window: raise/focus the main chat window. */
     focusMain: (): void => ipcRenderer.send(CHANNELS.overlayFocusMain),
+    /** Overlay window: raise the main window and open its settings modal. */
+    openSettings: (): void => ipcRenderer.send(CHANNELS.overlayOpenSettings),
     /** Overlay window: close the floating space. */
     hide: (): void => ipcRenderer.send(CHANNELS.overlayHide),
+  },
+
+  /** App/window management (tray-style controls). */
+  appctl: {
+    /** Main window: fired when the tray/overlay asks to open the settings modal. */
+    onOpenSettings: (cb: () => void): (() => void) => {
+      const h = () => cb();
+      ipcRenderer.on(CHANNELS.openSettingsModal, h);
+      return () => ipcRenderer.removeListener(CHANNELS.openSettingsModal, h);
+    },
+    getAutostart: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.autostartGet),
+    setAutostart: (enabled: boolean): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.autostartSet, enabled),
+    resetPositions: (): void => ipcRenderer.send(CHANNELS.resetPositions),
+    restart: (): void => ipcRenderer.send(CHANNELS.appRestart),
+    quit: (): void => ipcRenderer.send(CHANNELS.appQuit),
+  },
+
+  /** Global hotkeys (recorder support). */
+  hotkeys: {
+    /** Suspend all global shortcuts while a settings field records a new combo. */
+    pause: (): void => ipcRenderer.send(CHANNELS.hotkeyPause),
+    resume: (): void => ipcRenderer.send(CHANNELS.hotkeyResume),
   },
 
   /** Quick-chat — the Spotlight-style floating input bar (global hotkey). */
@@ -117,6 +142,9 @@ const api = {
     setEnabled: (enabled: boolean): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.quickChatSetEnabled, enabled),
     getHotkey: (): Promise<string> => ipcRenderer.invoke(CHANNELS.quickChatGetHotkey),
+    /** Change the quick-chat accelerator; returns false if registration failed. */
+    setHotkey: (acc: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.quickChatSetHotkey, acc),
     /** Quick-chat window → send the typed text to the active agent chat. */
     submit: (text: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke(CHANNELS.quickChatSubmit, text),

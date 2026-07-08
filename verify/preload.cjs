@@ -79,12 +79,22 @@ const api = {
     getEnabled: async () => true,
     setEnabled: async () => true,
     getHotkey: async () => 'CommandOrControl+Shift+Enter',
+    setHotkey: async () => true,
     submit: async () => ({ ok: true }),
     close: () => {},
     onOpened: (cb) => { setTimeout(cb, 120); return () => {}; },
     onDismissed: () => () => {},
     onQuickSend: () => () => {},
   },
+  appctl: {
+    onOpenSettings: () => () => {},
+    getAutostart: async () => false,
+    setAutostart: async () => false,
+    resetPositions: () => {},
+    restart: () => {},
+    quit: () => {},
+  },
+  hotkeys: { pause: () => {}, resume: () => {} },
   overlay: {
     getEnabled: async () => true,
     setEnabled: async () => true,
@@ -93,6 +103,7 @@ const api = {
     moveBy: () => {},
     resizeBy: () => {},
     focusMain: () => {},
+    openSettings: () => {},
     hide: () => {},
     onState: (cb) => {
       const full =

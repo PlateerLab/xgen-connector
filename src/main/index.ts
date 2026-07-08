@@ -8,13 +8,27 @@
  * transport lives here in the main process (Node fetch), so tokens stay out of
  * the renderer.
  */
-import { app, BrowserWindow, ipcMain, shell, nativeTheme, screen, globalShortcut } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  nativeTheme,
+  screen,
+  globalShortcut,
+  Tray,
+  Menu,
+  nativeImage,
+} from 'electron';
 import { join } from 'node:path';
 import { XgenClient, type ChatEvent } from '../core/index';
 import { loadConfig, saveConfig, normalizeServerUrl, type ConnectorConfig } from './config';
 import { tokenStore } from './keychain';
 import { initUpdater, setAutoUpdate, getAutoUpdate, checkNow, disposeUpdater } from './updater';
 import { CHANNELS } from './ipc';
+import { TRAY_ICON_B64 } from './tray-icon';
+
+let tray: Tray | null = null;
 
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
@@ -66,17 +80,17 @@ function createWindow(): void {
   });
 
   mainWindow.on('ready-to-show', () => mainWindow?.show());
-  mainWindow.on('close', () => {
+  mainWindow.on('close', (e) => {
     if (!mainWindow) return;
     const b = mainWindow.getBounds();
     saveConfig({ window: { width: b.width, height: b.height, x: b.x, y: b.y } });
-    // The overlay + quick-chat are helpers of the main window — tear them down
-    // so closing the main window actually quits the app.
-    appQuitting = true;
-    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
-    overlayWindow = null;
-    if (quickChatWindow && !quickChatWindow.isDestroyed()) quickChatWindow.destroy();
-    quickChatWindow = null;
+    // Close-to-tray: closing the window HIDES it (the app keeps running in the
+    // tray so the floating avatar + quick-chat hotkey stay alive). Real quit
+    // goes through the tray "종료" / Cmd+Q, which sets appQuitting first.
+    if (!appQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -172,6 +186,7 @@ function setOverlayEnabled(enabled: boolean): void {
   }
   // Keep the main window's toggle in sync (e.g. when closed via the overlay ✕).
   mainWindow?.webContents.send(CHANNELS.configChanged, next);
+  rebuildTrayMenu();
 }
 
 // ── Quick-chat: Spotlight-style floating input bar (Geny-style) ───────────────
@@ -336,6 +351,115 @@ function setQuickChatEnabled(enabled: boolean): void {
     if (quickChatOpen) dismissQuickChat();
   }
   mainWindow?.webContents.send(CHANNELS.configChanged, next);
+  rebuildTrayMenu();
+}
+
+// ── Window / app management ──────────────────────────────────────
+function showMain(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    mainWindow?.once('ready-to-show', () => mainWindow?.show());
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function openMainSettings(): void {
+  showMain();
+  mainWindow?.webContents.send(CHANNELS.openSettingsModal);
+}
+
+function applyAutoLaunch(enabled: boolean): void {
+  // No-op on Linux (electron ignores setLoginItemSettings there); best-effort.
+  if (process.platform === 'linux') return;
+  app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: enabled, args: ['--hidden'] });
+}
+
+function resetPositions(): void {
+  saveConfig({ overlayBounds: undefined, quickChatBar: undefined });
+  const wa = screen.getPrimaryDisplay().workArea;
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    const w = 340;
+    const h = 460;
+    overlayWindow.setBounds({ x: wa.x + wa.width - w - 28, y: wa.y + wa.height - h - 28, width: w, height: h });
+    overlayWindow.show();
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBounds({
+      x: Math.round(wa.x + (wa.width - 1100) / 2),
+      y: Math.round(wa.y + (wa.height - 760) / 2),
+      width: 1100,
+      height: 760,
+    });
+  }
+  // quick-chat re-centers on its next summon now that quickChatBar is cleared.
+}
+
+// ── System tray (작업 표시줄) ─────────────────────────────────────
+function createTray(): void {
+  if (tray) return;
+  const icon = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_B64}`);
+  tray = new Tray(icon);
+  tray.setToolTip('XGEN Connector');
+  rebuildTrayMenu();
+  tray.on('click', () => showMain());
+}
+
+function rebuildTrayMenu(): void {
+  if (!tray) return;
+  const cfg = loadConfig();
+  const overlayOn = !!(overlayWindow && !overlayWindow.isDestroyed());
+  const menu = Menu.buildFromTemplate([
+    { label: '채팅 창 열기', click: () => showMain() },
+    { label: '빠른 채팅', click: () => toggleQuickChat() },
+    { label: '설정', click: () => openMainSettings() },
+    {
+      label: overlayOn ? '아바타 숨기기' : '아바타 표시',
+      click: () => setOverlayEnabled(!overlayOn),
+    },
+    { type: 'separator' },
+    {
+      label: '자동 업데이트',
+      type: 'checkbox',
+      checked: cfg.autoUpdate !== false,
+      click: (item) => {
+        setAutoUpdate(item.checked);
+        saveConfig({ autoUpdate: item.checked });
+      },
+    },
+    { label: '업데이트 확인', click: () => void checkNow() },
+    { label: `버전 ${app.getVersion()}`, enabled: false },
+    { type: 'separator' },
+    {
+      label: '로그인 시 시작',
+      type: 'checkbox',
+      checked: cfg.autoLaunch === true,
+      click: (item) => {
+        saveConfig({ autoLaunch: item.checked });
+        applyAutoLaunch(item.checked);
+      },
+    },
+    { label: '위치 초기화', click: () => resetPositions() },
+    { type: 'separator' },
+    {
+      label: '재시작',
+      click: () => {
+        appQuitting = true;
+        app.relaunch();
+        app.quit();
+      },
+    },
+    {
+      label: '종료',
+      click: () => {
+        appQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+  tray.setContextMenu(menu);
 }
 
 // ── IPC: config ──────────────────────────────────────────────────
@@ -480,13 +604,46 @@ ipcMain.on(CHANNELS.overlayResizeBy, (_e, edge: string, dx: number, dy: number) 
   }
   overlayWindow.setBounds({ x, y, width, height });
 });
-ipcMain.on(CHANNELS.overlayFocusMain, () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-});
+ipcMain.on(CHANNELS.overlayFocusMain, () => showMain());
+ipcMain.on(CHANNELS.overlayOpenSettings, () => openMainSettings());
 ipcMain.on(CHANNELS.overlayHide, () => setOverlayEnabled(false));
+
+// ── IPC: app / window management ─────────────────────────────────
+ipcMain.handle(CHANNELS.autostartGet, () => loadConfig().autoLaunch === true);
+ipcMain.handle(CHANNELS.autostartSet, (_e, enabled: boolean) => {
+  saveConfig({ autoLaunch: !!enabled });
+  applyAutoLaunch(!!enabled);
+  rebuildTrayMenu();
+  return !!enabled;
+});
+ipcMain.on(CHANNELS.resetPositions, () => resetPositions());
+ipcMain.on(CHANNELS.appRestart, () => {
+  appQuitting = true;
+  app.relaunch();
+  app.quit();
+});
+ipcMain.on(CHANNELS.appQuit, () => {
+  appQuitting = true;
+  app.quit();
+});
+
+// ── IPC: hotkeys ─────────────────────────────────────────────────
+ipcMain.handle(CHANNELS.quickChatSetHotkey, (_e, acc: string) => {
+  const prev = loadConfig().quickChatHotkey;
+  saveConfig({ quickChatHotkey: acc });
+  globalShortcut.unregister(prev ?? DEFAULT_QUICKCHAT);
+  registerQuickChatHotkey();
+  const ok = globalShortcut.isRegistered(acc);
+  if (!ok) {
+    saveConfig({ quickChatHotkey: prev ?? DEFAULT_QUICKCHAT });
+    registerQuickChatHotkey();
+  }
+  return ok;
+});
+// While a settings field records a new combo, suspend global shortcuts so the
+// currently-registered key isn't swallowed system-wide during capture.
+ipcMain.on(CHANNELS.hotkeyPause, () => globalShortcut.unregisterAll());
+ipcMain.on(CHANNELS.hotkeyResume, () => registerQuickChatHotkey());
 
 // ── IPC: quick-chat ──────────────────────────────────────────────
 ipcMain.handle(CHANNELS.quickChatGetEnabled, () => !!loadConfig().quickChat);
@@ -503,28 +660,41 @@ ipcMain.handle(CHANNELS.quickChatSubmit, (_e, text: string) => {
 ipcMain.on(CHANNELS.quickChatClose, () => dismissQuickChat());
 
 // ── app lifecycle ────────────────────────────────────────────────
-app.whenReady().then(() => {
-  const cfg = loadConfig();
-  if (cfg.theme) nativeTheme.themeSource = cfg.theme;
-  initUpdater(cfg.autoUpdate ?? true);
-  createWindow();
-  if (cfg.avatarOverlay) createOverlay();
-  if (cfg.quickChat) {
-    createQuickChat();
-    registerQuickChatHotkey();
-  }
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-});
+// Single-instance: a second launch focuses the existing app instead of opening
+// a duplicate (important — global hotkeys + tray must be owned by one instance).
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => showMain());
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
-app.on('before-quit', () => {
-  appQuitting = true;
-});
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-  disposeUpdater();
-});
+  app.whenReady().then(() => {
+    const cfg = loadConfig();
+    if (cfg.theme) nativeTheme.themeSource = cfg.theme;
+    initUpdater(cfg.autoUpdate ?? true);
+    createTray();
+    // `--hidden` (autostart) → start in the tray without showing the window.
+    const startHidden = process.argv.includes('--hidden');
+    createWindow();
+    if (startHidden) mainWindow?.removeAllListeners('ready-to-show');
+    if (cfg.avatarOverlay) createOverlay();
+    if (cfg.quickChat) {
+      createQuickChat();
+      registerQuickChatHotkey();
+    }
+    app.on('activate', () => showMain());
+  });
+
+  // Tray app — never auto-quit when the window is hidden/closed. Quit only via
+  // the tray "종료" (which sets appQuitting first).
+  app.on('window-all-closed', () => {
+    /* stay resident in the tray */
+  });
+  app.on('before-quit', () => {
+    appQuitting = true;
+  });
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
+    disposeUpdater();
+  });
+}

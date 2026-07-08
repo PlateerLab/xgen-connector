@@ -56,6 +56,21 @@ function TrashIcon(): React.ReactElement {
     </svg>
   );
 }
+function ChatBubbleIcon(): React.ReactElement {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 9.5 9.5 0 0 1-4-.9L3 21l1.9-5.5a8.38 8.38 0 0 1-.9-4 8.5 8.5 0 0 1 8.5-8.5 8.38 8.38 0 0 1 8.5 8.5z" />
+    </svg>
+  );
+}
+function GearIcon(): React.ReactElement {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
 
 // Speech bubble — types out the streaming reply; auto-hides after it settles.
 function Subtitle({ text, speaking }: { text: string; speaking: boolean }): React.ReactElement | null {
@@ -214,10 +229,17 @@ export function OverlayApp(): React.ReactElement {
           <span className="ov-grip" title="드래그하여 이동">
             <GripIcon />
           </span>
+          <button className="ov-icon-btn" onClick={() => xgen.overlay.focusMain()} title="채팅 창 열기">
+            <ChatBubbleIcon />
+          </button>
+          <button className="ov-icon-btn" onClick={() => xgen.overlay.openSettings()} title="설정 열기">
+            <GearIcon />
+          </button>
+          <span className="ov-divider" />
           <button className="ov-icon-btn" onClick={() => setLocked(true)} title="잠금">
             <LockIcon open />
           </button>
-          <button className="ov-icon-btn danger" onClick={() => xgen.overlay.hide()} title="삭제">
+          <button className="ov-icon-btn danger" onClick={() => xgen.overlay.hide()} title="아바타 숨기기">
             <TrashIcon />
           </button>
         </div>

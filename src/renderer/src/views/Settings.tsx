@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { xgen } from '../bridge';
 import type { ConnectorConfig } from '../../../main/config';
+import { HotkeyCapture } from './HotkeyCapture';
 
 type Theme = NonNullable<ConnectorConfig['theme']>;
 
@@ -14,14 +15,23 @@ export const Settings: React.FC<{
   const [autoUpdate, setAutoUpdate] = useState(config.autoUpdate ?? true);
   const [overlay, setOverlay] = useState(config.avatarOverlay ?? false);
   const [quickChat, setQuickChat] = useState(config.quickChat ?? false);
-  const [hotkey, setHotkey] = useState('');
+  const [hotkey, setHotkey] = useState('CommandOrControl+Shift+Enter');
+  const [autostart, setAutostart] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => xgen.updater.onMessage((m) => setUpdateMsg(m)), []);
   useEffect(() => {
-    xgen.quickChat.getHotkey().then(setHotkey).catch(() => setHotkey(''));
+    xgen.quickChat.getHotkey().then(setHotkey).catch(() => undefined);
+    xgen.appctl.getAutostart().then(setAutostart).catch(() => undefined);
   }, []);
+
+  const changeHotkey = async (acc: string) => {
+    const ok = await xgen.quickChat.setHotkey(acc);
+    if (ok) setHotkey(acc);
+    else xgen.quickChat.getHotkey().then(setHotkey).catch(() => undefined);
+  };
 
   const apply = async (patch: Partial<ConnectorConfig>) => {
     await xgen.config.set(patch);
@@ -94,26 +104,51 @@ export const Settings: React.FC<{
         </div>
 
         <div className="field-row">
-          <span>
-            빠른 채팅 (단축키)
-            {hotkey && (
-              <span className="small muted" style={{ marginLeft: 8 }}>
-                {hotkey.replace('CommandOrControl', 'Ctrl/Cmd')}
-              </span>
-            )}
-          </span>
+          <span>빠른 채팅 (단축키)</span>
+          <div className="row">
+            {quickChat && <HotkeyCapture value={hotkey} onCapture={(a) => void changeHotkey(a)} />}
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={quickChat}
+                onChange={(e) => {
+                  setQuickChat(e.target.checked);
+                  void xgen.quickChat.setEnabled(e.target.checked);
+                  void onChanged();
+                }}
+              />
+              <span className="track" />
+            </label>
+          </div>
+        </div>
+
+        <div className="field-row">
+          <span>로그인 시 시작</span>
           <label className="switch">
             <input
               type="checkbox"
-              checked={quickChat}
+              checked={autostart}
               onChange={(e) => {
-                setQuickChat(e.target.checked);
-                void xgen.quickChat.setEnabled(e.target.checked);
-                void onChanged();
+                setAutostart(e.target.checked);
+                void xgen.appctl.setAutostart(e.target.checked);
               }}
             />
             <span className="track" />
           </label>
+        </div>
+
+        <div className="field-row">
+          <span>창 위치 초기화</span>
+          <button
+            className="secondary"
+            onClick={() => {
+              xgen.appctl.resetPositions();
+              setResetDone(true);
+              setTimeout(() => setResetDone(false), 1500);
+            }}
+          >
+            {resetDone ? '완료' : '초기화'}
+          </button>
         </div>
 
         <div className="field-row">

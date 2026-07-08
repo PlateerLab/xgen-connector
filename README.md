@@ -49,8 +49,13 @@ enter your **XGEN server URL** and **account**, then pick an agent and chat.
   Toggle from the sidebar (bot icon) or Settings. TTS / STT / screen-capture are
   intentionally excluded.
 - **Quick chat** — a Spotlight-style floating input bar summoned by a global
-  hotkey (`Ctrl/Cmd+Shift+Enter`); type + Enter relays the message into the
-  active agent's chat. Enable it in Settings.
+  hotkey (`Ctrl/Cmd+Shift+Enter`, **rebindable** via the recorder in Settings);
+  type + Enter relays the message into the active agent's chat.
+- **System tray** — the app lives in the tray: closing the window hides it (the
+  floating avatar + quick-chat hotkey keep running). Tray menu: open chat / quick
+  chat / settings / show-hide avatar / auto-update / **launch-on-login** / reset
+  window positions / restart / quit. Single-instance (a second launch focuses the
+  running app). The avatar bar can open the chat + settings windows.
 - **Avatar extension point** — `setAvatarRenderer()` mounts a future avatar into
   the overlay, bound to the active agent + its streamed text. Until then a branded
   placeholder avatar shows.
