@@ -21,12 +21,18 @@ export const Settings: React.FC<{
   const [autostart, setAutostart] = useState(false);
   const [resetDone, setResetDone] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
+  const [version, setVersion] = useState('');
+  const [checking, setChecking] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => xgen.updater.onMessage((m) => setUpdateMsg(m)), []);
+  useEffect(() => xgen.updater.onMessage((m) => {
+    setUpdateMsg(m);
+    if (!/확인 중|내려받는 중/.test(m)) setChecking(false);
+  }), []);
   useEffect(() => {
     xgen.quickChat.getHotkey().then(setHotkey).catch(() => undefined);
     xgen.appctl.getAutostart().then(setAutostart).catch(() => undefined);
+    xgen.updater.getVersion().then(setVersion).catch(() => undefined);
   }, []);
 
   const changeHotkey = async (acc: string) => {
@@ -207,11 +213,26 @@ export const Settings: React.FC<{
         </div>
 
         <div className="field-row">
-          <span>업데이트</span>
+          <span>
+            업데이트
+            {version && (
+              <span className="small muted" style={{ marginLeft: 8 }}>
+                v{version}
+              </span>
+            )}
+          </span>
           <div className="row">
             {updateMsg && <span className="small muted">{updateMsg}</span>}
-            <button className="secondary" onClick={() => void xgen.updater.check()}>
-              업데이트 확인
+            <button
+              className="secondary"
+              disabled={checking}
+              onClick={() => {
+                setChecking(true);
+                setUpdateMsg(null);
+                void xgen.updater.check();
+              }}
+            >
+              {checking ? '확인 중…' : '업데이트 확인'}
             </button>
           </div>
         </div>

@@ -558,6 +558,7 @@ ipcMain.handle(CHANNELS.updaterSetEnabled, (_e, enabled: boolean) => {
   return enabled;
 });
 ipcMain.handle(CHANNELS.openExternal, (_e, url: string) => shell.openExternal(url));
+ipcMain.handle(CHANNELS.appVersion, () => app.getVersion());
 
 // ── IPC: floating avatar overlay ─────────────────────────────────
 ipcMain.handle(CHANNELS.overlayGetEnabled, () => !!loadConfig().avatarOverlay);
@@ -671,7 +672,11 @@ if (!gotLock) {
   app.whenReady().then(() => {
     const cfg = loadConfig();
     if (cfg.theme) nativeTheme.themeSource = cfg.theme;
-    initUpdater(cfg.autoUpdate ?? true);
+    // The install callback flips appQuitting so quitAndInstall isn't blocked by
+    // the close-to-tray guard.
+    initUpdater(cfg.autoUpdate ?? true, () => {
+      appQuitting = true;
+    });
     createTray();
     // `--hidden` (autostart) → start in the tray without showing the window.
     const startHidden = process.argv.includes('--hidden');

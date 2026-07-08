@@ -23,6 +23,7 @@ export const CHANNELS = {
   updaterGetEnabled: 'updater:getEnabled',
   updaterSetEnabled: 'updater:setEnabled',
   updaterMessage: 'updater:message',
+  appVersion: 'app:version',
 
   // Floating avatar overlay (Geny-style)
   overlayGetEnabled: 'overlay:getEnabled',

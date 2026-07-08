@@ -180,6 +180,8 @@ const api = {
       ipcRenderer.on(CHANNELS.updaterMessage, h);
       return () => ipcRenderer.removeListener(CHANNELS.updaterMessage, h);
     },
+    /** The running app version (package.json). */
+    getVersion: (): Promise<string> => ipcRenderer.invoke(CHANNELS.appVersion),
   },
 
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke(CHANNELS.openExternal, url),

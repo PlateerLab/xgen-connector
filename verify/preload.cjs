@@ -120,6 +120,7 @@ const api = {
     getEnabled: async () => true,
     setEnabled: async () => true,
     onMessage: () => () => {},
+    getVersion: async () => '0.1.8',
   },
   openExternal: async () => {},
 };
