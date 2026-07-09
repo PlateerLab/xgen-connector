@@ -49,10 +49,14 @@ app.whenReady().then(async () => {
     await snap(ov, 'sub-partial.png');
     await sleep(1600);
     await snap(ov, 'sub-more.png');
-    // Unlock → resize frame (dashed outline) + bar
+    // Unlock → resize frame (dashed outline) + bar (chat/settings/eye/lock/close)
     await ov.webContents.executeJavaScript(`(() => { const b = document.querySelector('.ov-lockchip button'); if (b) b.click(); return !!b; })()`);
     await sleep(400);
     await snap(ov, 'overlay-unlocked.png');
+    // "아바타 숨기기" → hide the orb, keep the floating window + speech bubble
+    await ov.webContents.executeJavaScript(`(() => { const b = document.querySelector('.ov-bar button[title="아바타 숨기기"]'); if (b) b.click(); return !!b; })()`);
+    await sleep(500);
+    await snap(ov, 'avatar-hidden.png');
     app.quit();
     return;
   }

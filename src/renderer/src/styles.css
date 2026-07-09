@@ -1282,6 +1282,15 @@ button {
   pointer-events: none;
   z-index: 20;
 }
+/* Avatar hidden → the floating chat shows only the speech bubble; center it. */
+.ov-root.avatar-hidden .ov-subtitle-wrap {
+  top: 0;
+  bottom: 0;
+  align-items: center;
+}
+.ov-root.avatar-hidden .ov-subtitle {
+  max-height: 60%;
+}
 .ov-subtitle {
   max-width: 94%;
   max-height: 6.4em;

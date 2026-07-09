@@ -22,6 +22,7 @@ import { xgen } from '../bridge';
 import type { OverlayState } from '../../../preload/index';
 import { AvatarSlot, hasAvatarRenderer, type AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
+import { EyeIcon, EyeOffIcon } from '../brand/icons';
 
 const EMPTY: OverlayState = { workflowId: '', workflowName: '', streamingText: '', speaking: false };
 const SUBTITLE_DISMISS_MS = 4000;
@@ -46,13 +47,10 @@ function GripIcon(): React.ReactElement {
     </svg>
   );
 }
-function TrashIcon(): React.ReactElement {
+function CloseIcon(): React.ReactElement {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M3 6h18" />
-      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-      <path d="M10 11v6M14 11v6" />
+      <path d="M18 6 6 18M6 6l12 12" />
     </svg>
   );
 }
@@ -219,15 +217,17 @@ export function OverlayApp(): React.ReactElement {
   const [locked, setLocked] = useState(true);
   const [subtitles, setSubtitles] = useState(true);
   const [charMs, setCharMs] = useState(50);
+  const [avatarHidden, setAvatarHidden] = useState(false);
   const dragging = useRef(false);
   const hasAvatar = hasAvatarRenderer();
 
   useEffect(() => xgen.overlay.onState((s) => setState(s)), []);
 
   useEffect(() => {
-    const apply = (c: { subtitles?: boolean; subtitleCharMs?: number }) => {
+    const apply = (c: { subtitles?: boolean; subtitleCharMs?: number; avatarHidden?: boolean }) => {
       setSubtitles(c.subtitles !== false);
       setCharMs(typeof c.subtitleCharMs === 'number' ? c.subtitleCharMs : 50);
+      setAvatarHidden(!!c.avatarHidden);
     };
     xgen.config.get().then(apply);
     return xgen.config.onChange(apply);
@@ -268,19 +268,22 @@ export function OverlayApp(): React.ReactElement {
   };
   const name = state.workflowName || 'XGEN';
 
+  const toggleAvatarHidden = () => void xgen.config.set({ avatarHidden: !avatarHidden });
+
   return (
-    <div className="ov-root">
+    <div className={`ov-root ${avatarHidden ? 'avatar-hidden' : ''}`}>
       <div className="ov-stage">
-        {hasAvatar ? (
-          <AvatarSlot state={avatarState} />
-        ) : (
-          <div className={`ov-placeholder ${state.speaking ? 'speaking' : ''}`}>
-            <div className="ov-orb">
-              <XgenMark height={44} variant="color" />
+        {!avatarHidden &&
+          (hasAvatar ? (
+            <AvatarSlot state={avatarState} />
+          ) : (
+            <div className={`ov-placeholder ${state.speaking ? 'speaking' : ''}`}>
+              <div className="ov-orb">
+                <XgenMark height={44} variant="color" />
+              </div>
+              <div className="ov-name">{name}</div>
             </div>
-            <div className="ov-name">{name}</div>
-          </div>
-        )}
+          ))}
         {subtitles && <Subtitle text={state.streamingText} speaking={state.speaking} charMs={charMs} />}
       </div>
 
@@ -304,11 +307,18 @@ export function OverlayApp(): React.ReactElement {
             <GearIcon />
           </button>
           <span className="ov-divider" />
+          <button
+            className="ov-icon-btn"
+            onClick={toggleAvatarHidden}
+            title={avatarHidden ? '아바타 표시' : '아바타 숨기기'}
+          >
+            {avatarHidden ? <EyeOffIcon size={15} /> : <EyeIcon size={15} />}
+          </button>
           <button className="ov-icon-btn" onClick={() => setLocked(true)} title="잠금">
             <LockIcon open />
           </button>
-          <button className="ov-icon-btn danger" onClick={() => xgen.overlay.hide()} title="아바타 숨기기">
-            <TrashIcon />
+          <button className="ov-icon-btn danger" onClick={() => xgen.overlay.hide()} title="미니 채팅 숨기기">
+            <CloseIcon />
           </button>
         </div>
       )}

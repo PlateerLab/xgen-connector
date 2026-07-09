@@ -39,6 +39,14 @@ const aborters = new Map<string, AbortController>();
  * freshly-opened overlay so it isn't blank until the next stream event. */
 let lastOverlayState: unknown = null;
 
+/** Broadcast a config change to every window (main + overlay + quick-chat) so
+ * live prefs (theme, subtitles, avatarHidden, toggles) apply everywhere. */
+function broadcastConfig(next: ConnectorConfig): void {
+  for (const w of [mainWindow, overlayWindow, quickChatWindow]) {
+    if (w && !w.isDestroyed()) w.webContents.send(CHANNELS.configChanged, next);
+  }
+}
+
 /** Load a renderer page in either dev (Vite server) or prod (bundled file). */
 function loadRendererPage(win: BrowserWindow, page: string): void {
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
@@ -185,7 +193,14 @@ function setOverlayEnabled(enabled: boolean): void {
     overlayWindow = null;
   }
   // Keep the main window's toggle in sync (e.g. when closed via the overlay ✕).
-  mainWindow?.webContents.send(CHANNELS.configChanged, next);
+  broadcastConfig(next);
+  rebuildTrayMenu();
+}
+
+/** Hide only the avatar inside the overlay (the floating chat + subtitle stay). */
+function setAvatarHidden(hidden: boolean): void {
+  const next = saveConfig({ avatarHidden: hidden });
+  broadcastConfig(next);
   rebuildTrayMenu();
 }
 
@@ -350,7 +365,7 @@ function setQuickChatEnabled(enabled: boolean): void {
     globalShortcut.unregister(next.quickChatHotkey ?? DEFAULT_QUICKCHAT);
     if (quickChatOpen) dismissQuickChat();
   }
-  mainWindow?.webContents.send(CHANNELS.configChanged, next);
+  broadcastConfig(next);
   rebuildTrayMenu();
 }
 
@@ -416,8 +431,13 @@ function rebuildTrayMenu(): void {
     { label: '빠른 채팅', click: () => toggleQuickChat() },
     { label: '설정', click: () => openMainSettings() },
     {
-      label: overlayOn ? '아바타 숨기기' : '아바타 표시',
+      label: overlayOn ? '미니 채팅 숨기기' : '미니 채팅 표시',
       click: () => setOverlayEnabled(!overlayOn),
+    },
+    {
+      label: cfg.avatarHidden ? '아바타 표시' : '아바타 숨기기',
+      enabled: overlayOn,
+      click: () => setAvatarHidden(!cfg.avatarHidden),
     },
     { type: 'separator' },
     {
@@ -469,7 +489,7 @@ ipcMain.handle(CHANNELS.configSet, (_e, patch: Partial<ConnectorConfig>) => {
   if (patch.serverUrl !== undefined) getClient(); // rebind base URL
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
   if (patch.theme) nativeTheme.themeSource = patch.theme;
-  mainWindow?.webContents.send(CHANNELS.configChanged, next);
+  broadcastConfig(next);
   return next;
 });
 

@@ -11,6 +11,7 @@ const agents = [
   { workflowId: 'wf5', workflowName: '릴리즈 노트 작성기', nodeCount: 5, isShared: false, isDeployed: false, workflowType: 'canvas', description: '' },
 ];
 
+const cfgListeners = new Set();
 const state = { theme: process.env.VERIFY_THEME || 'system' };
 const config = { serverUrl: 'https://xgen.plateer.com', theme: state.theme, autoUpdate: true, lang: 'ko' };
 
@@ -19,8 +20,14 @@ const restoreUser = process.env.VERIFY_STAGE === 'login' ? null : user;
 const api = {
   config: {
     get: async () => ({ ...config, theme: state.theme }),
-    set: async (patch) => { Object.assign(config, patch); if (patch.theme) state.theme = patch.theme; return { ...config }; },
-    onChange: () => () => {},
+    set: async (patch) => {
+      Object.assign(config, patch);
+      if (patch.theme) state.theme = patch.theme;
+      const next = { ...config, theme: state.theme };
+      cfgListeners.forEach((cb) => cb(next));
+      return next;
+    },
+    onChange: (cb) => { cfgListeners.add(cb); return () => cfgListeners.delete(cb); },
   },
   auth: {
     login: async () => ({ user }),

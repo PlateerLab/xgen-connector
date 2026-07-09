@@ -22,6 +22,8 @@ export interface ConnectorConfig {
   window?: { width: number; height: number; x?: number; y?: number };
   /** Show the floating avatar overlay window (Geny-style). Default false. */
   avatarOverlay?: boolean;
+  /** Hide only the avatar inside the overlay (keep the floating chat + subtitle). */
+  avatarHidden?: boolean;
   /** Show the live subtitle bubble on the overlay. Default true. */
   subtitles?: boolean;
   /** Subtitle typewriter pace — ms per character (throttles fast streams so the
