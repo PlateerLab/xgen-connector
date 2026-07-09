@@ -503,12 +503,14 @@ function syncMcp(): void {
   }
   const userId = currentUserId();
   if (cfg.mcp && userId) {
+    // start() is idempotent for the same target: it refreshes the catalog on a
+    // live socket instead of tearing it down, so repeated syncMcp() (e.g. on
+    // token refresh / restore) never flaps the connection status.
     bridge.start({
       serverUrl: normalizeServerUrl(cfg.serverUrl),
       userId,
       getToken: () => tokenStore.getAccess(),
     });
-    void bridge.refreshCatalog();
   } else {
     bridge.stop();
   }
