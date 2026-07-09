@@ -17,7 +17,7 @@ export const Settings: React.FC<{
   const [subtitles, setSubtitles] = useState(config.subtitles !== false);
   const [charMs, setCharMs] = useState(config.subtitleCharMs ?? 50);
   const [quickChat, setQuickChat] = useState(config.quickChat ?? false);
-  const [hotkey, setHotkey] = useState('CommandOrControl+Shift+Enter');
+  const [hotkey, setHotkey] = useState('Control+Shift+/');
   const [autostart, setAutostart] = useState(false);
   const [resetDone, setResetDone] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);

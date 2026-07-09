@@ -211,7 +211,9 @@ function setAvatarHidden(hidden: boolean): void {
 // into the active agent chat in the main window.
 const QUICKCHAT_W = 600;
 const QUICKCHAT_H = 176;
-const DEFAULT_QUICKCHAT = 'CommandOrControl+Shift+Enter';
+// Ctrl + Shift + / (i.e. Ctrl + ?). NOTE: Electron globalShortcut can't tell
+// left/right Shift apart — accelerators only have a generic `Shift`.
+const DEFAULT_QUICKCHAT = 'Control+Shift+/';
 let quickChatWindow: BrowserWindow | null = null;
 let quickChatOpen = false;
 let quickChatShownAt = 0;

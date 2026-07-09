@@ -33,7 +33,7 @@ export interface ConnectorConfig {
   overlayBounds?: { width: number; height: number; x?: number; y?: number };
   /** Enable the global quick-chat hotkey (Spotlight-style input bar). */
   quickChat?: boolean;
-  /** Quick-chat global accelerator. Default CommandOrControl+Shift+Enter. */
+  /** Quick-chat global accelerator. Default Control+Shift+/ (Ctrl + ?). */
   quickChatHotkey?: string;
   /** Remembered quick-chat bar position. */
   quickChatBar?: { x: number; y: number };
