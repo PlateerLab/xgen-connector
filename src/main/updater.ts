@@ -19,7 +19,14 @@
 import { app, dialog, shell, BrowserWindow, Notification, net } from 'electron';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AppUpdater } from 'electron-updater';
+import electronUpdater, { type AppUpdater } from 'electron-updater';
+
+// electron-updater is CommonJS: the `autoUpdater` instance lives on the DEFAULT
+// export, NOT as a named export. `import { autoUpdater } from 'electron-updater'`
+// (or `const { autoUpdater } = await import(...)`) resolves to `undefined` in the
+// bundled main — which silently broke Windows/Linux self-update. Destructure the
+// default export instead (Geny's proven pattern).
+const { autoUpdater } = electronUpdater;
 
 const REPO = 'PlateerLab/xgen-connector';
 const RELEASES_URL = `https://github.com/${REPO}/releases/latest`;
@@ -87,10 +94,9 @@ async function latestRelease(): Promise<GhRelease> {
 }
 
 // ── electron-updater (Windows / Linux) ───────────────────────────
-async function getUpdater(): Promise<AppUpdater | null> {
+function getUpdater(): AppUpdater | null {
   if (!canSelfUpdate()) return null;
   if (updaterRef) return updaterRef;
-  const { autoUpdater } = await import('electron-updater');
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = {
@@ -200,7 +206,7 @@ async function macCheck(manual: boolean): Promise<void> {
 
 // ── Windows / Linux check ────────────────────────────────────────
 async function winLinuxCheck(manual: boolean): Promise<void> {
-  const u = await getUpdater();
+  const u = getUpdater();
   if (!u) return;
   if (manual) notify('업데이트 확인 중…');
   let latest: string | undefined;
@@ -248,6 +254,12 @@ async function runCheck(manual: boolean): Promise<void> {
       notify('개발 모드에서는 업데이트를 확인할 수 없습니다.');
       await dialog.showMessageBox({ message: '개발 모드에서는 업데이트를 확인하지 않습니다.' });
     }
+  } catch (e) {
+    // Safety net — a manual check must NEVER end without feedback.
+    const detail = e instanceof Error ? e.message : String(e);
+    log('runCheck error', detail);
+    notify('업데이트 확인 실패');
+    if (manual) await dialog.showMessageBox({ type: 'error', message: '업데이트 확인 중 오류가 발생했습니다.', detail });
   } finally {
     busy = false;
   }
