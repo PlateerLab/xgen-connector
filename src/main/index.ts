@@ -41,11 +41,26 @@ const aborters = new Map<string, AbortController>();
  * freshly-opened overlay so it isn't blank until the next stream event. */
 let lastOverlayState: unknown = null;
 
+/** Send to a window's renderer only if it (and its webContents) are still
+ * alive. During app quit / auto-update restart the window can be torn down
+ * while late callbacks (e.g. McpBridge.stop → status emit) still fire, and a
+ * bare `win?.webContents.send` throws "Object has been destroyed" and crashes
+ * the main process. This guards + swallows that race. */
+function safeSend(win: BrowserWindow | null, channel: string, ...args: unknown[]): void {
+  try {
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send(channel, ...args);
+    }
+  } catch {
+    /* window/webContents torn down mid-send — ignore */
+  }
+}
+
 /** Broadcast a config change to every window (main + overlay + quick-chat) so
  * live prefs (theme, subtitles, avatarHidden, toggles) apply everywhere. */
 function broadcastConfig(next: ConnectorConfig): void {
   for (const w of [mainWindow, overlayWindow, quickChatWindow]) {
-    if (w && !w.isDestroyed()) w.webContents.send(CHANNELS.configChanged, next);
+    safeSend(w, CHANNELS.configChanged, next);
   }
 }
 
@@ -62,7 +77,7 @@ function getClient(): XgenClient {
     client = new XgenClient({
       baseUrl: normalizeServerUrl(cfg.serverUrl),
       // Node 18+ global fetch (undici) — long-lived SSE supported.
-      onAuthFailure: () => mainWindow?.webContents.send(CHANNELS.authFailed),
+      onAuthFailure: () => safeSend(mainWindow, CHANNELS.authFailed),
     });
   } else {
     client.setBaseUrl(normalizeServerUrl(cfg.serverUrl));
@@ -77,10 +92,16 @@ function createWindow(): void {
     height: cfg.window?.height ?? 760,
     x: cfg.window?.x,
     y: cfg.window?.y,
-    minWidth: 720,
-    minHeight: 520,
+    minWidth: 860,
+    minHeight: 600,
     show: false,
     title: 'XGEN Connector',
+    // Hide the generic File/Edit/View/Window/Help bar (Alt still reveals it on
+    // Win/Linux) so the app doesn't read as a raw Electron shell.
+    autoHideMenuBar: true,
+    // Paint the theme background immediately to avoid a white flash before the
+    // renderer's CSS loads.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#16181d' : '#f7f8fa',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -387,7 +408,7 @@ function showMain(): void {
 
 function openMainSettings(): void {
   showMain();
-  mainWindow?.webContents.send(CHANNELS.openSettingsModal);
+  safeSend(mainWindow, CHANNELS.openSettingsModal);
 }
 
 function applyAutoLaunch(enabled: boolean): void {
@@ -499,7 +520,7 @@ function syncMcp(): void {
   const bridge = getMcpBridge();
   if (!mcpStatusWired) {
     mcpStatusWired = true;
-    bridge.setStatusListener((s) => mainWindow?.webContents.send(CHANNELS.mcpStatusEvent, s));
+    bridge.setStatusListener((s) => safeSend(mainWindow, CHANNELS.mcpStatusEvent, s));
   }
   const userId = currentUserId();
   if (cfg.mcp && userId) {

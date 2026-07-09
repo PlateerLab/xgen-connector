@@ -10,7 +10,8 @@ app.commandLine.appendSwitch('disable-gpu');
 
 const OUT = process.env.SHOTS_DIR || '/tmp/shots';
 const STAGE = process.env.VERIFY_STAGE || 'workspace';
-const W = 1280, H = 820;
+const W = Number(process.env.VERIFY_W) || 1280;
+const H = Number(process.env.VERIFY_H) || 820;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

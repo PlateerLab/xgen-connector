@@ -1085,13 +1085,26 @@ button {
   padding: 24px;
   width: 480px;
   max-width: 92vw;
+  /* Never taller than the viewport — scroll instead of clipping top/bottom on
+     short windows. */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: var(--shadow-lg);
 }
+/* Keep the title + 닫기 visible while the body scrolls. The negative margins +
+   restored padding let its background span the modal's 24px padding box. */
 .modal-head {
+  position: sticky;
+  top: -24px;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin: -24px -24px 14px;
+  padding: 24px 24px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-soft);
 }
 .modal-head h2 {
   margin: 0;
