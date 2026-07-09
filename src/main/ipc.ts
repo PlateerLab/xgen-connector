@@ -50,6 +50,15 @@ export const CHANNELS = {
   hotkeyPause: 'hotkey:pause', // suspend global shortcuts while recording
   hotkeyResume: 'hotkey:resume',
 
+  // Local MCP (connector-hosted MCP servers bridged to the user's agents)
+  mcpGetEnabled: 'mcp:getEnabled',
+  mcpSetEnabled: 'mcp:setEnabled',
+  mcpListServers: 'mcp:listServers',
+  mcpSaveServers: 'mcp:saveServers',
+  mcpTestServer: 'mcp:testServer',
+  mcpStatus: 'mcp:status',
+  mcpStatusEvent: 'mcp:statusEvent',
+
   // Quick-chat (Spotlight-style input bar, global hotkey)
   quickChatGetEnabled: 'quickchat:getEnabled',
   quickChatSetEnabled: 'quickchat:setEnabled',

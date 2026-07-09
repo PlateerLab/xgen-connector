@@ -27,6 +27,8 @@ import { tokenStore } from './keychain';
 import { initUpdater, setAutoUpdate, getAutoUpdate, checkNow, disposeUpdater } from './updater';
 import { CHANNELS } from './ipc';
 import { TRAY_ICON_B64 } from './tray-icon';
+import { getMcpManager } from './mcp-manager';
+import { getMcpBridge } from './mcp-bridge';
 
 let tray: Tray | null = null;
 
@@ -484,6 +486,39 @@ function rebuildTrayMenu(): void {
   tray.setContextMenu(menu);
 }
 
+// ── Local MCP (connector-hosted MCP servers → user's agents) ─────
+let mcpStatusWired = false;
+function currentUserId(): string | null {
+  return client?.user?.userId ?? null;
+}
+/** Reconcile MCP manager + bridge with config + login state. */
+function syncMcp(): void {
+  const cfg = loadConfig();
+  const mcp = getMcpManager();
+  mcp.configure(cfg.mcpServers);
+  const bridge = getMcpBridge();
+  if (!mcpStatusWired) {
+    mcpStatusWired = true;
+    bridge.setStatusListener((s) => mainWindow?.webContents.send(CHANNELS.mcpStatusEvent, s));
+  }
+  const userId = currentUserId();
+  if (cfg.mcp && userId) {
+    bridge.start({
+      serverUrl: normalizeServerUrl(cfg.serverUrl),
+      userId,
+      getToken: () => tokenStore.getAccess(),
+    });
+    void bridge.refreshCatalog();
+  } else {
+    bridge.stop();
+  }
+}
+function setMcpEnabled(enabled: boolean): void {
+  const next = saveConfig({ mcp: enabled });
+  syncMcp();
+  broadcastConfig(next);
+}
+
 // ── IPC: config ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.configGet, () => loadConfig());
 ipcMain.handle(CHANNELS.configSet, (_e, patch: Partial<ConnectorConfig>) => {
@@ -501,6 +536,7 @@ ipcMain.handle(CHANNELS.authLogin, async (_e, email: string, password: string) =
   const res = await c.login(email, password);
   await tokenStore.setAccess(c.getAccessTokenAfterRotation());
   if (res.refreshToken) await tokenStore.setRefresh(res.refreshToken);
+  syncMcp();
   return { user: c.user };
 });
 
@@ -515,6 +551,7 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
     if (rotated && rotated !== access) await tokenStore.setAccess(rotated);
     const rotatedRefresh = c.getRefreshToken();
     if (rotatedRefresh && rotatedRefresh !== refresh) await tokenStore.setRefresh(rotatedRefresh);
+    syncMcp();
     return { user: c.user };
   }
   await tokenStore.clear();
@@ -522,6 +559,7 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
 });
 
 ipcMain.handle(CHANNELS.authLogout, async () => {
+  getMcpBridge().stop();
   if (client) await client.logout();
   await tokenStore.clear();
   return true;
@@ -668,6 +706,22 @@ ipcMain.handle(CHANNELS.quickChatSetHotkey, (_e, acc: string) => {
 ipcMain.on(CHANNELS.hotkeyPause, () => globalShortcut.unregisterAll());
 ipcMain.on(CHANNELS.hotkeyResume, () => registerQuickChatHotkey());
 
+// ── IPC: local MCP ───────────────────────────────────────────────
+ipcMain.handle(CHANNELS.mcpGetEnabled, () => !!loadConfig().mcp);
+ipcMain.handle(CHANNELS.mcpSetEnabled, (_e, enabled: boolean) => {
+  setMcpEnabled(!!enabled);
+  return !!enabled;
+});
+ipcMain.handle(CHANNELS.mcpListServers, () => loadConfig().mcpServers ?? []);
+ipcMain.handle(CHANNELS.mcpSaveServers, (_e, servers) => {
+  const next = saveConfig({ mcpServers: Array.isArray(servers) ? servers : [] });
+  syncMcp();
+  broadcastConfig(next);
+  return next.mcpServers ?? [];
+});
+ipcMain.handle(CHANNELS.mcpTestServer, (_e, cfg) => getMcpManager().test(cfg));
+ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
+
 // ── IPC: quick-chat ──────────────────────────────────────────────
 ipcMain.handle(CHANNELS.quickChatGetEnabled, () => !!loadConfig().quickChat);
 ipcMain.handle(CHANNELS.quickChatSetEnabled, (_e, enabled: boolean) => {
@@ -723,5 +777,7 @@ if (!gotLock) {
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
     disposeUpdater();
+    getMcpBridge().stop();
+    void getMcpManager().closeAll();
   });
 }

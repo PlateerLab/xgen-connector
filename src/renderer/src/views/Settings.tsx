@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { xgen } from '../bridge';
 import type { ConnectorConfig } from '../../../main/config';
 import { HotkeyCapture } from './HotkeyCapture';
+import { McpSettings } from './McpSettings';
 
 type Theme = NonNullable<ConnectorConfig['theme']>;
 
@@ -24,6 +25,7 @@ export const Settings: React.FC<{
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [showMcp, setShowMcp] = useState(false);
 
   // Any status message means the check is underway/done → drop the button spinner
   // (the message line then shows progress like "내려받는 중… 45%").
@@ -53,6 +55,8 @@ export const Settings: React.FC<{
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
+
+  if (showMcp) return <McpSettings onClose={() => setShowMcp(false)} />;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -168,6 +172,13 @@ export const Settings: React.FC<{
               <span className="track" />
             </label>
           </div>
+        </div>
+
+        <div className="field-row">
+          <span>로컬 MCP (내 PC 도구 연결)</span>
+          <button className="secondary" onClick={() => setShowMcp(true)}>
+            관리
+          </button>
         </div>
 
         <div className="field-row">

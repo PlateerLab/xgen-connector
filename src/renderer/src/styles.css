@@ -1198,6 +1198,112 @@ button {
   color: var(--primary);
 }
 
+/* ─── Local MCP settings ─── */
+.mcp-modal {
+  width: 560px;
+}
+.mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.mcp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+}
+.mcp-item-body {
+  flex: 1;
+  min-width: 0;
+}
+.mcp-item-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.mcp-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 5px;
+}
+.mcp-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.mcp-dot.ok {
+  background: var(--success);
+}
+.mcp-dot.off {
+  background: var(--gray-400);
+}
+.mcp-item-cmd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.mcp-item-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.mcp-form {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-top: 8px;
+  background: var(--panel-2);
+}
+.mcp-form .field {
+  margin: 8px 0;
+}
+.mcp-textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  resize: vertical;
+  outline: none;
+}
+.mcp-textarea:focus {
+  border-color: var(--primary-end);
+  box-shadow: 0 0 0 3px var(--violet-ring);
+}
+.switch.small-switch {
+  width: 34px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.switch.small-switch .track::before {
+  width: 14px;
+  height: 14px;
+}
+.switch.small-switch input:checked + .track::before {
+  transform: translateX(14px);
+}
+
 /* ─── Floating avatar overlay (transparent window, Geny-style) ─── */
 .overlay-html,
 .overlay-html body,

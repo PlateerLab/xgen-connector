@@ -5,7 +5,9 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
-    build: { rollupOptions: { external: ['keytar'] } },
+    // keytar (native), ws + the MCP SDK (spawns stdio children / ESM) must stay
+    // external so they resolve from node_modules at runtime.
+    build: { rollupOptions: { external: ['keytar', 'ws', '@modelcontextprotocol/sdk'] } },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],

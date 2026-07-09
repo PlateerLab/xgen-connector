@@ -22,6 +22,10 @@ files:
 asarUnpack:
   - '**/*.node'
   - '**/node_modules/keytar/**'
+  # ws + the MCP SDK spawn stdio subprocesses / load from disk — unpack so they
+  # resolve outside the asar at runtime.
+  - '**/node_modules/ws/**'
+  - '**/node_modules/@modelcontextprotocol/**'
 # Hyphenated, space-free artifact names. productName has a space ("XGEN
 # Connector"), and electron-updater 404s when the built file, latest*.yml and
 # the GitHub asset disagree on how spaces are encoded — a literal hyphenated

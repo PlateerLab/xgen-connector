@@ -8,7 +8,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { CHANNELS } from '../main/ipc';
 import type { ChatEvent, ChatRequest, CurrentUser, AgentListQuery, AgentListResult, HistoryTurn, Conversation } from '../core/index';
-import type { ConnectorConfig } from '../main/config';
+import type { ConnectorConfig, McpServerConfig } from '../main/config';
+
+/** Local-MCP bridge status pushed to the settings UI. */
+export interface McpBridgeStatusLike {
+  enabled: boolean;
+  connected: boolean;
+  error?: string;
+  servers: Array<{ name: string; connected: boolean; error?: string; tools: Array<{ name: string }> }>;
+}
 
 /** Live avatar/chat state pushed from the main window to the floating overlay. */
 export interface OverlayState {
@@ -127,6 +135,25 @@ const api = {
     resetPositions: (): void => ipcRenderer.send(CHANNELS.resetPositions),
     restart: (): void => ipcRenderer.send(CHANNELS.appRestart),
     quit: (): void => ipcRenderer.send(CHANNELS.appQuit),
+  },
+
+  /** Local MCP — host MCP servers here and bridge their tools to your agents. */
+  mcp: {
+    getEnabled: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.mcpGetEnabled),
+    setEnabled: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke(CHANNELS.mcpSetEnabled, enabled),
+    listServers: (): Promise<McpServerConfig[]> => ipcRenderer.invoke(CHANNELS.mcpListServers),
+    saveServers: (servers: McpServerConfig[]): Promise<McpServerConfig[]> =>
+      ipcRenderer.invoke(CHANNELS.mcpSaveServers, servers),
+    testServer: (
+      cfg: McpServerConfig,
+    ): Promise<{ ok: boolean; tools?: Array<{ name: string; description?: string }>; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.mcpTestServer, cfg),
+    status: (): Promise<McpBridgeStatusLike> => ipcRenderer.invoke(CHANNELS.mcpStatus),
+    onStatus: (cb: (s: McpBridgeStatusLike) => void): (() => void) => {
+      const h = (_e: unknown, s: McpBridgeStatusLike) => cb(s);
+      ipcRenderer.on(CHANNELS.mcpStatusEvent, h);
+      return () => ipcRenderer.removeListener(CHANNELS.mcpStatusEvent, h);
+    },
   },
 
   /** Global hotkeys (recorder support). */

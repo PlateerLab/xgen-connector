@@ -53,6 +53,12 @@ enter your **XGEN server URL** and **account**, then pick an agent and chat.
 - **Quick chat** — a Spotlight-style floating input bar summoned by a global
   hotkey (`Ctrl/Cmd+Shift+Enter`, **rebindable** via the recorder in Settings);
   type + Enter relays the message into the active agent's chat.
+- **Local MCP** — host MCP servers on your machine (stdio or Streamable HTTP) and
+  the connector bridges their tools to your XGEN agents: the backend auto-injects
+  them into the selected session's agent (agent_xgen / agent_harness / agent_geny),
+  no agentflow edit needed. Configure servers in Settings → 로컬 MCP. The bridge
+  runs in the main process over `/api/tools/ws/connector-mcp/{user_id}` (requires
+  the matching xgen-workflow backend).
 - **System tray** — the app lives in the tray: closing the window hides it (the
   floating avatar + quick-chat hotkey keep running). Tray menu: open chat / quick
   chat / settings / show-hide avatar / auto-update / **launch-on-login** / reset

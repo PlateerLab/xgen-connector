@@ -102,6 +102,18 @@ const api = {
     quit: () => {},
   },
   hotkeys: { pause: () => {}, resume: () => {} },
+  mcp: {
+    getEnabled: async () => true,
+    setEnabled: async () => true,
+    listServers: async () => [
+      { name: 'filesystem', transport: 'stdio', command: 'npx -y @modelcontextprotocol/server-filesystem /Users/me/docs', enabled: true },
+      { name: 'github', transport: 'http', url: 'https://mcp.example.com/mcp', enabled: false },
+    ],
+    saveServers: async (s) => s,
+    testServer: async () => ({ ok: true, tools: [{ name: 'read_file' }, { name: 'list_dir' }] }),
+    status: async () => ({ enabled: true, connected: true, servers: [{ name: 'filesystem', connected: true, tools: [{ name: 'read_file' }, { name: 'list_dir' }, { name: 'write_file' }] }] }),
+    onStatus: () => () => {},
+  },
   overlay: {
     getEnabled: async () => true,
     setEnabled: async () => true,

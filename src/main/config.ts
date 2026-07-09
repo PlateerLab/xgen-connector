@@ -9,6 +9,23 @@ import { app } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+/** A local MCP server the connector hosts + proxies to the user's XGEN agents. */
+export interface McpServerConfig {
+  /** Unique, stable id used to namespace the server's tools. */
+  name: string;
+  transport: 'stdio' | 'http';
+  /** stdio: full command line, e.g. `npx -y @modelcontextprotocol/server-filesystem /path`. */
+  command?: string;
+  /** stdio: extra environment merged over the connector's env (e.g. API tokens). */
+  env?: Record<string, string>;
+  /** http: the MCP endpoint URL (Streamable HTTP). */
+  url?: string;
+  /** http: extra request headers (e.g. Authorization). */
+  headers?: Record<string, string>;
+  /** Off servers are never connected/advertised. Default true. */
+  enabled?: boolean;
+}
+
 export interface ConnectorConfig {
   /** Gateway origin, e.g. "https://xgen.example.com". Empty on first run. */
   serverUrl: string;
@@ -37,6 +54,10 @@ export interface ConnectorConfig {
   quickChatHotkey?: string;
   /** Remembered quick-chat bar position. */
   quickChatBar?: { x: number; y: number };
+  /** Enable hosting local MCP servers + bridging their tools to your agents. */
+  mcp?: boolean;
+  /** Configured local MCP servers. */
+  mcpServers?: McpServerConfig[];
 }
 
 const DEFAULTS: ConnectorConfig = {

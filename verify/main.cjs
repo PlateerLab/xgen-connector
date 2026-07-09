@@ -161,5 +161,16 @@ app.whenReady().then(async () => {
   await sleep(500);
   await snap(win, 'settings.png');
 
+  // Local MCP manager modal
+  await win.webContents.executeJavaScript(`(() => {
+    const rows = [...document.querySelectorAll('.field-row')];
+    const row = rows.find((r) => (r.textContent||'').includes('로컬 MCP'));
+    const btn = row && row.querySelector('button');
+    if (btn) btn.click();
+    return !!btn;
+  })()`);
+  await sleep(500);
+  await snap(win, 'mcp.png');
+
   app.quit();
 });

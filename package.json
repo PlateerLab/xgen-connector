@@ -1,6 +1,6 @@
 {
   "name": "xgen-connector",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "XGEN Connector — desktop client to log in to an XGEN instance, browse your agents, and chat (SSE streaming). Works with agent_geny / agent_xgen / agent_harness agents.",
   "author": "PlateerLab",
   "license": "Apache-2.0",
@@ -24,13 +24,16 @@
     "dist:mac": "electron-vite build && electron-builder --mac"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "electron-updater": "^6.3.9",
-    "keytar": "^7.9.0"
+    "keytar": "^7.9.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.1",
     "electron": "^31.3.0",
     "electron-builder": "^24.13.3",
