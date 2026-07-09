@@ -578,9 +578,6 @@ button {
 .agent-item.active {
   background: var(--primary-soft);
 }
-.agent-item.active .agent-mark {
-  border-color: var(--primary-soft-border);
-}
 .agent-mark {
   width: 34px;
   height: 34px;
@@ -696,10 +693,13 @@ button {
   opacity: 0.4;
   cursor: default;
 }
+/* Compact account/logout row — sized to the chat composer's send-button scale
+   (not the full --footer-h), so the bottom of the sidebar reads as a light
+   account strip rather than a tall empty band. */
 .sidebar-foot {
-  height: var(--footer-h);
+  height: 56px;
   flex-shrink: 0;
-  padding: 0 16px;
+  padding: 0 12px;
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;

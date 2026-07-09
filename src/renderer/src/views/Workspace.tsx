@@ -238,9 +238,6 @@ export const Workspace: React.FC<{
                       }`}
                       onClick={() => pickAgent(a)}
                     >
-                      <span className="agent-mark">
-                        <XgenMark height={17} variant="color" />
-                      </span>
                       <span className="agent-body">
                         <div className="agent-name">{a.workflowName}</div>
                         <div className="agent-meta">
