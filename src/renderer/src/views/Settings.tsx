@@ -25,9 +25,11 @@ export const Settings: React.FC<{
   const [checking, setChecking] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // Any status message means the check is underway/done → drop the button spinner
+  // (the message line then shows progress like "내려받는 중… 45%").
   useEffect(() => xgen.updater.onMessage((m) => {
     setUpdateMsg(m);
-    if (!/확인 중|내려받는 중/.test(m)) setChecking(false);
+    if (!/^업데이트 확인 중/.test(m)) setChecking(false);
   }), []);
   useEffect(() => {
     xgen.quickChat.getHotkey().then(setHotkey).catch(() => undefined);
@@ -230,6 +232,8 @@ export const Settings: React.FC<{
                 setChecking(true);
                 setUpdateMsg(null);
                 void xgen.updater.check();
+                // Safety: never leave the spinner stuck if no message arrives.
+                setTimeout(() => setChecking(false), 25000);
               }}
             >
               {checking ? '확인 중…' : '업데이트 확인'}
