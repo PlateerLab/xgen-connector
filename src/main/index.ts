@@ -151,27 +151,142 @@ function createWindow(): void {
 // avatar (extension point) + a live subtitle of the active chat stream. When no
 // avatar renderer is registered it shows just the streaming reply as a floating
 // bubble ("아바타가 없으면 채팅만"). TTS/STT/screen-capture are intentionally omitted.
-let overlayBoundsTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingOverlayBounds: { width: number; height: number; x: number; y: number } | null = null;
-/** Capture the overlay's current bounds NOW (synchronously) and debounce only
- *  the disk write. Capturing eagerly means a move/resize is never lost even if
- *  the window is destroyed (overlay disabled / app quit) before the timer runs. */
-function saveOverlayBounds(): void {
-  if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  const b = overlayWindow.getBounds();
-  pendingOverlayBounds = { width: b.width, height: b.height, x: b.x, y: b.y };
-  if (overlayBoundsTimer) clearTimeout(overlayBoundsTimer);
-  overlayBoundsTimer = setTimeout(flushOverlayBounds, 400);
+// ── overlay geometry: multi-monitor + mixed-DPI aware (ported from Geny) ──────
+// Naive single-bounds persistence breaks across monitors with different scale
+// factors: getBounds()/setBounds() round-trips the size through DIP↔physical and
+// a WM_DPICHANGED rescale, so the saved width/height is wrong and the window
+// "never sticks". The fix (Geny's) is to (1) remember bounds PER MONITOR keyed by
+// a display signature, (2) suppress saves while a DPI change is settling, and
+// (3) clamp restored bounds onto a currently-connected display.
+type WinBounds = { x: number; y: number; width: number; height: number };
+type DisplayT = ReturnType<typeof screen.getPrimaryDisplay>;
+
+// Resolve saved bounds onto a CONNECTED display (overlap-most, else nearest), then
+// clamp to its work area — a window saved on an unplugged monitor lands visibly on
+// the nearest one instead of off-screen.
+function restoreWinBounds(saved: WinBounds | undefined, defaults: WinBounds): WinBounds {
+  if (!saved || ![saved.x, saved.y, saved.width, saved.height].every(Number.isFinite)) return defaults;
+  const wa = screen.getDisplayMatching(saved).workArea;
+  const width = Math.max(240, Math.min(Math.round(saved.width), wa.width));
+  const height = Math.max(220, Math.min(Math.round(saved.height), wa.height));
+  const x = Math.round(Math.min(Math.max(saved.x, wa.x), wa.x + wa.width - width));
+  const y = Math.round(Math.min(Math.max(saved.y, wa.y), wa.y + wa.height - height));
+  return { x, y, width, height };
 }
-/** Write any pending overlay bounds immediately (call before destroy / on quit). */
-function flushOverlayBounds(): void {
-  if (overlayBoundsTimer) {
-    clearTimeout(overlayBoundsTimer);
-    overlayBoundsTimer = null;
+
+// Set on display-metrics-changed; saves hold off until this passes so we persist
+// SETTLED bounds, not the mid-DPI-rescale ones (which is how position ends up wrong).
+let dpiSettleUntil = 0;
+
+function displayKey(d: DisplayT): string {
+  return `${d.bounds.x},${d.bounds.y}:${d.size.width}x${d.size.height}@${d.scaleFactor}`;
+}
+function overlayCurrentDisplay(): DisplayT | null {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return null;
+  return screen.getDisplayMatching(overlayWindow.getBounds());
+}
+let lastOverlayDisplayKey = '';
+let overlayGeomTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Persist the overlay's geometry for the monitor it's on. Debounced, and waits
+ *  out an in-flight DPI transition. `immediate` writes now (drag/resize END, or
+ *  before teardown) so a fast restart can't lose it. */
+function saveOverlayGeometry(immediate = false): void {
+  if (overlayGeomTimer) {
+    clearTimeout(overlayGeomTimer);
+    overlayGeomTimer = null;
   }
-  if (pendingOverlayBounds) {
-    saveConfig({ overlayBounds: pendingOverlayBounds });
-    pendingOverlayBounds = null;
+  const run = () => {
+    if (!overlayWindow || overlayWindow.isDestroyed() || overlayWindow.isMinimized()) return;
+    const wait = dpiSettleUntil - Date.now();
+    if (wait > 0 && !immediate) {
+      overlayGeomTimer = setTimeout(run, wait + 100);
+      return;
+    }
+    const d = overlayCurrentDisplay();
+    if (!d) return;
+    const b = overlayWindow.getBounds();
+    const bounds: WinBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
+    const cfg = loadConfig();
+    saveConfig({ overlayByDisplay: { ...(cfg.overlayByDisplay || {}), [displayKey(d)]: bounds }, overlayBounds: bounds });
+  };
+  if (immediate) run();
+  else overlayGeomTimer = setTimeout(run, 450);
+}
+
+// On launch: apply the geometry remembered for whichever display the overlay opened on.
+function restoreOverlayGeometry(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const d = overlayCurrentDisplay();
+  if (!d) return;
+  lastOverlayDisplayKey = displayKey(d);
+  const cfg = loadConfig();
+  const saved = cfg.overlayByDisplay?.[displayKey(d)] ?? asWinBounds(cfg.overlayBounds);
+  if (saved) overlayWindow.setBounds(restoreWinBounds(saved, saved));
+}
+function asWinBounds(b: { width: number; height: number; x?: number; y?: number } | undefined): WinBounds | undefined {
+  if (!b || b.x === undefined || b.y === undefined) return undefined;
+  return { x: b.x, y: b.y, width: b.width, height: b.height };
+}
+
+// After a move settles on a DIFFERENT monitor, snap to THAT monitor's remembered
+// size (keeping the dropped position) — fixes the DPI-move size distortion.
+function applyOverlaySizeOnCross(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const d = overlayCurrentDisplay();
+  if (!d) return;
+  const key = displayKey(d);
+  if (key === lastOverlayDisplayKey) return;
+  lastOverlayDisplayKey = key;
+  const saved = loadConfig().overlayByDisplay?.[key];
+  if (!saved) {
+    saveOverlayGeometry();
+    return;
+  }
+  const wa = d.workArea;
+  const width = Math.min(saved.width, wa.width);
+  const height = Math.min(saved.height, wa.height);
+  const b = overlayWindow.getBounds();
+  const x = Math.round(Math.min(Math.max(b.x, wa.x), wa.x + wa.width - width));
+  const y = Math.round(Math.min(Math.max(b.y, wa.y), wa.y + wa.height - height));
+  overlayWindow.setBounds({ x, y, width, height });
+}
+
+// 'moved' fires during a drag + on the DPI cross; debounce, wait out the rescale,
+// THEN reconcile size-on-cross and persist.
+let overlayMovedTimer: ReturnType<typeof setTimeout> | null = null;
+function onOverlayMoved(): void {
+  if (overlayMovedTimer) clearTimeout(overlayMovedTimer);
+  const run = () => {
+    const wait = dpiSettleUntil - Date.now();
+    if (wait > 0) {
+      overlayMovedTimer = setTimeout(run, wait + 100);
+      return;
+    }
+    applyOverlaySizeOnCross();
+    saveOverlayGeometry();
+  };
+  overlayMovedTimer = setTimeout(run, 350);
+}
+
+// Any overlap with a work area = still (at least partly) visible.
+function isVisibleOnSomeDisplay(b: WinBounds): boolean {
+  return screen.getAllDisplays().some((d) => {
+    const wa = d.workArea;
+    const ix = Math.min(b.x + b.width, wa.x + wa.width) - Math.max(b.x, wa.x);
+    const iy = Math.min(b.y + b.height, wa.y + wa.height) - Math.max(b.y, wa.y);
+    return ix > 0 && iy > 0;
+  });
+}
+
+// Monitor unplug/rearrange can leave a window entirely off-screen — pull only
+// those back onto the nearest display; leave visible windows where the user put them.
+function ensureWindowsOnScreen(): void {
+  for (const win of [overlayWindow, mainWindow, quickChatWindow]) {
+    if (!win || win.isDestroyed()) continue;
+    const b = win.getBounds();
+    if (isVisibleOnSomeDisplay(b)) continue;
+    win.setBounds(restoreWinBounds(b, b));
   }
 }
 
@@ -180,7 +295,9 @@ function createOverlay(): void {
     overlayWindow.show();
     return;
   }
-  const wa = screen.getPrimaryDisplay().workArea;
+  // Start from a sensible default near the cursor's display; restoreOverlay
+  // Geometry() then applies the per-monitor remembered bounds after creation.
+  const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   const saved = loadConfig().overlayBounds;
   const width = saved?.width ?? 340;
   const height = saved?.height ?? 460;
@@ -224,8 +341,14 @@ function createOverlay(): void {
     void shell.openExternal(url);
     return { action: 'deny' };
   });
-  overlayWindow.on('moved', saveOverlayBounds);
-  overlayWindow.on('resized', saveOverlayBounds);
+  // Per-monitor geometry: restore this display's remembered bounds, then on every
+  // move/resize reconcile size-on-cross + persist for the current monitor. On
+  // Windows these events fire for programmatic setBounds/setPosition too; the
+  // renderer also sends overlay:commitBounds on pointer-up as a cross-platform
+  // guarantee (Linux doesn't emit them for programmatic bounds changes).
+  restoreOverlayGeometry();
+  overlayWindow.on('moved', onOverlayMoved);
+  overlayWindow.on('resized', () => saveOverlayGeometry());
   overlayWindow.on('closed', () => {
     overlayWindow = null;
   });
@@ -241,7 +364,7 @@ function setOverlayEnabled(enabled: boolean): void {
   const next = saveConfig({ avatarOverlay: enabled });
   if (enabled) createOverlay();
   else if (overlayWindow && !overlayWindow.isDestroyed()) {
-    flushOverlayBounds(); // persist last move/resize before tearing the window down
+    saveOverlayGeometry(true); // persist last move/resize before tearing the window down
     overlayWindow.destroy();
     overlayWindow = null;
   }
@@ -448,7 +571,8 @@ function applyAutoLaunch(enabled: boolean): void {
 }
 
 function resetPositions(): void {
-  saveConfig({ overlayBounds: undefined, quickChatBar: undefined });
+  saveConfig({ overlayBounds: undefined, overlayByDisplay: undefined, quickChatBar: undefined });
+  lastOverlayDisplayKey = '';
   const wa = screen.getPrimaryDisplay().workArea;
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     const w = 340;
@@ -702,10 +826,8 @@ ipcMain.on(CHANNELS.overlayMoveBy, (_e, dx: number, dy: number) => {
   // only touches x/y, so the size is rock-stable while moving. (Geny's fix.)
   const [x, y] = overlayWindow.getPosition();
   overlayWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
-  // Programmatic setPosition does NOT emit 'moved' on Linux (and unreliably
-  // elsewhere), so the window 'moved' listener never fires — persist explicitly.
-  // saveOverlayBounds() is debounced, so per-delta calls coalesce into one write.
-  saveOverlayBounds();
+  // Persistence: 'moved' fires on Windows (→ onOverlayMoved, DPI-aware) and the
+  // renderer sends overlay:commitBounds on pointer-up for all platforms.
 });
 ipcMain.on(CHANNELS.overlayResizeBy, (_e, edge: string, dx: number, dy: number) => {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
@@ -725,15 +847,12 @@ ipcMain.on(CHANNELS.overlayResizeBy, (_e, edge: string, dx: number, dy: number) 
     height = nh;
   }
   overlayWindow.setBounds({ x, y, width, height });
-  // Same as moveBy: persist explicitly (programmatic setBounds doesn't reliably
-  // emit 'resized'); debounced so per-delta resize calls coalesce.
-  saveOverlayBounds();
+  // Persistence via 'resized' (Windows) + overlay:commitBounds on pointer-up.
 });
-// Drag/resize gesture ENDED (renderer pointerup) → write bounds to disk NOW
-// instead of waiting out the debounce, so an immediate restart can't lose it.
+// Drag/resize gesture ENDED (renderer pointerup) → persist the SETTLED bounds for
+// the current monitor immediately, so an immediate restart can't lose it.
 ipcMain.on(CHANNELS.overlayCommitBounds, () => {
-  saveOverlayBounds();
-  flushOverlayBounds();
+  saveOverlayGeometry(true);
 });
 ipcMain.on(CHANNELS.overlayFocusMain, () => showMain());
 ipcMain.on(CHANNELS.overlayOpenSettings, () => openMainSettings());
@@ -750,7 +869,7 @@ ipcMain.handle(CHANNELS.autostartSet, (_e, enabled: boolean) => {
 ipcMain.on(CHANNELS.resetPositions, () => resetPositions());
 ipcMain.on(CHANNELS.appRestart, () => {
   appQuitting = true;
-  flushOverlayBounds(); // persist any pending move/resize before relaunching
+  saveOverlayGeometry(true); // persist any pending move/resize before relaunching
   app.relaunch();
   app.quit();
 });
@@ -851,6 +970,19 @@ if (!gotLock) {
       registerQuickChatHotkey();
     }
     app.on('activate', () => showMain());
+
+    // Monitor plug/unplug/rearrange or a DPI change → mark a settle window so
+    // bounds saves hold off on transient rescale values, then rescue any window
+    // that ended up off-screen on a now-disconnected monitor.
+    let displayTimer: ReturnType<typeof setTimeout> | null = null;
+    const onDisplayChange = () => {
+      dpiSettleUntil = Date.now() + 1800;
+      if (displayTimer) clearTimeout(displayTimer);
+      displayTimer = setTimeout(ensureWindowsOnScreen, 900);
+    };
+    screen.on('display-removed', onDisplayChange);
+    screen.on('display-added', onDisplayChange);
+    screen.on('display-metrics-changed', onDisplayChange);
   });
 
   // Tray app — never auto-quit when the window is hidden/closed. Quit only via
@@ -860,7 +992,7 @@ if (!gotLock) {
   });
   app.on('before-quit', () => {
     appQuitting = true;
-    flushOverlayBounds(); // don't drop a pending move/resize on quit
+    saveOverlayGeometry(true); // don't drop a pending move/resize on quit
   });
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();

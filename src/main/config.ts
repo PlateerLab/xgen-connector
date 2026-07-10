@@ -46,8 +46,12 @@ export interface ConnectorConfig {
   /** Subtitle typewriter pace — ms per character (throttles fast streams so the
    * speech bubble stays readable). Lower = faster. Default 50. */
   subtitleCharMs?: number;
-  /** Persisted floating-overlay bounds. */
+  /** Persisted floating-overlay bounds (legacy single-monitor fallback). */
   overlayBounds?: { width: number; height: number; x?: number; y?: number };
+  /** Avatar overlay geometry remembered PER MONITOR (key = display signature),
+   *  so moving across mixed-DPI monitors restores each screen's own size instead
+   *  of a rescaled one. Preferred over `overlayBounds`. */
+  overlayByDisplay?: Record<string, { x: number; y: number; width: number; height: number }>;
   /** Enable the global quick-chat hotkey (Spotlight-style input bar). */
   quickChat?: boolean;
   /** Quick-chat global accelerator. Default Control+Shift+/ (Ctrl + ?). */
