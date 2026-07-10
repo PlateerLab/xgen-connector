@@ -1,6 +1,6 @@
 {
   "name": "xgen-connector",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "XGEN Connector — desktop client to log in to an XGEN instance, browse your agents, and chat (SSE streaming). Works with agent_geny / agent_xgen / agent_harness agents.",
   "author": "PlateerLab",
   "license": "Apache-2.0",
@@ -24,13 +24,14 @@
     "dist:mac": "electron-vite build && electron-builder --mac"
   },
   "dependencies": {
+    "@esotericsoftware/spine-pixi-v7": "^4.2.114",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@pixi/unsafe-eval": "^7.4.3",
     "electron-updater": "^6.3.9",
     "keytar": "^7.9.0",
-    "ws": "^8.21.0",
-    "pixi.js": "^7.4.3",
     "pixi-live2d-display": "^0.5.0-beta",
-    "@esotericsoftware/spine-pixi-v7": "^4.2.114"
+    "pixi.js": "^7.4.3",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

@@ -18,6 +18,18 @@ import type { AvatarConfig, AvatarDescriptor } from '../../../core/preferences';
 
 const CUBISM_CORE_SRC = './live2dcubismcore.min.js';
 let _spineAliasSeq = 0;
+let _unsafeEvalInstalled = false;
+
+/** The overlay CSP forbids 'unsafe-eval'; pixi compiles shaders with new
+ *  Function() by default. @pixi/unsafe-eval patches pixi to avoid eval so it
+ *  runs under strict CSP (called once, before the first Application). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function installUnsafeEval(PIXI: any): Promise<void> {
+  if (_unsafeEvalInstalled) return;
+  const { install } = await import('@pixi/unsafe-eval');
+  install(PIXI);
+  _unsafeEvalInstalled = true;
+}
 
 function ensureCubismCore(): Promise<void> {
   const win = window as unknown as { Live2DCubismCore?: unknown };
@@ -73,6 +85,8 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
 
     const init = async () => {
       const PIXI = await import('pixi.js');
+      if (isStale()) return;
+      await installUnsafeEval(PIXI); // strict-CSP shader compile (no eval)
       if (isStale()) return;
       app = new PIXI.Application({
         width: container.clientWidth || 300,
