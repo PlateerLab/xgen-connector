@@ -152,13 +152,27 @@ function createWindow(): void {
 // avatar renderer is registered it shows just the streaming reply as a floating
 // bubble ("아바타가 없으면 채팅만"). TTS/STT/screen-capture are intentionally omitted.
 let overlayBoundsTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingOverlayBounds: { width: number; height: number; x: number; y: number } | null = null;
+/** Capture the overlay's current bounds NOW (synchronously) and debounce only
+ *  the disk write. Capturing eagerly means a move/resize is never lost even if
+ *  the window is destroyed (overlay disabled / app quit) before the timer runs. */
 function saveOverlayBounds(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const b = overlayWindow.getBounds();
+  pendingOverlayBounds = { width: b.width, height: b.height, x: b.x, y: b.y };
   if (overlayBoundsTimer) clearTimeout(overlayBoundsTimer);
-  overlayBoundsTimer = setTimeout(() => {
-    if (!overlayWindow || overlayWindow.isDestroyed()) return;
-    const b = overlayWindow.getBounds();
-    saveConfig({ overlayBounds: { width: b.width, height: b.height, x: b.x, y: b.y } });
-  }, 400);
+  overlayBoundsTimer = setTimeout(flushOverlayBounds, 400);
+}
+/** Write any pending overlay bounds immediately (call before destroy / on quit). */
+function flushOverlayBounds(): void {
+  if (overlayBoundsTimer) {
+    clearTimeout(overlayBoundsTimer);
+    overlayBoundsTimer = null;
+  }
+  if (pendingOverlayBounds) {
+    saveConfig({ overlayBounds: pendingOverlayBounds });
+    pendingOverlayBounds = null;
+  }
 }
 
 function createOverlay(): void {
@@ -227,6 +241,7 @@ function setOverlayEnabled(enabled: boolean): void {
   const next = saveConfig({ avatarOverlay: enabled });
   if (enabled) createOverlay();
   else if (overlayWindow && !overlayWindow.isDestroyed()) {
+    flushOverlayBounds(); // persist last move/resize before tearing the window down
     overlayWindow.destroy();
     overlayWindow = null;
   }
@@ -685,6 +700,10 @@ ipcMain.on(CHANNELS.overlayMoveBy, (_e, dx: number, dy: number) => {
   // only touches x/y, so the size is rock-stable while moving. (Geny's fix.)
   const [x, y] = overlayWindow.getPosition();
   overlayWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
+  // Programmatic setPosition does NOT emit 'moved' on Linux (and unreliably
+  // elsewhere), so the window 'moved' listener never fires — persist explicitly.
+  // saveOverlayBounds() is debounced, so per-delta calls coalesce into one write.
+  saveOverlayBounds();
 });
 ipcMain.on(CHANNELS.overlayResizeBy, (_e, edge: string, dx: number, dy: number) => {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
@@ -704,6 +723,9 @@ ipcMain.on(CHANNELS.overlayResizeBy, (_e, edge: string, dx: number, dy: number) 
     height = nh;
   }
   overlayWindow.setBounds({ x, y, width, height });
+  // Same as moveBy: persist explicitly (programmatic setBounds doesn't reliably
+  // emit 'resized'); debounced so per-delta resize calls coalesce.
+  saveOverlayBounds();
 });
 ipcMain.on(CHANNELS.overlayFocusMain, () => showMain());
 ipcMain.on(CHANNELS.overlayOpenSettings, () => openMainSettings());
@@ -829,6 +851,7 @@ if (!gotLock) {
   });
   app.on('before-quit', () => {
     appQuitting = true;
+    flushOverlayBounds(); // don't drop a pending move/resize on quit
   });
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
