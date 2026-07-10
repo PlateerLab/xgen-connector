@@ -1,16 +1,18 @@
 /**
- * Live2DCanvas — the connector overlay's real avatar renderer, registered into
- * the AvatarSlot seam. Ported from Geny's Live2DCanvas/SpineCanvas (pixi v7 +
- * pixi-live2d-display/cubism4 + spine-pixi-v7), stripped to idle-only.
+ * Live2DCanvas — the connector overlay's avatar renderer (registered into the
+ * AvatarSlot seam). Ported from Geny (pixi v7 + pixi-live2d-display/cubism4 +
+ * spine-pixi-v7), idle-only.
  *
- * XGEN model (vs Geny): the avatar is the user's GLOBAL default from 개인 설정
- * (preferences.avatar.defaultAvatarId) — NOT chosen per session. This component
- * fetches that config itself, resolves the capability asset URLs against the
- * configured server URL, and renders the model. When no avatar is configured /
- * enabled it falls back to the branded placeholder (identical to the overlay's
- * default), so registering this renderer never regresses the empty state.
+ * XGEN model: the avatar is the user's GLOBAL default from 개인 설정
+ * (preferences.avatar.defaultAvatarId). This fetches it, renders it, and — like
+ * Geny's connector — lets you **wheel-zoom + left-drag-pan the avatar** when the
+ * overlay is unlocked; the adjusted scale/position are persisted back to
+ * preferences.avatar (so they stick and sync to the 개인 설정 preview).
+ *
+ * Assets load through the main-process `xgenavatar://` proxy (no CORS/CSP), and
+ * pixi is patched with @pixi/unsafe-eval for the overlay's strict CSP.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import { XgenMark } from '../brand/Logo';
 import type { AvatarState } from './AvatarSlot';
@@ -20,9 +22,6 @@ const CUBISM_CORE_SRC = './live2dcubismcore.min.js';
 let _spineAliasSeq = 0;
 let _unsafeEvalInstalled = false;
 
-/** The overlay CSP forbids 'unsafe-eval'; pixi compiles shaders with new
- *  Function() by default. @pixi/unsafe-eval patches pixi to avoid eval so it
- *  runs under strict CSP (called once, before the first Application). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function installUnsafeEval(PIXI: any): Promise<void> {
   if (_unsafeEvalInstalled) return;
@@ -50,10 +49,22 @@ function ensureCubismCore(): Promise<void> {
   });
 }
 
-/** The actual pixi renderer for one resolved avatar. */
-const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = ({ avatar, serverUrl }) => {
+interface AvatarTransform {
+  scale: number;
+  position: { x: number; y: number };
+}
+
+/** The pixi renderer for one avatar. Interactive: wheel zoom + left-drag pan,
+ *  reporting the adjusted transform via onTransform. */
+const AvatarModel: React.FC<{
+  avatar: AvatarDescriptor;
+  serverUrl: string;
+  onTransform: (t: AvatarTransform) => void;
+}> = ({ avatar, serverUrl, onTransform }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const genRef = useRef(0);
+  const onTransformRef = useRef(onTransform);
+  onTransformRef.current = onTransform;
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [err, setErr] = useState('');
 
@@ -64,8 +75,9 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
     const isStale = () => gen !== genRef.current;
     setPhase('loading');
     setErr('');
-    // Route every asset through the main-process proxy scheme (no CORS/CSP);
-    // relative moc3/textures/atlas siblings resolve against the same scheme.
+
+    // Route assets through the main-process proxy (no CORS/CSP); relative
+    // moc3/textures/atlas siblings resolve against the same scheme.
     const url = (u: string) => {
       if (/^xgenavatar:/.test(u)) return u;
       let path = u;
@@ -77,16 +89,71 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
       return `xgenavatar://a${path}`;
     };
 
+    // interaction state, seeded from the saved descriptor
+    let scaleMul = avatar.scale || (avatar.runtime === 'spine' ? 0.7 : 0.85);
+    const pos = { x: avatar.position?.x || 0, y: avatar.position?.y || 0 };
+    let naturalW = 600;
+    let naturalH = 600;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let app: any = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let display: any = null;
     let ro: ResizeObserver | null = null;
+    let emitTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const applyTransform = () => {
+      if (!app || !display) return;
+      const b = Math.min(app.screen.width / naturalW, app.screen.height / naturalH);
+      display.scale.set(b * scaleMul);
+      display.x = app.screen.width / 2 + pos.x;
+      display.y = app.screen.height / 2 + pos.y;
+    };
+    const scheduleEmit = () => {
+      if (emitTimer) clearTimeout(emitTimer);
+      emitTimer = setTimeout(() => onTransformRef.current({ scale: scaleMul, position: { x: pos.x, y: pos.y } }), 500);
+    };
+
+    // wheel zoom + left-drag pan (only fires when the overlay is unlocked → not
+    // click-through; when locked the OS window swallows these events).
+    const onWheel = (e: WheelEvent) => {
+      if (!display) return;
+      e.preventDefault();
+      scaleMul = Math.min(5, Math.max(0.05, scaleMul * (e.deltaY < 0 ? 1.08 : 1 / 1.08)));
+      applyTransform();
+      scheduleEmit();
+    };
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0 || !display) return;
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      container.setPointerCapture?.(e.pointerId);
+      container.style.cursor = 'grabbing';
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!dragging || !display) return;
+      pos.x += e.clientX - lastX;
+      pos.y += e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      applyTransform();
+    };
+    const onUp = (e: PointerEvent) => {
+      if (!dragging) return;
+      dragging = false;
+      container.releasePointerCapture?.(e.pointerId);
+      container.style.cursor = 'grab';
+      scheduleEmit();
+    };
 
     const init = async () => {
       const PIXI = await import('pixi.js');
       if (isStale()) return;
-      await installUnsafeEval(PIXI); // strict-CSP shader compile (no eval)
+      await installUnsafeEval(PIXI);
       if (isStale()) return;
       app = new PIXI.Application({
         width: container.clientWidth || 300,
@@ -103,19 +170,6 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
       canvas.style.display = 'block';
       container.appendChild(canvas);
 
-      // Natural (unscaled) model size captured ONCE at load. Fitting must always
-      // use this — reading display.width after a scale is applied compounds the
-      // scale on every resize and blows the avatar up.
-      let naturalW = 600;
-      let naturalH = 600;
-      const fit = () => {
-        if (!app || !display) return;
-        const b = Math.min(app.screen.width / naturalW, app.screen.height / naturalH);
-        display.scale.set(b * (avatar.scale || (avatar.runtime === 'spine' ? 0.7 : 0.85)));
-        display.x = app.screen.width / 2 + (avatar.position?.x || 0);
-        display.y = app.screen.height / 2 + (avatar.position?.y || 0);
-      };
-
       if (avatar.runtime === 'spine') {
         const { Spine } = await import('@esotericsoftware/spine-pixi-v7');
         if (isStale()) return;
@@ -131,7 +185,7 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
         display = spine;
         naturalW = spine.skeleton?.data?.width || 600;
         naturalH = spine.skeleton?.data?.height || 800;
-        fit();
+        applyTransform();
         app.stage.addChild(spine);
         const anims: Array<{ name: string }> = spine.skeleton?.data?.animations || [];
         const pick =
@@ -158,9 +212,9 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
         }
         display = model;
         model.anchor.set(0.5, 0.5);
-        naturalW = model.width || 600; // read at scale 1, before fit()
+        naturalW = model.width || 600; // read at scale 1, before applyTransform
         naturalH = model.height || 600;
-        fit();
+        applyTransform();
         app.stage.addChild(model);
         try {
           await model.motion(idle, undefined, l2d.MotionPriority?.IDLE ?? 1);
@@ -172,9 +226,17 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
       ro = new ResizeObserver(() => {
         if (isStale() || !app || !display) return;
         app.renderer.resize(container.clientWidth || 300, container.clientHeight || 400);
-        fit(); // uses the stored natural size — never the already-scaled display size
+        applyTransform(); // uses stored natural size — never the scaled display size
       });
       ro.observe(container);
+
+      container.style.cursor = 'grab';
+      container.addEventListener('wheel', onWheel, { passive: false });
+      container.addEventListener('pointerdown', onDown);
+      container.addEventListener('pointermove', onMove);
+      container.addEventListener('pointerup', onUp);
+      container.addEventListener('pointercancel', onUp);
+
       if (!isStale()) setPhase('ready');
     };
 
@@ -189,6 +251,12 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
 
     return () => {
       genRef.current++;
+      if (emitTimer) clearTimeout(emitTimer);
+      container.removeEventListener('wheel', onWheel);
+      container.removeEventListener('pointerdown', onDown);
+      container.removeEventListener('pointermove', onMove);
+      container.removeEventListener('pointerup', onUp);
+      container.removeEventListener('pointercancel', onUp);
       try {
         ro?.disconnect();
       } catch {
@@ -207,7 +275,10 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
       }
       if (container) container.innerHTML = '';
     };
-  }, [avatar, serverUrl]);
+    // Re-init only on avatar IDENTITY / server change — NOT on scale/position
+    // (those are driven live by interaction + persisted; re-seeding would reload).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avatar.id, avatar.modelUrl, avatar.atlasUrl, avatar.runtime, avatar.idleMotionGroupName, serverUrl]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -241,19 +312,15 @@ function selectedFrom(cfg: AvatarConfig | null): AvatarDescriptor | null {
   return cfg.avatars.find((a) => a.id === cfg.defaultAvatarId) ?? cfg.avatars[0] ?? null;
 }
 
-/** The registered AvatarRenderer: resolves the user's GLOBAL default avatar
- *  (개인 설정) and renders it, else the branded placeholder.
- *
- *  The avatar config is set only in 개인 설정 (web), so we POLL it (+ react to
- *  config changes) rather than fetch once: this reliably picks up login that
- *  happens after mount, a newly-selected avatar, and adjusted scale/position —
- *  and only re-renders (reloads the model) when the resolved avatar/serverUrl
- *  actually change (signature compare), so polling never causes flicker. */
+/** The registered AvatarRenderer: resolves the global default avatar, renders +
+ *  lets you adjust it (persisted), else the branded placeholder. */
 export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
-  const [avatar, setAvatar] = useState<AvatarDescriptor | null>(null);
+  const [selected, setSelected] = useState<AvatarDescriptor | null>(null);
   const [serverUrl, setServerUrl] = useState('');
   const [diag, setDiag] = useState('init');
   const sigRef = useRef('');
+  const cfgRef = useRef<AvatarConfig | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -265,16 +332,17 @@ export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
         }
         const [cfg, conf] = await Promise.all([xgen.user.avatarConfig(), xgen.config.get()]);
         if (!alive) return;
+        cfgRef.current = cfg;
         const su = conf.serverUrl || '';
         const a = selectedFrom(cfg);
-        setDiag(
-          `en=${cfg?.enabled} n=${cfg?.avatars?.length ?? 0} def=${cfg?.defaultAvatarId ? 'y' : 'n'} srv=${su ? 'y' : 'n'} → ${a ? 'avatar' : 'none'}`,
-        );
-        const sig = `${su}|${a ? JSON.stringify([a.id, a.modelUrl, a.atlasUrl, a.runtime, a.scale, a.position]) : 'none'}`;
-        if (sig === sigRef.current) return; // nothing changed → no reload
+        setDiag(`en=${cfg?.enabled} n=${cfg?.avatars?.length ?? 0} def=${cfg?.defaultAvatarId ? 'y' : 'n'} srv=${su ? 'y' : 'n'} → ${a ? 'avatar' : 'none'}`);
+        // IDENTITY-only signature: a scale/position change (from here or the web)
+        // must NOT reload the model — only a different avatar / server does.
+        const sig = `${su}|${a ? `${a.id}|${a.modelUrl}|${a.atlasUrl ?? ''}|${a.runtime}` : 'none'}`;
+        if (sig === sigRef.current) return;
         sigRef.current = sig;
         setServerUrl(su);
-        setAvatar(a);
+        setSelected(a);
       } catch (e) {
         console.error('[Live2DCanvas] avatar config fetch failed:', e);
         if (alive) setDiag(`err: ${e instanceof Error ? e.message : String(e)}`);
@@ -287,14 +355,30 @@ export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
       alive = false;
       clearInterval(iv);
       off?.();
+      if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, []);
 
-  if (avatar && serverUrl) {
-    return <AvatarModel avatar={avatar} serverUrl={serverUrl} />;
+  // Persist an in-overlay adjustment onto the selected avatar (debounced).
+  const onTransform = useCallback((tf: AvatarTransform) => {
+    const cur = cfgRef.current;
+    if (!cur) return;
+    const id = cur.defaultAvatarId ?? cur.avatars[0]?.id;
+    if (!id) return;
+    const next: AvatarConfig = {
+      ...cur,
+      avatars: cur.avatars.map((a) => (a.id === id ? { ...a, scale: tf.scale, position: tf.position } : a)),
+    };
+    cfgRef.current = next;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      xgen.user.saveAvatarConfig?.(next).catch(() => undefined);
+    }, 700);
+  }, []);
+
+  if (selected && serverUrl) {
+    return <AvatarModel avatar={selected} serverUrl={serverUrl} onTransform={onTransform} />;
   }
-  // fallback: the branded placeholder (identical to the overlay's default) + a
-  // small diagnostic line so a screenshot pinpoints why no avatar is shown.
   return (
     <div className={`ov-placeholder ${state.speaking ? 'speaking' : ''}`}>
       <div className="ov-orb">

@@ -11,6 +11,7 @@ export const CHANNELS = {
   authFailed: 'auth:failed',
 
   userAvatarConfig: 'user:avatarConfig', // renderer → main → GET /api/admin/user preferences.avatar
+  userSaveAvatarConfig: 'user:saveAvatarConfig', // overlay adjusts scale/position → PUT
 
   agentsList: 'agents:list',
 

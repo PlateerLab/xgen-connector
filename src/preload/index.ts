@@ -64,6 +64,9 @@ const api = {
   user: {
     /** The logged-in user's avatar config (preferences.avatar). Global default. */
     avatarConfig: (): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.userAvatarConfig),
+    /** Persist an adjusted avatar config (overlay scale/position). */
+    saveAvatarConfig: (cfg: AvatarConfig): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.userSaveAvatarConfig, cfg),
   },
 
   history: {

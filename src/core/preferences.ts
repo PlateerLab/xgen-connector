@@ -63,4 +63,11 @@ export class PreferencesApi {
       return { ...EMPTY_AVATAR_CONFIG };
     }
   }
+
+  /** Persist the whole avatar config (PUT shallow-merges preferences top-level,
+   *  so sending {avatar} replaces just that key). Used when the overlay adjusts
+   *  the avatar's scale/position in-place. */
+  async saveAvatarConfig(config: AvatarConfig): Promise<void> {
+    await this.http.put('/api/admin/user', { preferences: { avatar: config } });
+  }
 }

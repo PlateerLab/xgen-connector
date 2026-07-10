@@ -120,6 +120,10 @@ export class HttpClient {
     return this.json<T>('POST', path, body, opts);
   }
 
+  put<T>(path: string, body?: unknown, opts?: { auth?: boolean; timeoutMs?: number }): Promise<T> {
+    return this.json<T>('PUT', path, body, opts);
+  }
+
   /**
    * Open a raw streaming POST (for SSE). Returns the Response so the caller can
    * read `response.body` as a stream. Does NOT enforce the JSON timeout — SSE
