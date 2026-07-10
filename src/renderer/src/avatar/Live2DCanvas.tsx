@@ -169,32 +169,50 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 };
 
-/** The registered AvatarRenderer: resolves the global default avatar, else placeholder. */
+function selectedFrom(cfg: AvatarConfig | null): AvatarDescriptor | null {
+  if (!cfg || !cfg.enabled) return null;
+  return cfg.avatars.find((a) => a.id === cfg.defaultAvatarId) ?? cfg.avatars[0] ?? null;
+}
+
+/** The registered AvatarRenderer: resolves the user's GLOBAL default avatar
+ *  (개인 설정) and renders it, else the branded placeholder.
+ *
+ *  The avatar config is set only in 개인 설정 (web), so we POLL it (+ react to
+ *  config changes) rather than fetch once: this reliably picks up login that
+ *  happens after mount, a newly-selected avatar, and adjusted scale/position —
+ *  and only re-renders (reloads the model) when the resolved avatar/serverUrl
+ *  actually change (signature compare), so polling never causes flicker. */
 export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
-  const [cfg, setCfg] = useState<AvatarConfig | null>(null);
+  const [avatar, setAvatar] = useState<AvatarDescriptor | null>(null);
   const [serverUrl, setServerUrl] = useState('');
+  const sigRef = useRef('');
 
   useEffect(() => {
     let alive = true;
-    Promise.all([xgen.user.avatarConfig(), xgen.config.get()])
-      .then(([c, conf]) => {
+    const refresh = async () => {
+      try {
+        const [cfg, conf] = await Promise.all([xgen.user.avatarConfig(), xgen.config.get()]);
         if (!alive) return;
-        setCfg(c);
-        setServerUrl(conf.serverUrl || '');
-      })
-      .catch(() => alive && setCfg({ enabled: false, defaultAvatarId: null, avatars: [] }));
-    // re-read when config (e.g. server URL) changes; avatar edits happen in 개인 설정
-    const off = xgen.config.onChange((conf) => alive && setServerUrl(conf.serverUrl || ''));
+        const su = conf.serverUrl || '';
+        const a = selectedFrom(cfg);
+        const sig = `${su}|${a ? JSON.stringify([a.id, a.modelUrl, a.atlasUrl, a.runtime, a.scale, a.position]) : 'none'}`;
+        if (sig === sigRef.current) return; // nothing changed → no reload
+        sigRef.current = sig;
+        setServerUrl(su);
+        setAvatar(a);
+      } catch {
+        /* keep the previous state on a transient failure */
+      }
+    };
+    void refresh();
+    const iv = setInterval(() => void refresh(), 15000);
+    const off = xgen.config.onChange(() => void refresh());
     return () => {
       alive = false;
+      clearInterval(iv);
       off?.();
     };
   }, []);
-
-  const avatar =
-    cfg && cfg.enabled
-      ? cfg.avatars.find((a) => a.id === cfg.defaultAvatarId) ?? cfg.avatars[0] ?? null
-      : null;
 
   if (avatar && serverUrl) {
     return <AvatarModel avatar={avatar} serverUrl={serverUrl} />;
