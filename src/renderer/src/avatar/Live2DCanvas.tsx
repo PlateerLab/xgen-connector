@@ -185,23 +185,32 @@ function selectedFrom(cfg: AvatarConfig | null): AvatarDescriptor | null {
 export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
   const [avatar, setAvatar] = useState<AvatarDescriptor | null>(null);
   const [serverUrl, setServerUrl] = useState('');
+  const [diag, setDiag] = useState('init');
   const sigRef = useRef('');
 
   useEffect(() => {
     let alive = true;
     const refresh = async () => {
       try {
+        if (!xgen.user || typeof xgen.user.avatarConfig !== 'function') {
+          if (alive) setDiag('no user.avatarConfig (구버전 접속기 — 업데이트 필요)');
+          return;
+        }
         const [cfg, conf] = await Promise.all([xgen.user.avatarConfig(), xgen.config.get()]);
         if (!alive) return;
         const su = conf.serverUrl || '';
         const a = selectedFrom(cfg);
+        setDiag(
+          `en=${cfg?.enabled} n=${cfg?.avatars?.length ?? 0} def=${cfg?.defaultAvatarId ? 'y' : 'n'} srv=${su ? 'y' : 'n'} → ${a ? 'avatar' : 'none'}`,
+        );
         const sig = `${su}|${a ? JSON.stringify([a.id, a.modelUrl, a.atlasUrl, a.runtime, a.scale, a.position]) : 'none'}`;
         if (sig === sigRef.current) return; // nothing changed → no reload
         sigRef.current = sig;
         setServerUrl(su);
         setAvatar(a);
-      } catch {
-        /* keep the previous state on a transient failure */
+      } catch (e) {
+        console.error('[Live2DCanvas] avatar config fetch failed:', e);
+        if (alive) setDiag(`err: ${e instanceof Error ? e.message : String(e)}`);
       }
     };
     void refresh();
@@ -217,13 +226,17 @@ export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
   if (avatar && serverUrl) {
     return <AvatarModel avatar={avatar} serverUrl={serverUrl} />;
   }
-  // fallback: the branded placeholder (identical to the overlay's default)
+  // fallback: the branded placeholder (identical to the overlay's default) + a
+  // small diagnostic line so a screenshot pinpoints why no avatar is shown.
   return (
     <div className={`ov-placeholder ${state.speaking ? 'speaking' : ''}`}>
       <div className="ov-orb">
         <XgenMark height={44} variant="color" />
       </div>
       <div className="ov-name">{state.workflowName || 'XGEN'}</div>
+      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.75)', background: 'rgba(0,0,0,0.55)', padding: '2px 6px', borderRadius: 6, maxWidth: 260, textAlign: 'center', wordBreak: 'break-all' }}>
+        avatar: {diag}
+      </div>
     </div>
   );
 };

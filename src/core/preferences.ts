@@ -34,7 +34,8 @@ export interface AvatarConfig {
 export const EMPTY_AVATAR_CONFIG: AvatarConfig = { enabled: false, defaultAvatarId: null, avatars: [] };
 
 interface RawProfile {
-  user?: { preferences?: { avatar?: Partial<AvatarConfig> } | null } | null;
+  // preferences may arrive as a parsed object OR (defensively) a JSON string.
+  user?: { preferences?: Record<string, unknown> | string | null } | null;
 }
 
 export class PreferencesApi {
@@ -44,7 +45,15 @@ export class PreferencesApi {
   async getAvatarConfig(): Promise<AvatarConfig> {
     try {
       const res = await this.http.get<RawProfile>('/api/admin/user');
-      const raw = res?.user?.preferences?.avatar ?? {};
+      let prefs: unknown = res?.user?.preferences ?? {};
+      if (typeof prefs === 'string') {
+        try {
+          prefs = JSON.parse(prefs);
+        } catch {
+          prefs = {};
+        }
+      }
+      const raw = ((prefs as Record<string, unknown> | null)?.avatar ?? {}) as Partial<AvatarConfig>;
       return {
         enabled: !!raw.enabled,
         defaultAvatarId: typeof raw.defaultAvatarId === 'string' ? raw.defaultAvatarId : null,
