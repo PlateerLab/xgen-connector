@@ -335,37 +335,60 @@ export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
 
   useEffect(() => {
     let alive = true;
-    const refresh = async () => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let loaded = false; // at least one successful (authed) fetch has landed
+
+    // Self-rescheduling poll: retry FAST (2s) until the first success — the
+    // overlay boots before the main window restores the session, so the initial
+    // fetch usually 401s — then settle to a slow 15s steady poll. A transient
+    // failure keeps the current avatar on screen (no flicker to placeholder).
+    const tick = async () => {
+      if (!alive) return;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      let nextMs = 15000;
       try {
         if (!xgen.user || typeof xgen.user.avatarConfig !== 'function') {
-          if (alive) setDiag('no user.avatarConfig (구버전 접속기 — 업데이트 필요)');
-          return;
+          setDiag('구버전 접속기 — 업데이트 필요');
+        } else {
+          const [cfg, conf] = await Promise.all([xgen.user.avatarConfig(), xgen.config.get()]);
+          if (!alive) return;
+          loaded = true;
+          cfgRef.current = cfg;
+          const su = conf.serverUrl || '';
+          const a = selectedFrom(cfg);
+          setDiag(`en=${cfg?.enabled} n=${cfg?.avatars?.length ?? 0} def=${cfg?.defaultAvatarId ? 'y' : 'n'} srv=${su ? 'y' : 'n'} → ${a ? 'avatar' : 'none'}`);
+          // IDENTITY-only signature: a scale/position change (from here or the web)
+          // must NOT reload the model — only a different avatar / server does.
+          const sig = `${su}|${a ? `${a.id}|${a.modelUrl}|${a.atlasUrl ?? ''}|${a.runtime}` : 'none'}`;
+          if (sig !== sigRef.current) {
+            sigRef.current = sig;
+            setServerUrl(su);
+            setSelected(a);
+          }
         }
-        const [cfg, conf] = await Promise.all([xgen.user.avatarConfig(), xgen.config.get()]);
-        if (!alive) return;
-        cfgRef.current = cfg;
-        const su = conf.serverUrl || '';
-        const a = selectedFrom(cfg);
-        setDiag(`en=${cfg?.enabled} n=${cfg?.avatars?.length ?? 0} def=${cfg?.defaultAvatarId ? 'y' : 'n'} srv=${su ? 'y' : 'n'} → ${a ? 'avatar' : 'none'}`);
-        // IDENTITY-only signature: a scale/position change (from here or the web)
-        // must NOT reload the model — only a different avatar / server does.
-        const sig = `${su}|${a ? `${a.id}|${a.modelUrl}|${a.atlasUrl ?? ''}|${a.runtime}` : 'none'}`;
-        if (sig === sigRef.current) return;
-        sigRef.current = sig;
-        setServerUrl(su);
-        setSelected(a);
       } catch (e) {
-        console.error('[Live2DCanvas] avatar config fetch failed:', e);
-        if (alive) setDiag(`err: ${e instanceof Error ? e.message : String(e)}`);
+        if (!alive) return;
+        // Startup auth race / network blip: keep any avatar we already have and
+        // retry soon. Only surface a "connecting" note when nothing loaded yet.
+        if (!loaded) setDiag('연결 중…');
+        nextMs = 2000;
+        console.debug('[Live2DCanvas] avatar config not ready, retrying:', e);
       }
+      if (alive) timer = setTimeout(() => void tick(), nextMs);
     };
-    void refresh();
-    const iv = setInterval(() => void refresh(), 15000);
-    const off = xgen.config.onChange(() => void refresh());
+
+    void tick();
+    const offCfg = xgen.config.onChange(() => void tick());
+    // Main broadcasts this the moment the session is restored / login succeeds.
+    const offAvatar = xgen.user?.onAvatarRefresh?.(() => void tick());
     return () => {
       alive = false;
-      clearInterval(iv);
-      off?.();
+      if (timer) clearTimeout(timer);
+      offCfg?.();
+      offAvatar?.();
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, []);

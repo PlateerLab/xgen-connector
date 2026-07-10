@@ -12,6 +12,7 @@ export const CHANNELS = {
 
   userAvatarConfig: 'user:avatarConfig', // renderer → main → GET /api/admin/user preferences.avatar
   userSaveAvatarConfig: 'user:saveAvatarConfig', // overlay adjusts scale/position → PUT
+  avatarRefresh: 'avatar:refresh', // main → overlay (auth ready / config changed → refetch now)
 
   agentsList: 'agents:list',
 
@@ -36,6 +37,7 @@ export const CHANNELS = {
   overlaySetIgnoreMouse: 'overlay:setIgnoreMouse', // overlay → main (click-through)
   overlayMoveBy: 'overlay:moveBy', // overlay → main (drag; DPI-safe setPosition)
   overlayResizeBy: 'overlay:resizeBy', // overlay → main (edge resize)
+  overlayCommitBounds: 'overlay:commitBounds', // overlay → main (drag/resize END → persist now)
   overlayFocusMain: 'overlay:focusMain', // overlay → main (raise chat window)
   overlayOpenSettings: 'overlay:openSettings', // overlay → main (raise + open settings modal)
   overlayHide: 'overlay:hide', // overlay → main (close the space)

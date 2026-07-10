@@ -198,6 +198,7 @@ function ResizeFrame(): React.ReactElement {
       }
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      xgen.overlay.commitBounds(); // gesture end → persist size/pos immediately
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -255,6 +256,7 @@ export function OverlayApp(): React.ReactElement {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       onBarLeave();
+      xgen.overlay.commitBounds(); // drag end → persist position immediately
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);

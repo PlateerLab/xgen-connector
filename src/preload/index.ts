@@ -67,6 +67,12 @@ const api = {
     /** Persist an adjusted avatar config (overlay scale/position). */
     saveAvatarConfig: (cfg: AvatarConfig): Promise<void> =>
       ipcRenderer.invoke(CHANNELS.userSaveAvatarConfig, cfg),
+    /** Overlay: fired when auth becomes ready / config changes → refetch now. */
+    onAvatarRefresh: (cb: () => void): (() => void) => {
+      const h = () => cb();
+      ipcRenderer.on(CHANNELS.avatarRefresh, h);
+      return () => ipcRenderer.removeListener(CHANNELS.avatarRefresh, h);
+    },
   },
 
   history: {
@@ -122,6 +128,8 @@ const api = {
     /** Overlay window: resize from an edge/corner (edge = combo of n/s/e/w). */
     resizeBy: (edge: string, dx: number, dy: number): void =>
       ipcRenderer.send(CHANNELS.overlayResizeBy, edge, dx, dy),
+    /** Overlay window: drag/resize gesture ENDED → persist bounds immediately. */
+    commitBounds: (): void => ipcRenderer.send(CHANNELS.overlayCommitBounds),
     /** Overlay window: raise/focus the main chat window. */
     focusMain: (): void => ipcRenderer.send(CHANNELS.overlayFocusMain),
     /** Overlay window: raise the main window and open its settings modal. */

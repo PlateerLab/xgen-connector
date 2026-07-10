@@ -41,27 +41,34 @@ interface RawProfile {
 export class PreferencesApi {
   constructor(private http: HttpClient) {}
 
-  /** GET /api/admin/user → preferences.avatar (defensive: empty on any failure). */
+  /** GET /api/admin/user → preferences.avatar.
+   *
+   *  THROWS on failure (network / 401 / not-yet-authenticated) rather than
+   *  returning an empty config: at startup the overlay's fetch can beat the
+   *  main window's session restore, and masking that as `{enabled:false}` made
+   *  the avatar look permanently absent. Propagating lets the caller retry until
+   *  the client is authed. A genuinely empty config (feature off) still returns
+   *  normally. */
   async getAvatarConfig(): Promise<AvatarConfig> {
-    try {
-      const res = await this.http.get<RawProfile>('/api/admin/user');
-      let prefs: unknown = res?.user?.preferences ?? {};
-      if (typeof prefs === 'string') {
-        try {
-          prefs = JSON.parse(prefs);
-        } catch {
-          prefs = {};
-        }
-      }
-      const raw = ((prefs as Record<string, unknown> | null)?.avatar ?? {}) as Partial<AvatarConfig>;
-      return {
-        enabled: !!raw.enabled,
-        defaultAvatarId: typeof raw.defaultAvatarId === 'string' ? raw.defaultAvatarId : null,
-        avatars: Array.isArray(raw.avatars) ? (raw.avatars as AvatarDescriptor[]) : [],
-      };
-    } catch {
-      return { ...EMPTY_AVATAR_CONFIG };
+    const res = await this.http.get<RawProfile>('/api/admin/user');
+    if (!res || !res.user) {
+      // Unauthenticated pass-through / no profile yet → not a real answer.
+      throw new Error('avatar config: no authenticated profile');
     }
+    let prefs: unknown = res.user.preferences ?? {};
+    if (typeof prefs === 'string') {
+      try {
+        prefs = JSON.parse(prefs);
+      } catch {
+        prefs = {};
+      }
+    }
+    const raw = ((prefs as Record<string, unknown> | null)?.avatar ?? {}) as Partial<AvatarConfig>;
+    return {
+      enabled: !!raw.enabled,
+      defaultAvatarId: typeof raw.defaultAvatarId === 'string' ? raw.defaultAvatarId : null,
+      avatars: Array.isArray(raw.avatars) ? (raw.avatars as AvatarDescriptor[]) : [],
+    };
   }
 
   /** Persist the whole avatar config (PUT shallow-merges preferences top-level,

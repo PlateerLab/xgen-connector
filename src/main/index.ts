@@ -590,6 +590,7 @@ ipcMain.handle(CHANNELS.authLogin, async (_e, email: string, password: string) =
   await tokenStore.setAccess(c.getAccessTokenAfterRotation());
   if (res.refreshToken) await tokenStore.setRefresh(res.refreshToken);
   syncMcp();
+  safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
   return { user: c.user };
 });
 
@@ -605,6 +606,7 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
     const rotatedRefresh = c.getRefreshToken();
     if (rotatedRefresh && rotatedRefresh !== refresh) await tokenStore.setRefresh(rotatedRefresh);
     syncMcp();
+    safeSend(overlayWindow, CHANNELS.avatarRefresh); // session restored → overlay can load the avatar
     return { user: c.user };
   }
   await tokenStore.clear();
@@ -727,6 +729,12 @@ ipcMain.on(CHANNELS.overlayResizeBy, (_e, edge: string, dx: number, dy: number) 
   // emit 'resized'); debounced so per-delta resize calls coalesce.
   saveOverlayBounds();
 });
+// Drag/resize gesture ENDED (renderer pointerup) → write bounds to disk NOW
+// instead of waiting out the debounce, so an immediate restart can't lose it.
+ipcMain.on(CHANNELS.overlayCommitBounds, () => {
+  saveOverlayBounds();
+  flushOverlayBounds();
+});
 ipcMain.on(CHANNELS.overlayFocusMain, () => showMain());
 ipcMain.on(CHANNELS.overlayOpenSettings, () => openMainSettings());
 ipcMain.on(CHANNELS.overlayHide, () => setOverlayEnabled(false));
@@ -742,6 +750,7 @@ ipcMain.handle(CHANNELS.autostartSet, (_e, enabled: boolean) => {
 ipcMain.on(CHANNELS.resetPositions, () => resetPositions());
 ipcMain.on(CHANNELS.appRestart, () => {
   appQuitting = true;
+  flushOverlayBounds(); // persist any pending move/resize before relaunching
   app.relaunch();
   app.quit();
 });
