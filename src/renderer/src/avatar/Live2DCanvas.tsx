@@ -42,14 +42,28 @@ function ensureCubismCore(): Promise<void> {
 const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = ({ avatar, serverUrl }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const genRef = useRef(0);
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [err, setErr] = useState('');
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const gen = ++genRef.current;
     const isStale = () => gen !== genRef.current;
-    const base = serverUrl.replace(/\/+$/, '');
-    const url = (u: string) => (/^https?:\/\//.test(u) ? u : `${base}${u.startsWith('/') ? '' : '/'}${u}`);
+    setPhase('loading');
+    setErr('');
+    // Route every asset through the main-process proxy scheme (no CORS/CSP);
+    // relative moc3/textures/atlas siblings resolve against the same scheme.
+    const url = (u: string) => {
+      if (/^xgenavatar:/.test(u)) return u;
+      let path = u;
+      if (/^https?:\/\//.test(u)) {
+        const p = new URL(u);
+        path = p.pathname + p.search;
+      }
+      if (!path.startsWith('/')) path = `/${path}`;
+      return `xgenavatar://a${path}`;
+    };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let app: any = null;
@@ -138,10 +152,16 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
         else fit(display.width || 600, display.height || 600);
       });
       ro.observe(container);
+      if (!isStale()) setPhase('ready');
     };
 
     init().catch((e) => {
-      if (!isStale()) console.error('[Live2DCanvas] init error:', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[Live2DCanvas] init error:', e);
+      if (!isStale()) {
+        setPhase('error');
+        setErr(msg);
+      }
     });
 
     return () => {
@@ -166,7 +186,31 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
     };
   }, [avatar, serverUrl]);
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      {phase !== 'ready' && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 8,
+            textAlign: 'center',
+            fontSize: 10,
+            color: phase === 'error' ? '#fecaca' : 'rgba(255,255,255,0.75)',
+            background: 'rgba(0,0,0,0.55)',
+            padding: '3px 6px',
+            borderRadius: 6,
+            margin: '0 8px',
+            wordBreak: 'break-all',
+          }}
+        >
+          {phase === 'error' ? `모델 로드 실패: ${err}` : '아바타 로딩 중…'}
+        </div>
+      )}
+    </div>
+  );
 };
 
 function selectedFrom(cfg: AvatarConfig | null): AvatarDescriptor | null {

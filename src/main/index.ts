@@ -19,6 +19,8 @@ import {
   Tray,
   Menu,
   nativeImage,
+  protocol,
+  net,
 } from 'electron';
 import { join } from 'node:path';
 import { XgenClient, type ChatEvent } from '../core/index';
@@ -29,6 +31,19 @@ import { CHANNELS } from './ipc';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
+
+// Custom scheme the avatar overlay loads model assets through. Registered
+// BEFORE app-ready. The renderer (a file:// / WebGL context) can't reliably
+// fetch cross-origin avatar assets from the user's XGEN server (CORS/CSP vary
+// by deployment); routing them through the MAIN process (Node net.fetch, no
+// CORS, no CSP) makes it work regardless. `standard` lets relative sibling refs
+// (moc3/textures/atlas) resolve; `corsEnabled`+`bypassCSP` keep WebGL happy.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'xgenavatar',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true },
+  },
+]);
 
 let tray: Tray | null = null;
 
@@ -772,6 +787,22 @@ if (!gotLock) {
   app.whenReady().then(() => {
     const cfg = loadConfig();
     if (cfg.theme) nativeTheme.themeSource = cfg.theme;
+
+    // Avatar asset proxy: xgenavatar://a/<path> → <serverUrl>/<path>, fetched in
+    // the main process (no CORS/CSP). The renderer points the Live2D/Spine loader
+    // at xgenavatar:// URLs so model3.json + its relative moc3/textures/atlas
+    // siblings all resolve through here.
+    protocol.handle('xgenavatar', async (request) => {
+      try {
+        const u = new URL(request.url);
+        const serverUrl = normalizeServerUrl(loadConfig().serverUrl).replace(/\/+$/, '');
+        if (!serverUrl) return new Response('avatar proxy: no server URL', { status: 502 });
+        // xgenavatar://a/<path> → <serverUrl>/<path>. Node net.fetch: no CORS/CSP.
+        return await net.fetch(`${serverUrl}${u.pathname}${u.search}`, { method: 'GET' });
+      } catch (e) {
+        return new Response(`avatar proxy error: ${e instanceof Error ? e.message : String(e)}`, { status: 502 });
+      }
+    });
     // The install callback flips appQuitting so quitAndInstall isn't blocked by
     // the close-to-tray guard.
     initUpdater(cfg.autoUpdate ?? true, () => {
