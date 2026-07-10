@@ -10,6 +10,8 @@ export const CHANNELS = {
   authStatus: 'auth:status',
   authFailed: 'auth:failed',
 
+  userAvatarConfig: 'user:avatarConfig', // renderer → main → GET /api/admin/user preferences.avatar
+
   agentsList: 'agents:list',
 
   historyTurns: 'history:turns',

@@ -36,6 +36,10 @@ const api = {
     status: async () => ({ user }),
     onAuthFailed: () => () => {},
   },
+  user: {
+    // no avatar configured → overlay renderer falls back to the placeholder
+    avatarConfig: async () => ({ enabled: false, defaultAvatarId: null, avatars: [] }),
+  },
   agents: {
     list: async (q) => {
       let items = agents.slice();

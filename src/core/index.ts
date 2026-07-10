@@ -23,6 +23,7 @@ import { AgentsApi } from './agents';
 import { AuthApi } from './auth';
 import { ChatApi } from './chat';
 import { HistoryApi } from './history';
+import { PreferencesApi } from './preferences';
 import { HttpClient, type FetchLike } from './client';
 import type { CurrentUser, LoginResult } from './types';
 
@@ -40,6 +41,7 @@ export class XgenClient {
   readonly agents: AgentsApi;
   readonly chat: ChatApi;
   readonly history: HistoryApi;
+  readonly preferences: PreferencesApi;
 
   private refreshToken?: string;
   user: CurrentUser | null = null;
@@ -56,6 +58,7 @@ export class XgenClient {
     this.agents = new AgentsApi(this.http);
     this.chat = new ChatApi(this.http);
     this.history = new HistoryApi(this.http);
+    this.preferences = new PreferencesApi(this.http);
   }
 
   setBaseUrl(baseUrl: string): void {

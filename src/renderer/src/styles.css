@@ -1345,6 +1345,19 @@ button {
   justify-content: center;
 }
 
+/* The registered avatar renderer fills the stage transparently (overrides the
+   opaque .avatar-slot used elsewhere) so the Live2D/Spine canvas composites onto
+   the desktop; the speech bubble is a sibling that layers on top. */
+.ov-stage .avatar-slot {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Placeholder avatar (until a real avatar renderer is registered) */
 .ov-placeholder {
   display: flex;

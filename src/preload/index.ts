@@ -8,6 +8,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { CHANNELS } from '../main/ipc';
 import type { ChatEvent, ChatRequest, CurrentUser, AgentListQuery, AgentListResult, HistoryTurn, Conversation } from '../core/index';
+import type { AvatarConfig } from '../core/preferences';
 import type { ConnectorConfig, McpServerConfig } from '../main/config';
 
 /** Local-MCP bridge status pushed to the settings UI. */
@@ -58,6 +59,11 @@ const api = {
   agents: {
     list: (query?: AgentListQuery): Promise<AgentListResult> =>
       ipcRenderer.invoke(CHANNELS.agentsList, query),
+  },
+
+  user: {
+    /** The logged-in user's avatar config (preferences.avatar). Global default. */
+    avatarConfig: (): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.userAvatarConfig),
   },
 
   history: {

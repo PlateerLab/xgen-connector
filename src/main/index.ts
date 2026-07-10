@@ -589,6 +589,7 @@ ipcMain.handle(CHANNELS.authLogout, async () => {
 });
 
 ipcMain.handle(CHANNELS.authStatus, () => ({ user: client?.user ?? null }));
+ipcMain.handle(CHANNELS.userAvatarConfig, () => getClient().preferences.getAvatarConfig());
 
 // ── IPC: agents ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.agentsList, (_e, query) => getClient().agents.list(query ?? {}));
