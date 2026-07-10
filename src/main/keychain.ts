@@ -9,6 +9,7 @@
 const SERVICE = 'xgen-connector';
 const ACCESS = 'xgen_access_token';
 const REFRESH = 'xgen_refresh_token';
+const CREDS = 'xgen_login_credentials';
 
 type Keytar = typeof import('keytar');
 let keytarMod: Keytar | null | undefined;
@@ -57,5 +58,30 @@ export const tokenStore = {
   async clear() {
     await set(ACCESS, null);
     await set(REFRESH, null);
+  },
+};
+
+/** Auto-login credentials (email + password) in the OS keychain — only stored
+ *  when the user opts into "자동 로그인". Never written to the config file. */
+export interface SavedCredentials {
+  email: string;
+  password: string;
+}
+export const credentialStore = {
+  async save(creds: SavedCredentials): Promise<void> {
+    await set(CREDS, JSON.stringify(creds));
+  },
+  async get(): Promise<SavedCredentials | null> {
+    const raw = await get(CREDS);
+    if (!raw) return null;
+    try {
+      const c = JSON.parse(raw) as SavedCredentials;
+      return c && typeof c.email === 'string' && typeof c.password === 'string' ? c : null;
+    } catch {
+      return null;
+    }
+  },
+  async clear(): Promise<void> {
+    await set(CREDS, null);
   },
 };

@@ -47,7 +47,10 @@ export const App: React.FC = () => {
         setStage('server');
         return;
       }
-      const { user } = await xgen.auth.restore();
+      // Prefer a live session token; fall back to saved-credential auto-login
+      // (자동 로그인) so the user lands in the workspace without the login screen.
+      const restored = await xgen.auth.restore();
+      const user = restored.user ?? (await xgen.auth.autoLogin()).user;
       if (user) {
         setUser(user);
         setStage('workspace');

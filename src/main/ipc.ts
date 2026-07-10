@@ -6,6 +6,8 @@ export const CHANNELS = {
 
   authLogin: 'auth:login',
   authRestore: 'auth:restore',
+  authAutoLogin: 'auth:autoLogin', // launch: sign in with saved credentials
+  authLoginPrefill: 'auth:loginPrefill', // login form: remembered email + autoLogin flag
   authLogout: 'auth:logout',
   authStatus: 'auth:status',
   authFailed: 'auth:failed',

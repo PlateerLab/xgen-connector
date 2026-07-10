@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { xgen } from '../bridge';
 import type { CurrentUser } from '../../../core/index';
 import { XgenWordmark } from '../brand/Logo';
@@ -12,8 +12,20 @@ export const Login: React.FC<{
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
+  const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Prefill the remembered email + auto-login checkbox (password is never echoed).
+  useEffect(() => {
+    xgen.auth
+      .loginPrefill()
+      .then((p) => {
+        if (p.email) setEmail(p.email);
+        setRemember(!!p.autoLogin);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const submit = async () => {
     if (!email || !password) {
@@ -23,7 +35,7 @@ export const Login: React.FC<{
     setBusy(true);
     setError(null);
     try {
-      const { user } = await xgen.auth.login(email, password);
+      const { user } = await xgen.auth.login(email, password, remember);
       if (!user) throw new Error('이메일 또는 비밀번호가 올바르지 않습니다.');
       onLoggedIn(user);
     } catch (e) {
@@ -81,6 +93,11 @@ export const Login: React.FC<{
                 {showPw ? <EyeOffIcon /> : <EyeIcon />}
               </button>
             </div>
+          </label>
+
+          <label className="remember">
+            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+            <span>자동 로그인</span>
           </label>
 
           {error && (

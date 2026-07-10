@@ -46,6 +46,11 @@ export interface ConnectorConfig {
   /** Subtitle typewriter pace — ms per character (throttles fast streams so the
    * speech bubble stays readable). Lower = faster. Default 50. */
   subtitleCharMs?: number;
+  /** Speech-bubble size on the overlay: sm ≈ 3 lines, md ≈ 4–5, lg ≈ 6–7.
+   * Default 'sm'. */
+  subtitleSize?: 'sm' | 'md' | 'lg';
+  /** Remember credentials and sign in automatically on launch. Default false. */
+  autoLogin?: boolean;
   /** Persisted floating-overlay bounds (legacy single-monitor fallback). */
   overlayBounds?: { width: number; height: number; x?: number; y?: number };
   /** Avatar overlay geometry remembered PER MONITOR (key = display signature),

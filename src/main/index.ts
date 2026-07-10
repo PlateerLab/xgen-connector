@@ -25,7 +25,7 @@ import {
 import { join } from 'node:path';
 import { XgenClient, type ChatEvent } from '../core/index';
 import { loadConfig, saveConfig, normalizeServerUrl, type ConnectorConfig } from './config';
-import { tokenStore } from './keychain';
+import { tokenStore, credentialStore } from './keychain';
 import { initUpdater, setAutoUpdate, getAutoUpdate, checkNow, disposeUpdater } from './updater';
 import { CHANNELS } from './ipc';
 import { TRAY_ICON_B64 } from './tray-icon';
@@ -708,14 +708,52 @@ ipcMain.handle(CHANNELS.configSet, (_e, patch: Partial<ConnectorConfig>) => {
 });
 
 // ── IPC: auth ────────────────────────────────────────────────────
-ipcMain.handle(CHANNELS.authLogin, async (_e, email: string, password: string) => {
+// Persist the rotated tokens + wake dependent subsystems after any successful sign-in.
+async function afterAuthSuccess(refreshToken?: string): Promise<void> {
   const c = getClient();
-  const res = await c.login(email, password);
   await tokenStore.setAccess(c.getAccessTokenAfterRotation());
-  if (res.refreshToken) await tokenStore.setRefresh(res.refreshToken);
+  if (refreshToken) await tokenStore.setRefresh(refreshToken);
   syncMcp();
   safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
+}
+
+ipcMain.handle(CHANNELS.authLogin, async (_e, email: string, password: string, remember?: boolean) => {
+  const c = getClient();
+  const res = await c.login(email, password);
+  await afterAuthSuccess(res.refreshToken);
+  // Remember (or forget) credentials for auto-login, per the login-form checkbox.
+  if (remember) {
+    await credentialStore.save({ email, password });
+    saveConfig({ autoLogin: true });
+  } else {
+    await credentialStore.clear();
+    saveConfig({ autoLogin: false });
+  }
   return { user: c.user };
+});
+
+// Launch: sign in with the remembered credentials (only when 자동 로그인 is on).
+ipcMain.handle(CHANNELS.authAutoLogin, async () => {
+  if (!loadConfig().autoLogin) return { user: null };
+  const creds = await credentialStore.get();
+  if (!creds) return { user: null };
+  try {
+    const c = getClient();
+    const res = await c.login(creds.email, creds.password);
+    await afterAuthSuccess(res.refreshToken);
+    return { user: c.user };
+  } catch {
+    // Stale password (changed server-side) → stop retrying it on every launch.
+    await credentialStore.clear();
+    saveConfig({ autoLogin: false });
+    return { user: null };
+  }
+});
+
+// Login form: prefill the remembered email + the auto-login checkbox state.
+ipcMain.handle(CHANNELS.authLoginPrefill, async () => {
+  const creds = await credentialStore.get();
+  return { autoLogin: !!loadConfig().autoLogin, email: creds?.email ?? '' };
 });
 
 ipcMain.handle(CHANNELS.authRestore, async () => {
@@ -741,6 +779,9 @@ ipcMain.handle(CHANNELS.authLogout, async () => {
   getMcpBridge().stop();
   if (client) await client.logout();
   await tokenStore.clear();
+  // An explicit logout also disables auto-login (else next launch signs right back in).
+  await credentialStore.clear();
+  saveConfig({ autoLogin: false });
   return true;
 });
 

@@ -17,6 +17,7 @@ export const Settings: React.FC<{
   const [overlay, setOverlay] = useState(config.avatarOverlay ?? false);
   const [subtitles, setSubtitles] = useState(config.subtitles !== false);
   const [charMs, setCharMs] = useState(config.subtitleCharMs ?? 50);
+  const [subtitleSize, setSubtitleSize] = useState<'sm' | 'md' | 'lg'>(config.subtitleSize ?? 'sm');
   const [quickChat, setQuickChat] = useState(config.quickChat ?? false);
   const [hotkey, setHotkey] = useState('Control+Shift+/');
   const [autostart, setAutostart] = useState(false);
@@ -147,6 +148,29 @@ export const Settings: React.FC<{
                 onClick={() => {
                   setCharMs(ms);
                   void apply({ subtitleCharMs: ms });
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="field-row">
+          <span>
+            자막 창 크기
+            <span className="small muted" style={{ marginLeft: 8 }}>
+              {subtitleSize === 'sm' ? '3줄' : subtitleSize === 'md' ? '4~5줄' : '6~7줄'}
+            </span>
+          </span>
+          <div className="seg">
+            {([['작음', 'sm'], ['중간', 'md'], ['큼', 'lg']] as const).map(([label, sz]) => (
+              <button
+                key={sz}
+                className={subtitleSize === sz ? 'active' : ''}
+                onClick={() => {
+                  setSubtitleSize(sz);
+                  void apply({ subtitleSize: sz });
                 }}
               >
                 {label}

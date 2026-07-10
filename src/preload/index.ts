@@ -44,9 +44,14 @@ const api = {
   },
 
   auth: {
-    login: (email: string, password: string): Promise<{ user: CurrentUser | null }> =>
-      ipcRenderer.invoke(CHANNELS.authLogin, email, password),
+    login: (email: string, password: string, remember?: boolean): Promise<{ user: CurrentUser | null }> =>
+      ipcRenderer.invoke(CHANNELS.authLogin, email, password, remember),
     restore: (): Promise<{ user: CurrentUser | null }> => ipcRenderer.invoke(CHANNELS.authRestore),
+    /** Launch: sign in with saved credentials when 자동 로그인 is enabled. */
+    autoLogin: (): Promise<{ user: CurrentUser | null }> => ipcRenderer.invoke(CHANNELS.authAutoLogin),
+    /** Login form: remembered email + auto-login checkbox state. */
+    loginPrefill: (): Promise<{ autoLogin: boolean; email: string }> =>
+      ipcRenderer.invoke(CHANNELS.authLoginPrefill),
     logout: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.authLogout),
     status: (): Promise<{ user: CurrentUser | null }> => ipcRenderer.invoke(CHANNELS.authStatus),
     onAuthFailed: (cb: () => void): (() => void) => {

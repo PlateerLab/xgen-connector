@@ -82,10 +82,12 @@ function Subtitle({
   text,
   speaking,
   charMs,
+  size,
 }: {
   text: string;
   speaking: boolean;
   charMs: number;
+  size: 'sm' | 'md' | 'lg';
 }): React.ReactElement | null {
   const [visible, setVisible] = useState(false);
   const [shown, setShown] = useState(0);
@@ -160,7 +162,7 @@ function Subtitle({
   const showCursor = speaking || !revealDone;
   return (
     <div className="ov-subtitle-wrap">
-      <div className={`ov-subtitle ${visible ? 'show' : ''}`} ref={bodyRef}>
+      <div className={`ov-subtitle sz-${size} ${visible ? 'show' : ''}`} ref={bodyRef}>
         {revealed}
         {showCursor && <span className="cursor" />}
       </div>
@@ -218,6 +220,7 @@ export function OverlayApp(): React.ReactElement {
   const [locked, setLocked] = useState(true);
   const [subtitles, setSubtitles] = useState(true);
   const [charMs, setCharMs] = useState(50);
+  const [subtitleSize, setSubtitleSize] = useState<'sm' | 'md' | 'lg'>('sm');
   const [avatarHidden, setAvatarHidden] = useState(false);
   const dragging = useRef(false);
   const hasAvatar = hasAvatarRenderer();
@@ -225,9 +228,15 @@ export function OverlayApp(): React.ReactElement {
   useEffect(() => xgen.overlay.onState((s) => setState(s)), []);
 
   useEffect(() => {
-    const apply = (c: { subtitles?: boolean; subtitleCharMs?: number; avatarHidden?: boolean }) => {
+    const apply = (c: {
+      subtitles?: boolean;
+      subtitleCharMs?: number;
+      subtitleSize?: 'sm' | 'md' | 'lg';
+      avatarHidden?: boolean;
+    }) => {
       setSubtitles(c.subtitles !== false);
       setCharMs(typeof c.subtitleCharMs === 'number' ? c.subtitleCharMs : 50);
+      setSubtitleSize(c.subtitleSize ?? 'sm');
       setAvatarHidden(!!c.avatarHidden);
     };
     xgen.config.get().then(apply);
@@ -286,7 +295,9 @@ export function OverlayApp(): React.ReactElement {
               <div className="ov-name">{name}</div>
             </div>
           ))}
-        {subtitles && <Subtitle text={state.streamingText} speaking={state.speaking} charMs={charMs} />}
+        {subtitles && (
+          <Subtitle text={state.streamingText} speaking={state.speaking} charMs={charMs} size={subtitleSize} />
+        )}
       </div>
 
       {!locked && <ResizeFrame />}
