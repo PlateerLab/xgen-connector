@@ -170,7 +170,18 @@ const AvatarModel: React.FC<{
       canvas.style.display = 'block';
       container.appendChild(canvas);
 
-      if (avatar.runtime === 'spine') {
+      if (avatar.runtime === 'image') {
+        // Static photo avatar — a plain sprite, same fit + zoom/pan.
+        const tex = await PIXI.Assets.load(url(avatar.modelUrl));
+        if (isStale()) return;
+        const sprite = new PIXI.Sprite(tex);
+        display = sprite;
+        sprite.anchor.set(0.5, 0.5);
+        naturalW = tex.width || 600;
+        naturalH = tex.height || 600;
+        applyTransform();
+        app.stage.addChild(sprite);
+      } else if (avatar.runtime === 'spine') {
         const { Spine } = await import('@esotericsoftware/spine-pixi-v7');
         if (isStale()) return;
         const seq = ++_spineAliasSeq;

@@ -6,7 +6,7 @@
  */
 import { HttpClient } from './client';
 
-export type AvatarRuntime = 'live2d' | 'spine';
+export type AvatarRuntime = 'live2d' | 'spine' | 'image';
 
 export interface AvatarDescriptor {
   id: string;
