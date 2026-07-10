@@ -103,8 +103,14 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
       canvas.style.display = 'block';
       container.appendChild(canvas);
 
-      const fit = (w: number, h: number) => {
-        const b = Math.min(app.screen.width / w, app.screen.height / h);
+      // Natural (unscaled) model size captured ONCE at load. Fitting must always
+      // use this — reading display.width after a scale is applied compounds the
+      // scale on every resize and blows the avatar up.
+      let naturalW = 600;
+      let naturalH = 600;
+      const fit = () => {
+        if (!app || !display) return;
+        const b = Math.min(app.screen.width / naturalW, app.screen.height / naturalH);
         display.scale.set(b * (avatar.scale || (avatar.runtime === 'spine' ? 0.7 : 0.85)));
         display.x = app.screen.width / 2 + (avatar.position?.x || 0);
         display.y = app.screen.height / 2 + (avatar.position?.y || 0);
@@ -123,7 +129,9 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const spine: any = (Spine as any).from({ skeleton: skel, atlas });
         display = spine;
-        fit(spine.skeleton?.data?.width || 600, spine.skeleton?.data?.height || 800);
+        naturalW = spine.skeleton?.data?.width || 600;
+        naturalH = spine.skeleton?.data?.height || 800;
+        fit();
         app.stage.addChild(spine);
         const anims: Array<{ name: string }> = spine.skeleton?.data?.animations || [];
         const pick =
@@ -150,7 +158,9 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
         }
         display = model;
         model.anchor.set(0.5, 0.5);
-        fit(model.width || 600, model.height || 600);
+        naturalW = model.width || 600; // read at scale 1, before fit()
+        naturalH = model.height || 600;
+        fit();
         app.stage.addChild(model);
         try {
           await model.motion(idle, undefined, l2d.MotionPriority?.IDLE ?? 1);
@@ -162,8 +172,7 @@ const AvatarModel: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = (
       ro = new ResizeObserver(() => {
         if (isStale() || !app || !display) return;
         app.renderer.resize(container.clientWidth || 300, container.clientHeight || 400);
-        if (avatar.runtime === 'spine') fit(display.skeleton?.data?.width || 600, display.skeleton?.data?.height || 800);
-        else fit(display.width || 600, display.height || 600);
+        fit(); // uses the stored natural size — never the already-scaled display size
       });
       ro.observe(container);
       if (!isStale()) setPhase('ready');
