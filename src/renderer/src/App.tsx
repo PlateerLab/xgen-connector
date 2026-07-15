@@ -31,6 +31,11 @@ export const App: React.FC = () => {
     return c;
   }, []);
 
+  // Keep config in sync with main-process broadcasts — e.g. a server-URL
+  // change clears the session and routes to login, which must show the NEW
+  // server address, not the stale one captured at mount.
+  useEffect(() => xgen.config.onChange((c) => setConfig(c)), []);
+
   // Apply the theme preference to <html data-theme>. 'system' clears the
   // override so the OS `prefers-color-scheme` decides (see styles.css).
   useEffect(() => {

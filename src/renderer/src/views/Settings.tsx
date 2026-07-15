@@ -51,10 +51,24 @@ export const Settings: React.FC<{
     await onChanged();
   };
 
+  // 서버 주소 변경은 세션 전환 — 첫 클릭에서 로그아웃 안내를 띄우고,
+  // 두 번째 클릭(변경 및 로그아웃)에서 적용한다. 적용되면 main 이 세션을
+  // 정리하고 authFailed 를 쏘아 로그인 화면으로 돌아간다.
+  const [confirmServer, setConfirmServer] = useState(false);
   const saveServer = async () => {
-    await apply({ serverUrl: serverUrl.trim().replace(/\/+$/, '') });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+    const next = serverUrl.trim().replace(/\/+$/, '');
+    if (!next) return;
+    if (next === (config.serverUrl ?? '')) {
+      setConfirmServer(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      return;
+    }
+    if (!confirmServer) {
+      setConfirmServer(true);
+      return;
+    }
+    await apply({ serverUrl: next });
   };
 
   if (showMcp) return <McpSettings onClose={() => setShowMcp(false)} />;
@@ -75,13 +89,25 @@ export const Settings: React.FC<{
             <input
               className="grow"
               value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
+              onChange={(e) => {
+                setServerUrl(e.target.value);
+                setConfirmServer(false);
+              }}
               onKeyDown={(e) => e.key === 'Enter' && void saveServer()}
             />
-            <button className="secondary" onClick={() => void saveServer()}>
-              {saved ? '저장됨' : '저장'}
+            <button
+              className={confirmServer ? 'danger' : 'secondary'}
+              onClick={() => void saveServer()}
+            >
+              {confirmServer ? '변경 및 로그아웃' : saved ? '저장됨' : '저장'}
             </button>
           </div>
+          {confirmServer && (
+            <span className="small notice-warn">
+              서버 주소를 변경하면 현재 세션이 종료되고 새 서버에 다시 로그인해야
+              합니다. 계속하려면 버튼을 한 번 더 누르세요.
+            </span>
+          )}
         </label>
 
         <div className="field-row">

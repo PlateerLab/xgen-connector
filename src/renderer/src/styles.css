@@ -134,6 +134,9 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* 데스크톱 앱 창은 절대 페이지 스크롤하지 않는다 — 스크롤은 각 뷰의
+     내부 컨테이너(.chat-log, .agent-list 등)만 가진다. */
+  overflow: hidden;
 }
 
 /* Scrollbars — thin, unobtrusive */
@@ -236,6 +239,31 @@ button {
 }
 .secondary:hover:not(:disabled) {
   background: var(--panel-2);
+}
+/* 파괴적 확인 버튼 (예: 서버 변경 → 로그아웃) — .secondary 의 위험색 변형 */
+.danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--error-bg);
+  color: var(--error);
+  border: 1px solid var(--error-border);
+  border-radius: var(--radius-md);
+  padding: 9px 15px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s ease;
+}
+.danger:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+.notice-warn {
+  display: block;
+  margin-top: 6px;
+  color: var(--error);
+  line-height: 1.45;
 }
 .link {
   background: none;
@@ -427,7 +455,12 @@ button {
 .workspace {
   display: grid;
   grid-template-columns: 300px 1fr;
+  /* minmax(0, 1fr): 그리드 행의 기본 min-height:auto 는 내용(긴 채팅 로그)
+     만큼 행을 늘려 100vh 를 넘겨 버린다 — 행을 뷰포트에 고정해 내부
+     컨테이너(.chat-log)만 스크롤되게 한다. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
+  overflow: hidden;
   background: var(--app-bg);
 }
 .workspace.collapsed {
@@ -726,6 +759,7 @@ button {
 /* ─── Main pane / welcome ─── */
 .main-pane {
   min-width: 0;
+  min-height: 0; /* 그리드 아이템이 내용만큼 늘어나 창을 밀어내지 않도록 */
   display: flex;
   flex-direction: column;
   background: var(--app-bg);
@@ -810,6 +844,7 @@ button {
 .chat-log {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain; /* 로그 끝에서 휠이 창/조상으로 전파되지 않게 */
   padding: 22px 28px;
   display: flex;
   flex-direction: column;

@@ -698,12 +698,30 @@ function setMcpEnabled(enabled: boolean): void {
 
 // ── IPC: config ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.configGet, () => loadConfig());
-ipcMain.handle(CHANNELS.configSet, (_e, patch: Partial<ConnectorConfig>) => {
+ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) => {
+  // 서버 전환 = 계정 공간 전환: 구 서버의 세션/저장 자격 증명은 새 서버에서
+  // 무의미하므로 여기서 전부 정리하고 재로그인을 요구한다. 원격 로그아웃은
+  // best-effort 로만 시도한다 — 구 서버가 죽어서 주소를 바꾸는 경우가 흔해
+  // 응답을 기다리면 설정 저장 자체가 막힌다. (최초 설정(prev 없음)은 제외.)
+  const prevServer = normalizeServerUrl(loadConfig().serverUrl);
+  const serverChanged =
+    patch.serverUrl !== undefined &&
+    !!prevServer &&
+    normalizeServerUrl(patch.serverUrl) !== prevServer;
+  if (serverChanged) {
+    getMcpBridge().stop();
+    void client?.logout().catch(() => undefined); // 구 서버 세션 무효화 (rebind 전 호출)
+    client = null; // in-memory user/token 을 남기지 않도록 새 인스턴스로
+    await tokenStore.clear();
+    await credentialStore.clear();
+    patch = { ...patch, autoLogin: false }; // 저장된 자동 로그인은 구 서버 계정
+  }
   const next = saveConfig(patch);
   if (patch.serverUrl !== undefined) getClient(); // rebind base URL
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
   if (patch.theme) nativeTheme.themeSource = patch.theme;
   broadcastConfig(next);
+  if (serverChanged) safeSend(mainWindow, CHANNELS.authFailed); // → 로그인 화면
   return next;
 });
 
