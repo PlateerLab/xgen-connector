@@ -72,6 +72,12 @@ const api = {
     /** Persist an adjusted avatar config (overlay scale/position). */
     saveAvatarConfig: (cfg: AvatarConfig): Promise<void> =>
       ipcRenderer.invoke(CHANNELS.userSaveAvatarConfig, cfg),
+    /** Persist ONE avatar's transform — read-modify-write server-side state
+     *  so it can never clobber a selection changed on the web in between. */
+    saveAvatarTransform: (
+      avatarId: string,
+      tf: { scale: number; position: { x: number; y: number } },
+    ): Promise<void> => ipcRenderer.invoke(CHANNELS.userSaveAvatarTransform, avatarId, tf),
     /** Overlay: fired when auth becomes ready / config changes → refetch now. */
     onAvatarRefresh: (cb: () => void): (() => void) => {
       const h = () => cb();

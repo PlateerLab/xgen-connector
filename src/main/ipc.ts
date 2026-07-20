@@ -14,6 +14,7 @@ export const CHANNELS = {
 
   userAvatarConfig: 'user:avatarConfig', // renderer → main → GET /api/admin/user preferences.avatar
   userSaveAvatarConfig: 'user:saveAvatarConfig', // overlay adjusts scale/position → PUT
+  userSaveAvatarTransform: 'user:saveAvatarTransform', // per-avatar transform patch (read-modify-write)
   avatarRefresh: 'avatar:refresh', // main → overlay (auth ready / config changed → refetch now)
 
   agentsList: 'agents:list',

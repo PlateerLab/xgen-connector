@@ -901,6 +901,9 @@ ipcMain.handle(CHANNELS.authLogout, async () => {
 ipcMain.handle(CHANNELS.authStatus, () => ({ user: client?.user ?? null }));
 ipcMain.handle(CHANNELS.userAvatarConfig, () => getClient().preferences.getAvatarConfig());
 ipcMain.handle(CHANNELS.userSaveAvatarConfig, (_e, cfg) => getClient().preferences.saveAvatarConfig(cfg));
+ipcMain.handle(CHANNELS.userSaveAvatarTransform, (_e, avatarId, tf) =>
+  getClient().preferences.saveAvatarTransform(avatarId, tf),
+);
 
 // ── IPC: agents ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.agentsList, (_e, query) => getClient().agents.list(query ?? {}));

@@ -330,7 +330,6 @@ export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
   const [serverUrl, setServerUrl] = useState('');
   const [diag, setDiag] = useState('init');
   const sigRef = useRef('');
-  const cfgRef = useRef<AvatarConfig | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -356,7 +355,6 @@ export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
           const [cfg, conf] = await Promise.all([xgen.user.avatarConfig(), xgen.config.get()]);
           if (!alive) return;
           loaded = true;
-          cfgRef.current = cfg;
           const su = conf.serverUrl || '';
           const a = selectedFrom(cfg);
           setDiag(`en=${cfg?.enabled} n=${cfg?.avatars?.length ?? 0} def=${cfg?.defaultAvatarId ? 'y' : 'n'} srv=${su ? 'y' : 'n'} → ${a ? 'avatar' : 'none'}`);
@@ -393,20 +391,19 @@ export const Live2DCanvas: React.FC<{ state: AvatarState }> = ({ state }) => {
     };
   }, []);
 
-  // Persist an in-overlay adjustment onto the selected avatar (debounced).
+  // Persist an in-overlay adjustment onto the avatar BEING RENDERED (debounced).
+  // Read-modify-write in main against the CURRENT server config, patching only
+  // this avatar's scale/position — a cached whole-config save here used to
+  // revert a selection changed on the web in between (아바타 변경이 커넥터에
+  // 적용되지 않던 원인 계열).
+  const selectedRef = useRef<AvatarDescriptor | null>(null);
+  selectedRef.current = selected;
   const onTransform = useCallback((tf: AvatarTransform) => {
-    const cur = cfgRef.current;
-    if (!cur) return;
-    const id = cur.defaultAvatarId ?? cur.avatars[0]?.id;
+    const id = selectedRef.current?.id;
     if (!id) return;
-    const next: AvatarConfig = {
-      ...cur,
-      avatars: cur.avatars.map((a) => (a.id === id ? { ...a, scale: tf.scale, position: tf.position } : a)),
-    };
-    cfgRef.current = next;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      xgen.user.saveAvatarConfig?.(next).catch(() => undefined);
+      xgen.user.saveAvatarTransform?.(id, tf).catch(() => undefined);
     }, 700);
   }, []);
 

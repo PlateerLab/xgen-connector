@@ -77,4 +77,23 @@ export class PreferencesApi {
   async saveAvatarConfig(config: AvatarConfig): Promise<void> {
     await this.http.put('/api/admin/user', { preferences: { avatar: config } });
   }
+
+  /** Persist ONE avatar's scale/position — read-modify-write against the
+   *  CURRENT server config. Saving a cached whole-config snapshot silently
+   *  reverted changes made in between on the web (아바타 선택이 예전 값으로
+   *  되돌아가 "바꿔도 커넥터에 적용 안 됨" 증상), so partial updates must
+   *  always re-read first and patch only their own field. */
+  async saveAvatarTransform(
+    avatarId: string,
+    tf: { scale: number; position: { x: number; y: number } },
+  ): Promise<void> {
+    const cfg = await this.getAvatarConfig();
+    const next: AvatarConfig = {
+      ...cfg,
+      avatars: cfg.avatars.map((a) =>
+        a.id === avatarId ? { ...a, scale: tf.scale, position: tf.position } : a,
+      ),
+    };
+    await this.saveAvatarConfig(next);
+  }
 }
