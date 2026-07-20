@@ -1646,13 +1646,15 @@ button {
   from { opacity: 0; transform: translateY(-7px) scale(0.985); }
   to { opacity: 1; transform: none; }
 }
+/* 헤더(로고+라벨)는 인터랙션 요소가 없다 — 카드와 함께 드래그 핸들.
+   (no-drag 는 입력창/전송 버튼에만 — Geny 규약. 여기까지 no-drag 를 걸면
+   드래그 가능한 표면이 사실상 사라져 창 이동이 안 된다.) */
 .qc-head {
   display: flex;
   align-items: center;
   gap: 7px;
   margin-bottom: 8px;
   color: #cfd0e0;
-  -webkit-app-region: no-drag;
 }
 .qc-head .qc-name {
   font-size: 12px;
@@ -1703,11 +1705,11 @@ button {
 .qc-send:hover:not(:disabled) { filter: brightness(1.1); }
 .qc-send:active:not(:disabled) { transform: scale(0.94); }
 .qc-send:disabled { opacity: 0.4; cursor: default; box-shadow: none; }
+/* 푸터(단축키 힌트)도 드래그 핸들 — 위 .qc-head 주석 참조. */
 .qc-foot {
   margin-top: 8px;
   padding: 0 2px 1px;
   min-height: 16px;
-  -webkit-app-region: no-drag;
 }
 .qc-hint {
   font-size: 11px;

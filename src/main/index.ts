@@ -143,6 +143,9 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
+  attachContentResilience(mainWindow, () => {
+    if (mainWindow) loadRendererPage(mainWindow, 'index.html');
+  });
   loadRendererPage(mainWindow, 'index.html');
 }
 
@@ -172,6 +175,93 @@ function restoreWinBounds(saved: WinBounds | undefined, defaults: WinBounds): Wi
   const x = Math.round(Math.min(Math.max(saved.x, wa.x), wa.x + wa.width - width));
   const y = Math.round(Math.min(Math.max(saved.y, wa.y), wa.y + wa.height - height));
   return { x, y, width, height };
+}
+
+/** Keep a top-most window truly top-most for its lifetime (Geny 0.16.1 port).
+ *
+ * A one-shot `setAlwaysOnTop(true, 'screen-saver')` decays under z-order churn:
+ * fullscreen/DPI transitions strip the bit, and later-created top-most peers
+ * stack above us. Purely event-driven (no heartbeat) — re-assert on the exact
+ * signals that can demote us, plus one settle re-check 900ms later because some
+ * transitions (fullscreen entry) land after the event fires. */
+function armAlwaysOnTop(win: BrowserWindow): void {
+  let settle: ReturnType<typeof setTimeout> | null = null;
+  const assertNow = (): void => {
+    if (win.isDestroyed() || !win.isVisible() || win.isMinimized()) return;
+    try {
+      win.setAlwaysOnTop(true, 'screen-saver');
+      if (process.platform === 'darwin') {
+        win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      }
+      win.moveTop(); // top of the topmost band — above later-created topmost peers
+    } catch {
+      /* window mid-teardown */
+    }
+  };
+  const assert = (): void => {
+    assertNow();
+    if (settle) clearTimeout(settle);
+    settle = setTimeout(() => {
+      settle = null;
+      assertNow();
+    }, 900);
+  };
+  assertNow();
+  win.on('show', assert);
+  win.on('restore', assert);
+  // Focus moved elsewhere — exactly when another window may have claimed the
+  // top of the topmost band.
+  win.on('blur', assert);
+  // The OS actively stripped the bit (fullscreen/DPI transitions do this).
+  win.on('always-on-top-changed', (_e, isOnTop) => {
+    if (!isOnTop) assert();
+  });
+  // Display topology / fullscreen-driven metric changes (taskbar hide, work-
+  // area, DPI) — the signal that fires when another app goes fullscreen.
+  const onMetrics = (): void => assert();
+  screen.on('display-metrics-changed', onMetrics);
+  win.on('closed', () => {
+    if (settle) clearTimeout(settle);
+    screen.removeListener('display-metrics-changed', onMetrics);
+  });
+}
+
+/** Self-recover a window's content instead of needing an app restart (Geny port):
+ *  retry failed loads with backoff (server briefly down, network blip) and reload
+ *  after a renderer crash. */
+function attachContentResilience(win: BrowserWindow, reload: () => void): void {
+  const wc = win.webContents;
+  let retries = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearRetry = () => {
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  };
+  wc.on('did-finish-load', () => {
+    retries = 0;
+    clearRetry();
+  });
+  wc.on('did-fail-load', (_e, errorCode, errorDesc, _url, isMainFrame) => {
+    if (!isMainFrame) return; // ignore subresource failures
+    if (errorCode === -3) return; // ERR_ABORTED — a superseding navigation, not a failure
+    clearRetry();
+    const delay = Math.min(2000 * Math.pow(1.6, retries), 20000); // 2s → cap 20s
+    retries = Math.min(retries + 1, 10);
+    console.warn(`[connector] content load failed (${errorCode} ${errorDesc}); retry in ${Math.round(delay)}ms`);
+    retryTimer = setTimeout(() => {
+      if (!win.isDestroyed()) reload();
+    }, delay);
+  });
+  wc.on('render-process-gone', (_e, details) => {
+    if (details.reason === 'clean-exit') return;
+    console.warn(`[connector] renderer gone (${details.reason}); reloading`);
+    clearRetry();
+    retries = 0;
+    if (!win.isDestroyed()) reload();
+  });
+  wc.on('destroyed', clearRetry);
 }
 
 // Set on display-metrics-changed; saves hold off until this passes so we persist
@@ -329,11 +419,12 @@ function createOverlay(): void {
     },
   });
 
-  // Float above full-screen apps too (macOS).
-  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
-  if (process.platform === 'darwin') {
-    overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  }
+  // Float above full-screen apps — armed top-most (z-order churn/DPI 전환에도
+  // 이벤트 기반으로 재선점; 일회성 setAlwaysOnTop 은 시간이 지나면 풀린다).
+  armAlwaysOnTop(overlayWindow);
+  attachContentResilience(overlayWindow, () => {
+    if (overlayWindow) loadRendererPage(overlayWindow, 'overlay.html');
+  });
   // Click-through by default; the renderer flips this off over interactive regions.
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
 
@@ -412,7 +503,11 @@ function positionQuickChat(): void {
   suppressQuickChatPosSave = true;
   const saved = loadConfig().quickChatBar;
   if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
-    quickChatWindow.setBounds({ x: saved.x, y: saved.y, width: QUICKCHAT_W, height: QUICKCHAT_H });
+    // Multi-monitor aware: restore onto whichever display the bar was on, clamped
+    // to fit (guards a closed/moved monitor). Size is fixed (QUICKCHAT_W/H).
+    const rect = { x: saved.x, y: saved.y, width: QUICKCHAT_W, height: QUICKCHAT_H };
+    const b = restoreWinBounds(rect, rect);
+    quickChatWindow.setBounds({ x: b.x, y: b.y, width: QUICKCHAT_W, height: QUICKCHAT_H });
   } else {
     const pt = screen.getCursorScreenPoint();
     const wa = screen.getDisplayNearestPoint(pt).workArea;
@@ -447,10 +542,10 @@ function createQuickChat(): void {
       backgroundThrottling: false,
     },
   });
-  quickChatWindow.setAlwaysOnTop(true, 'screen-saver');
-  if (process.platform === 'darwin') {
-    quickChatWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  }
+  armAlwaysOnTop(quickChatWindow);
+  attachContentResilience(quickChatWindow, () => {
+    if (quickChatWindow) loadRendererPage(quickChatWindow, 'quickchat.html');
+  });
   quickChatWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
