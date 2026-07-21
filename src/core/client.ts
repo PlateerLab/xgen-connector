@@ -116,6 +116,38 @@ export class HttpClient {
     return this.json<T>('GET', path, undefined, opts);
   }
 
+  /** Multipart upload (아바타 에셋 등). Content-Type 은 fetch 가 boundary 와
+   *  함께 자동 설정하므로 지정하지 않는다. 대용량(모델 zip) 대비 긴 타임아웃. */
+  async upload<T>(path: string, form: FormData, opts?: { timeoutMs?: number }): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 120_000);
+    let res: Response;
+    try {
+      res = await this.fetchImpl(this.url(path), {
+        method: 'POST',
+        headers: this.headers({ Accept: 'application/json' }),
+        body: form as unknown as BodyInit,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const text = await res.text();
+    let parsed: unknown = undefined;
+    if (text) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+    }
+    if (!res.ok) {
+      if (res.status === 401) this.onAuthFailure?.();
+      throw new ApiError(res.status, `POST ${path} → ${res.status}`, parsed);
+    }
+    return parsed as T;
+  }
+
   post<T>(path: string, body?: unknown, opts?: { auth?: boolean; timeoutMs?: number }): Promise<T> {
     return this.json<T>('POST', path, body, opts);
   }

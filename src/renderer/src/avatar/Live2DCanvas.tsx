@@ -49,18 +49,21 @@ function ensureCubismCore(): Promise<void> {
   });
 }
 
-interface AvatarTransform {
+export interface AvatarTransform {
   scale: number;
   position: { x: number; y: number };
 }
 
 /** The pixi renderer for one avatar. Interactive: wheel zoom + left-drag pan,
- *  reporting the adjusted transform via onTransform. */
-const AvatarModel: React.FC<{
+ *  reporting the adjusted transform via onTransform. `interactive: false` 는
+ *  정적 미리보기(설정 뷰의 스토어 카드/이름 모달)용 — 입력 리스너를 달지
+ *  않아 스크롤/휠을 방해하지 않는다. Exported for the AvatarSettings view. */
+export const AvatarModel: React.FC<{
   avatar: AvatarDescriptor;
   serverUrl: string;
-  onTransform: (t: AvatarTransform) => void;
-}> = ({ avatar, serverUrl, onTransform }) => {
+  onTransform?: (t: AvatarTransform) => void;
+  interactive?: boolean;
+}> = ({ avatar, serverUrl, onTransform, interactive = true }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const genRef = useRef(0);
   const onTransformRef = useRef(onTransform);
@@ -111,7 +114,7 @@ const AvatarModel: React.FC<{
     };
     const scheduleEmit = () => {
       if (emitTimer) clearTimeout(emitTimer);
-      emitTimer = setTimeout(() => onTransformRef.current({ scale: scaleMul, position: { x: pos.x, y: pos.y } }), 500);
+      emitTimer = setTimeout(() => onTransformRef.current?.({ scale: scaleMul, position: { x: pos.x, y: pos.y } }), 500);
     };
 
     // wheel zoom + left-drag pan (only fires when the overlay is unlocked → not
@@ -241,12 +244,14 @@ const AvatarModel: React.FC<{
       });
       ro.observe(container);
 
-      container.style.cursor = 'grab';
-      container.addEventListener('wheel', onWheel, { passive: false });
-      container.addEventListener('pointerdown', onDown);
-      container.addEventListener('pointermove', onMove);
-      container.addEventListener('pointerup', onUp);
-      container.addEventListener('pointercancel', onUp);
+      if (interactive) {
+        container.style.cursor = 'grab';
+        container.addEventListener('wheel', onWheel, { passive: false });
+        container.addEventListener('pointerdown', onDown);
+        container.addEventListener('pointermove', onMove);
+        container.addEventListener('pointerup', onUp);
+        container.addEventListener('pointercancel', onUp);
+      }
 
       if (!isStale()) setPhase('ready');
     };

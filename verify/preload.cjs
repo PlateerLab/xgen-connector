@@ -17,6 +17,23 @@ const config = { serverUrl: 'https://xgen.plateer.com', theme: state.theme, auto
 
 const restoreUser = process.env.VERIFY_STAGE === 'login' ? null : user;
 
+const avatarCfg = {
+  enabled: true,
+  defaultAvatarId: 'a2',
+  avatars: [
+    { id: 'a1', name: '회사 프로필', runtime: 'image', source: 'upload', modelUrl: '/api/storage/avatar/1/a1/p.png' },
+    { id: 'a2', name: '엘렌 모델', runtime: 'image', source: 'upload', modelUrl: '/api/storage/avatar/1/a2/p.png', scale: 0.9 },
+  ],
+};
+const storeItems = [
+  { storeId: 's1', name: '사내 마스코트', description: '플래티어 공식 마스코트 아바타입니다.', runtime: 'image',
+    publisherUserId: 1, publisherName: 'admin', descriptor: { id: 'sd1', name: '사내 마스코트', runtime: 'image', source: 'upload', modelUrl: '/api/storage/avatar/2/sd1/p.png' },
+    createdAt: 0, downloads: 12, ratingAvg: 4.5, ratingCount: 4, myRating: 5 },
+  { storeId: 's2', name: '엘렌 (공유)', description: '무료 Live2D 모델 공유본.', runtime: 'image',
+    publisherUserId: 7, publisherName: 'shlee', descriptor: { id: 'sd2', name: '엘렌', runtime: 'image', source: 'upload', modelUrl: '/api/storage/avatar/7/sd2/p.png' },
+    createdAt: 0, downloads: 3, ratingAvg: 0, ratingCount: 0, myRating: null },
+];
+
 const api = {
   config: {
     get: async () => ({ ...config, theme: state.theme }),
@@ -37,8 +54,30 @@ const api = {
     onAuthFailed: () => () => {},
   },
   user: {
-    // no avatar configured → overlay renderer falls back to the placeholder
-    avatarConfig: async () => ({ enabled: false, defaultAvatarId: null, avatars: [] }),
+    // 'avatar' stage: canned config with two photo avatars; otherwise empty so
+    // the overlay stage keeps its placeholder rendering.
+    avatarConfig: async () =>
+      process.env.VERIFY_STAGE === 'avatar' ? { ...avatarCfg } : { enabled: false, defaultAvatarId: null, avatars: [] },
+    saveAvatarConfig: async () => {},
+    saveAvatarTransform: async () => {},
+    onAvatarRefresh: () => () => {},
+  },
+  avatars: {
+    uploadAsset: async (_bytes, filename) => ({
+      id: 'up1', name: (filename || 'avatar').replace(/\.[^.]+$/, ''), runtime: 'image', source: 'upload',
+      modelUrl: '/api/storage/avatar/1/up1/photo.png',
+    }),
+    deleteAsset: async () => {},
+    setEnabled: async (enabled) => { avatarCfg.enabled = enabled; return { ...avatarCfg }; },
+    select: async (id) => { avatarCfg.defaultAvatarId = id; return { ...avatarCfg }; },
+    rename: async (id, name) => { avatarCfg.avatars = avatarCfg.avatars.map((a) => (a.id === id ? { ...a, name } : a)); return { ...avatarCfg }; },
+    add: async (d, name) => { avatarCfg.avatars = [...avatarCfg.avatars, { ...d, name: name || d.name }]; return { ...avatarCfg }; },
+    remove: async (id) => { avatarCfg.avatars = avatarCfg.avatars.filter((a) => a.id !== id); return { ...avatarCfg }; },
+    storeList: async () => storeItems.slice(),
+    storePublish: async () => storeItems[0],
+    storeDownload: async () => ({ id: 'dl1', name: '사내 마스코트', runtime: 'image', source: 'upload', modelUrl: '/api/storage/avatar/2/dl1/p.png' }),
+    storeRate: async (storeId, stars) => ({ ...storeItems.find((i) => i.storeId === storeId), myRating: stars }),
+    storeUnpublish: async () => {},
   },
   agents: {
     list: async (q) => {
