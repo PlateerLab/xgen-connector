@@ -122,6 +122,9 @@ function createWindow(): void {
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
+      // 퀵 챗은 메인 창을 깨우지 않고 메시지를 전달한다 — 최소화/숨김 상태의
+      // 렌더러도 스트림 이벤트를 즉시 처리하도록 스로틀링을 끈다.
+      backgroundThrottling: false,
     },
   });
 
@@ -612,7 +615,9 @@ function deliverQuickChat(text: string): { ok: boolean; error?: string } {
   const body = (text ?? '').trim();
   if (!body) return { ok: false, error: '메시지를 입력하세요.' };
   if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: '앱 창을 열어주세요.' };
-  if (mainWindow.isMinimized()) mainWindow.restore();
+  // 퀵 챗은 퀵 챗일 뿐 — 메인 창의 상태(최소화/숨김/포커스)를 절대 건드리지
+  // 않는다. 숨김/최소화 창에도 IPC 는 정상 전달되고 스트림은 main 프로세스가
+  // 소유하므로, 대화는 뒤에서 진행되고 나중에 창을 열면 그대로 보인다.
   mainWindow.webContents.send(CHANNELS.quickSend, body);
   return { ok: true };
 }
