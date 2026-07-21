@@ -13,8 +13,9 @@ import type { Agent, Conversation, CurrentUser } from '../../../core/index';
 import type { ConnectorConfig } from '../../../main/config';
 import { Chat, type ChatSession } from './Chat';
 import { Settings } from './Settings';
+import { AvatarSettings } from './AvatarSettings';
 import { XgenWordmark, XgenMark } from '../brand/Logo';
-import { SettingsIcon, RefreshIcon, LogoutIcon, PanelLeftIcon, ChatIcon, BotIcon } from '../brand/icons';
+import { SettingsIcon, RefreshIcon, LogoutIcon, PanelLeftIcon, ChatIcon, BotIcon, AvatarIcon } from '../brand/icons';
 
 type Tab = 'agents' | 'history';
 
@@ -59,6 +60,8 @@ export const Workspace: React.FC<{
   // the open chat session
   const [session, setSession] = useState<ChatSession | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // 메인 페인 전환: 채팅 ↔ 아바타 설정 (채팅 세션은 뒤에 유지)
+  const [showAvatarSettings, setShowAvatarSettings] = useState(false);
   const [overlayOn, setOverlayOn] = useState(config.avatarOverlay ?? false);
 
   const toggleOverlay = useCallback(async () => {
@@ -174,6 +177,13 @@ export const Workspace: React.FC<{
                 onClick={() => void toggleOverlay()}
               >
                 <BotIcon size={18} />
+              </button>
+              <button
+                className={`icon-btn ${showAvatarSettings ? 'active' : ''}`}
+                title="아바타 설정"
+                onClick={() => setShowAvatarSettings((v) => !v)}
+              >
+                <AvatarIcon size={18} />
               </button>
               <button className="icon-btn" title="설정" onClick={() => setShowSettings(true)}>
                 <SettingsIcon size={18} />
@@ -311,7 +321,9 @@ export const Workspace: React.FC<{
       )}
 
       <main className="main-pane">
-        {session ? (
+        {showAvatarSettings ? (
+          <AvatarSettings user={user} serverUrl={config.serverUrl} onBack={() => setShowAvatarSettings(false)} />
+        ) : session ? (
           <Chat
             session={session}
             collapsed={collapsed}

@@ -78,22 +78,62 @@ export class PreferencesApi {
     await this.http.put('/api/admin/user', { preferences: { avatar: config } });
   }
 
-  /** Persist ONE avatar's scale/position — read-modify-write against the
-   *  CURRENT server config. Saving a cached whole-config snapshot silently
-   *  reverted changes made in between on the web (아바타 선택이 예전 값으로
-   *  되돌아가 "바꿔도 커넥터에 적용 안 됨" 증상), so partial updates must
-   *  always re-read first and patch only their own field. */
+  /** Read-modify-write: 서버의 CURRENT config 를 읽어 최소 패치만 적용한다.
+   *  화면에 캐시된 스냅샷 전체를 저장하면 그 사이의 변경(선택 등)을 조용히
+   *  되돌린다 — 모든 부분 수정은 반드시 이 경로를 쓴다. */
+  async mutateAvatarConfig(mutate: (cur: AvatarConfig) => AvatarConfig): Promise<AvatarConfig> {
+    const cfg = await this.getAvatarConfig();
+    const next = mutate(cfg);
+    await this.saveAvatarConfig(next);
+    return next;
+  }
+
+  /** Persist ONE avatar's scale/position (read-modify-write). */
   async saveAvatarTransform(
     avatarId: string,
     tf: { scale: number; position: { x: number; y: number } },
   ): Promise<void> {
-    const cfg = await this.getAvatarConfig();
-    const next: AvatarConfig = {
+    await this.mutateAvatarConfig((cfg) => ({
       ...cfg,
       avatars: cfg.avatars.map((a) =>
         a.id === avatarId ? { ...a, scale: tf.scale, position: tf.position } : a,
       ),
-    };
-    await this.saveAvatarConfig(next);
+    }));
+  }
+
+  setAvatarEnabled(enabled: boolean): Promise<AvatarConfig> {
+    return this.mutateAvatarConfig((c) => ({ ...c, enabled }));
+  }
+
+  selectAvatar(id: string): Promise<AvatarConfig> {
+    return this.mutateAvatarConfig((c) => ({ ...c, defaultAvatarId: id }));
+  }
+
+  renameAvatar(id: string, name: string): Promise<AvatarConfig> {
+    return this.mutateAvatarConfig((c) => ({
+      ...c,
+      avatars: c.avatars.map((a) => (a.id === id ? { ...a, name } : a)),
+    }));
+  }
+
+  /** Add an uploaded/downloaded descriptor (optionally renamed); first avatar
+   *  becomes the selection. */
+  addAvatar(descriptor: AvatarDescriptor, name?: string): Promise<AvatarConfig> {
+    return this.mutateAvatarConfig((c) => ({
+      ...c,
+      avatars: [...c.avatars, { ...descriptor, name: (name ?? descriptor.name) || descriptor.name }],
+      defaultAvatarId: c.defaultAvatarId ?? descriptor.id,
+    }));
+  }
+
+  removeAvatar(id: string): Promise<AvatarConfig> {
+    return this.mutateAvatarConfig((c) => {
+      const remaining = c.avatars.filter((a) => a.id !== id);
+      return {
+        ...c,
+        avatars: remaining,
+        defaultAvatarId: c.defaultAvatarId === id ? (remaining[0]?.id ?? null) : c.defaultAvatarId,
+      };
+    });
   }
 }

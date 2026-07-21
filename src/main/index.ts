@@ -905,6 +905,42 @@ ipcMain.handle(CHANNELS.userSaveAvatarTransform, (_e, avatarId, tf) =>
   getClient().preferences.saveAvatarTransform(avatarId, tf),
 );
 
+// ── IPC: 아바타 설정 뷰 (등록/이름/선택/삭제 + 스토어) ─────────────
+// config 를 바꾸는 op 는 저장 후 오버레이에 avatarRefresh 를 쏴서 다음 폴링을
+// 기다리지 않고 즉시 반영한다.
+function avatarConfigChanged<T>(result: T): T {
+  safeSend(overlayWindow, CHANNELS.avatarRefresh);
+  return result;
+}
+ipcMain.handle(CHANNELS.avatarUploadAsset, (_e, bytes: Uint8Array, filename: string) =>
+  getClient().avatars.uploadAsset(bytes, filename),
+);
+ipcMain.handle(CHANNELS.avatarDeleteAsset, (_e, avatarId: string) => getClient().avatars.deleteAsset(avatarId));
+ipcMain.handle(CHANNELS.avatarSetEnabled, async (_e, enabled: boolean) =>
+  avatarConfigChanged(await getClient().preferences.setAvatarEnabled(enabled)),
+);
+ipcMain.handle(CHANNELS.avatarSelect, async (_e, id: string) =>
+  avatarConfigChanged(await getClient().preferences.selectAvatar(id)),
+);
+ipcMain.handle(CHANNELS.avatarRename, async (_e, id: string, name: string) =>
+  avatarConfigChanged(await getClient().preferences.renameAvatar(id, name)),
+);
+ipcMain.handle(CHANNELS.avatarAdd, async (_e, descriptor, name?: string) =>
+  avatarConfigChanged(await getClient().preferences.addAvatar(descriptor, name)),
+);
+ipcMain.handle(CHANNELS.avatarRemove, async (_e, id: string) =>
+  avatarConfigChanged(await getClient().preferences.removeAvatar(id)),
+);
+ipcMain.handle(CHANNELS.avatarStoreList, () => getClient().avatars.storeList());
+ipcMain.handle(CHANNELS.avatarStorePublish, (_e, descriptor, name: string, description: string) =>
+  getClient().avatars.storePublish(descriptor, name, description),
+);
+ipcMain.handle(CHANNELS.avatarStoreDownload, (_e, storeId: string) => getClient().avatars.storeDownload(storeId));
+ipcMain.handle(CHANNELS.avatarStoreRate, (_e, storeId: string, stars: number) =>
+  getClient().avatars.storeRate(storeId, stars),
+);
+ipcMain.handle(CHANNELS.avatarStoreUnpublish, (_e, storeId: string) => getClient().avatars.storeUnpublish(storeId));
+
 // ── IPC: agents ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.agentsList, (_e, query) => getClient().agents.list(query ?? {}));
 

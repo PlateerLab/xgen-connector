@@ -97,6 +97,39 @@ export const HistoryIcon: React.FC<P> = ({ size = 15, className }) => (
     <path d="M12 7v5l4 2" />
   </svg>
 );
+/** 아바타 설정 (사이드바 헤더) — 사람 실루엣 원형. */
+export const AvatarIcon: React.FC<P> = ({ size = 18, className }) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="10" r="3" />
+    <path d="M6.2 18.9a6.5 6.5 0 0 1 11.6 0" />
+  </svg>
+);
+export const BackIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="m12 19-7-7 7-7" />
+    <path d="M19 12H5" />
+  </svg>
+);
+export const PencilIcon: React.FC<P> = ({ size = 14, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+  </svg>
+);
+export const TrashIcon: React.FC<P> = ({ size = 14, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M3 6h18" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+  </svg>
+);
+export const UploadIcon: React.FC<P> = ({ size = 15, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="17 8 12 3 7 8" />
+    <line x1="12" y1="3" x2="12" y2="15" />
+  </svg>
+);
 export const BotIcon: React.FC<P> = ({ size = 18, className }) => (
   <svg {...base(size)} className={className}>
     <rect x="4" y="8" width="16" height="12" rx="3" />

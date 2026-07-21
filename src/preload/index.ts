@@ -8,7 +8,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { CHANNELS } from '../main/ipc';
 import type { ChatEvent, ChatRequest, CurrentUser, AgentListQuery, AgentListResult, HistoryTurn, Conversation } from '../core/index';
-import type { AvatarConfig } from '../core/preferences';
+import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
+import type { StoreAvatar } from '../core/avatars';
 import type { ConnectorConfig, McpServerConfig } from '../main/config';
 
 /** Local-MCP bridge status pushed to the settings UI. */
@@ -84,6 +85,27 @@ const api = {
       ipcRenderer.on(CHANNELS.avatarRefresh, h);
       return () => ipcRenderer.removeListener(CHANNELS.avatarRefresh, h);
     },
+  },
+
+  /** 아바타 설정 뷰 — 에셋 업로드/삭제, config 부분수정(read-modify-write), 스토어. */
+  avatars: {
+    uploadAsset: (bytes: Uint8Array, filename: string): Promise<AvatarDescriptor> =>
+      ipcRenderer.invoke(CHANNELS.avatarUploadAsset, bytes, filename),
+    deleteAsset: (avatarId: string): Promise<void> => ipcRenderer.invoke(CHANNELS.avatarDeleteAsset, avatarId),
+    setEnabled: (enabled: boolean): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.avatarSetEnabled, enabled),
+    select: (id: string): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.avatarSelect, id),
+    rename: (id: string, name: string): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.avatarRename, id, name),
+    add: (descriptor: AvatarDescriptor, name?: string): Promise<AvatarConfig> =>
+      ipcRenderer.invoke(CHANNELS.avatarAdd, descriptor, name),
+    remove: (id: string): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.avatarRemove, id),
+    storeList: (): Promise<StoreAvatar[]> => ipcRenderer.invoke(CHANNELS.avatarStoreList),
+    storePublish: (descriptor: AvatarDescriptor, name: string, description: string): Promise<StoreAvatar> =>
+      ipcRenderer.invoke(CHANNELS.avatarStorePublish, descriptor, name, description),
+    storeDownload: (storeId: string): Promise<AvatarDescriptor> =>
+      ipcRenderer.invoke(CHANNELS.avatarStoreDownload, storeId),
+    storeRate: (storeId: string, stars: number): Promise<StoreAvatar> =>
+      ipcRenderer.invoke(CHANNELS.avatarStoreRate, storeId, stars),
+    storeUnpublish: (storeId: string): Promise<void> => ipcRenderer.invoke(CHANNELS.avatarStoreUnpublish, storeId),
   },
 
   history: {

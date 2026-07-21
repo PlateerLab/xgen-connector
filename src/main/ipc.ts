@@ -15,6 +15,19 @@ export const CHANNELS = {
   userAvatarConfig: 'user:avatarConfig', // renderer → main → GET /api/admin/user preferences.avatar
   userSaveAvatarConfig: 'user:saveAvatarConfig', // overlay adjusts scale/position → PUT
   userSaveAvatarTransform: 'user:saveAvatarTransform', // per-avatar transform patch (read-modify-write)
+  // 아바타 설정 뷰 (등록/이름/선택/삭제 + 스토어) — 전부 main 의 XgenClient 경유
+  avatarUploadAsset: 'avatar:uploadAsset',
+  avatarDeleteAsset: 'avatar:deleteAsset',
+  avatarSetEnabled: 'avatar:setEnabled',
+  avatarSelect: 'avatar:select',
+  avatarRename: 'avatar:rename',
+  avatarAdd: 'avatar:add',
+  avatarRemove: 'avatar:remove',
+  avatarStoreList: 'avatar:store:list',
+  avatarStorePublish: 'avatar:store:publish',
+  avatarStoreDownload: 'avatar:store:download',
+  avatarStoreRate: 'avatar:store:rate',
+  avatarStoreUnpublish: 'avatar:store:unpublish',
   avatarRefresh: 'avatar:refresh', // main → overlay (auth ready / config changed → refetch now)
 
   agentsList: 'agents:list',

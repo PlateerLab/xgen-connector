@@ -1,8 +1,14 @@
 // Headless (offscreen) screenshot harness for visual verification.
 // Loads the built renderer with a mock bridge and captures PNGs of each screen.
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, protocol } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+
+// xgenavatar:// asset proxy stand-in — serve a small colored PNG for every
+// request so image thumbnails/pixi textures resolve in the avatar stage.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'xgenavatar', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } },
+]);
 
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('no-sandbox');
@@ -34,6 +40,12 @@ function setNativeValue(el, value){
 
 app.whenReady().then(async () => {
   fs.mkdirSync(OUT, { recursive: true });
+
+  const TINY_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAmElEQVR4nO3QMREAIBDAsBeGMEyjAWRkoEP2Xmevc382OkBrgA7QGqADtAboAK0BOkBrgA7QGqADtAboAK0BOkBrgA7QGqADtAboAK0BOkBrgA7QGqADtAboAK0BOkBrgA7QGqADtAboAK0BOkBrgA7QGqADtAboAK0BOkBrgA7QGqADtAboAK0BOkBrgA7QGqADtAboAO0BIpMCd6N+QvsAAAAASUVORK5CYII=',
+    'base64',
+  );
+  protocol.handle('xgenavatar', () => new Response(TINY_PNG, { headers: { 'Content-Type': 'image/png' } }));
 
   // Overlay stage: capture the floating avatar window on a "desktop" backdrop.
   if (STAGE === 'overlay') {
@@ -92,6 +104,40 @@ app.whenReady().then(async () => {
   await win.loadFile(path.join(__dirname, '..', 'out', 'renderer', 'index.html'));
   await win.webContents.executeJavaScript(DRIVE + 'true');
   await sleep(1200); // fonts + restore
+
+  if (STAGE === 'avatar') {
+    // 아바타 설정 뷰: 사이드바 헤더 버튼 → 설정 탭 → 스토어 탭
+    await win.webContents.executeJavaScript(`(() => {
+      const btn = [...document.querySelectorAll('.sidebar-head-actions .icon-btn')].find((b) => b.title === '아바타 설정');
+      if (btn) btn.click();
+      return !!btn;
+    })()`);
+    await sleep(1200);
+    await snap(win, 'avatar-settings.png');
+    await win.webContents.executeJavaScript(`(() => {
+      const t = [...document.querySelectorAll('.avset-header .seg button')].find((b) => b.textContent.includes('스토어'));
+      if (t) t.click();
+      return !!t;
+    })()`);
+    await sleep(1000);
+    await snap(win, 'avatar-store.png');
+    // 이름 변경 모달
+    await win.webContents.executeJavaScript(`(() => {
+      const t = [...document.querySelectorAll('.avset-header .seg button')].find((b) => b.textContent.includes('설정'));
+      if (t) t.click();
+      return !!t;
+    })()`);
+    await sleep(600);
+    await win.webContents.executeJavaScript(`(() => {
+      const b = document.querySelector('.avset-item .icon-btn[title="이름 변경"]');
+      if (b) b.click();
+      return !!b;
+    })()`);
+    await sleep(900);
+    await snap(win, 'avatar-rename.png');
+    app.quit();
+    return;
+  }
 
   if (STAGE === 'login') {
     await snap(win, 'login.png');
@@ -155,7 +201,7 @@ app.whenReady().then(async () => {
 
   // Settings modal
   await win.webContents.executeJavaScript(`(() => {
-    const btn = [...document.querySelectorAll('.sidebar-head-actions .icon-btn')].find((b) => b.title.includes('설정'));
+    const btn = [...document.querySelectorAll('.sidebar-head-actions .icon-btn')].find((b) => b.title === '설정');
     if (btn) btn.click();
     return !!btn;
   })()`);
