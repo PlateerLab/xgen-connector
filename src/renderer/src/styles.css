@@ -1387,6 +1387,13 @@ button {
   background: transparent;
   display: flex;
   flex-direction: column;
+  /* The overlay is a pure control surface — nothing here is meant to be
+     selected. Without this, dragging the move-bar (or a resize handle) over any
+     label starts a native TEXT SELECTION that hijacks the pointer and stalls the
+     window move. (The quick-chat input re-enables selection on itself.) */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
 }
 .ov-stage {
   flex: 1;

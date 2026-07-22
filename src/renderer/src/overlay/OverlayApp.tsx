@@ -258,6 +258,10 @@ export function OverlayApp(): React.ReactElement {
   };
   const onDrag = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
+    // Stop the browser from starting a text selection / native drag on the
+    // press — that gesture would otherwise capture the pointer and block the
+    // window move.
+    e.preventDefault();
     dragging.current = true;
     const onMove = (ev: MouseEvent) => xgen.overlay.moveBy(ev.movementX, ev.movementY);
     const onUp = () => {

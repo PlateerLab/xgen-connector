@@ -345,6 +345,21 @@ function applyOverlaySizeOnCross(): void {
   overlayWindow.setBounds({ x, y, width, height });
 }
 
+// Authoritative drag rect: during a dock-handle drag we track the overlay's
+// intended bounds in JS and re-assert a CONSTANT size each frame, instead of
+// reading getBounds()/getPosition() (which drifts + grows the window on
+// fractional DPI). See the overlay:moveBy handler for the full rationale.
+let overlayMoveRect: { x: number; y: number; w: number; h: number } | null = null;
+let overlayMoveIdle: ReturnType<typeof setTimeout> | null = null;
+function endOverlayMove(): void {
+  if (overlayMoveIdle) {
+    clearTimeout(overlayMoveIdle);
+    overlayMoveIdle = null;
+  }
+  overlayMoveRect = null;
+  onOverlayMoved(); // reconcile size-on-cross + persist the settled bounds
+}
+
 // 'moved' fires during a drag + on the DPI cross; debounce, wait out the rescale,
 // THEN reconcile size-on-cross and persist.
 let overlayMovedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1018,14 +1033,36 @@ ipcMain.on(CHANNELS.overlaySetIgnoreMouse, (_e, ignore: boolean) => {
 });
 ipcMain.on(CHANNELS.overlayMoveBy, (_e, dx: number, dy: number) => {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  // Use getPosition/setPosition (NOT setBounds): on fractional-DPI displays
-  // (e.g. Windows 150% scaling) setBounds round-trips width/height through the
-  // scale factor and the window creeps larger on every drag delta. setPosition
-  // only touches x/y, so the size is rock-stable while moving. (Geny's fix.)
-  const [x, y] = overlayWindow.getPosition();
-  overlayWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
-  // Persistence: 'moved' fires on Windows (→ onOverlayMoved, DPI-aware) and the
-  // renderer sends overlay:commitBounds on pointer-up for all platforms.
+  // The naive setPosition(getPosition()+delta) GROWS the window on Windows
+  // fractional-DPI monitors (150%): Electron's setPosition internally does
+  // SetBounds(newOrigin, getBounds().size()), and getBounds() reports the
+  // DIP-rounded size — each frame reads a slightly larger rounded size and
+  // writes it back, so over a drag's hundreds of frames the window balloons.
+  // (setBounds has the exact same read-back-and-grow flaw; the old "setPosition
+  // is size-safe" comment was wrong.)
+  //
+  // Fix: keep an AUTHORITATIVE rect in JS. Capture the real bounds once at the
+  // start of a drag, then apply deltas to the tracked position and re-assert a
+  // CONSTANT captured size every frame — never reading getBounds() mid-drag. A
+  // constant DIP size converts to the same physical size each call, so it can't
+  // drift; it also stays put when crossing to a different-scale monitor
+  // (physical size adapts), and the post-drag reconcile snaps to that monitor's
+  // remembered size. The rect auto-expires shortly after the last delta, or on
+  // the explicit commitBounds (pointer-up) below.
+  if (!overlayMoveRect) {
+    const b = overlayWindow.getBounds();
+    overlayMoveRect = { x: b.x, y: b.y, w: b.width, h: b.height };
+  }
+  overlayMoveRect.x += dx;
+  overlayMoveRect.y += dy;
+  overlayWindow.setBounds({
+    x: Math.round(overlayMoveRect.x),
+    y: Math.round(overlayMoveRect.y),
+    width: overlayMoveRect.w,
+    height: overlayMoveRect.h,
+  });
+  if (overlayMoveIdle) clearTimeout(overlayMoveIdle);
+  overlayMoveIdle = setTimeout(endOverlayMove, 300); // fallback drag-end
 });
 ipcMain.on(CHANNELS.overlayResizeBy, (_e, edge: string, dx: number, dy: number) => {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
@@ -1050,6 +1087,13 @@ ipcMain.on(CHANNELS.overlayResizeBy, (_e, edge: string, dx: number, dy: number) 
 // Drag/resize gesture ENDED (renderer pointerup) → persist the SETTLED bounds for
 // the current monitor immediately, so an immediate restart can't lose it.
 ipcMain.on(CHANNELS.overlayCommitBounds, () => {
+  // Gesture ended (pointer-up): drop the authoritative move rect so the next
+  // window event reads real bounds again, then persist immediately.
+  if (overlayMoveIdle) {
+    clearTimeout(overlayMoveIdle);
+    overlayMoveIdle = null;
+  }
+  overlayMoveRect = null;
   saveOverlayGeometry(true);
 });
 ipcMain.on(CHANNELS.overlayFocusMain, () => showMain());
