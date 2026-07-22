@@ -10,7 +10,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
-import type { Agent, ChatEvent, ToolEvent, Citation } from '../../../core/index';
+import type { Agent, ChatEvent, ToolEvent, Citation, VoiceConfig } from '../../../core/index';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
 import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon, PanelLeftIcon } from '../brand/icons';
@@ -69,6 +69,29 @@ export const Chat: React.FC<{
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // ── Voice (STT/TTS) state ──────────────────────────────────────
+  const [voiceCfg, setVoiceCfg] = useState<VoiceConfig | null>(null);
+  const [localVoice, setLocalVoice] = useState({ input: true, output: true });
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [muted, setMuted] = useState(false);
+
+  // Effective gates: server must enable AND this device must not have turned off.
+  const sttOn = !!voiceCfg?.stt?.enabled && localVoice.input;
+  const ttsOn = !!voiceCfg?.tts?.enabled && localVoice.output;
+
+  // Mic capture refs.
+  const mediaRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  // TTS playback refs — a simple serial queue so replies never overlap.
+  const ttsQueueRef = useRef<string[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playingRef = useRef(false);
+  // Mirrors for use inside async/stream callbacks (avoid stale closures + dep churn).
+  const mutedRef = useRef(muted);
+  const ttsOnRef = useRef(ttsOn);
+
   // A stable signature of the open session — changing it resets the view.
   const sessionSig = `${agent.workflowId}::${session.resume ? session.interactionId : 'new'}`;
 
@@ -123,6 +146,57 @@ export const Chat: React.FC<{
     setStreaming(false);
   }, [agent.workflowId]);
 
+  // ── TTS playback: serial queue (one HTMLAudioElement, plays next on end) ──
+  const playNext = useCallback(async () => {
+    if (playingRef.current) return;
+    const text = ttsQueueRef.current.shift();
+    if (!text) return;
+    playingRef.current = true;
+    let url: string | null = null;
+    const done = () => {
+      if (url) URL.revokeObjectURL(url);
+      playingRef.current = false;
+      void playNext();
+    };
+    try {
+      const blob = await xgen.voice.speak(text);
+      url = URL.createObjectURL(blob);
+      let el = audioRef.current;
+      if (!el) {
+        el = new Audio();
+        audioRef.current = el;
+      }
+      el.onended = done;
+      el.onerror = done;
+      el.src = url;
+      await el.play();
+    } catch {
+      done();
+    }
+  }, []);
+
+  const enqueueTts = useCallback(
+    (text: string) => {
+      const t = text.trim();
+      if (!t || mutedRef.current) return;
+      ttsQueueRef.current.push(t);
+      void playNext();
+    },
+    [playNext],
+  );
+
+  const stopTts = useCallback(() => {
+    ttsQueueRef.current = [];
+    const el = audioRef.current;
+    if (el) {
+      el.pause();
+      el.onended = null;
+      el.onerror = null;
+      el.src = '';
+    }
+    playingRef.current = false;
+  }, []);
+
   const send = useCallback((override?: string) => {
     const text = (override ?? input).trim();
     if (!text || streaming) return;
@@ -136,6 +210,8 @@ export const Chat: React.FC<{
 
     const tools: ToolEvent[] = [];
     let citations: Citation[] = [];
+    // Accumulate the assistant reply so we can hand the FULL text to TTS on end.
+    let assistantText = '';
     const handle = xgen.chat.stream(
       {
         workflowId: agent.workflowId,
@@ -144,6 +220,8 @@ export const Chat: React.FC<{
         interactionId,
       },
       (ev: ChatEvent) => {
+        if (ev.kind === 'text') assistantText += ev.content;
+        else if (ev.kind === 'summary' && !assistantText) assistantText = ev.text;
         setMessages((m) => {
           const copy = [...m];
           const last = copy[copy.length - 1];
@@ -170,11 +248,13 @@ export const Chat: React.FC<{
             return copy;
           });
           cancelRef.current = null;
+          // Speak the finished reply (auto-TTS), if enabled and not muted.
+          if (ev.kind === 'end' && ttsOnRef.current) enqueueTts(assistantText);
         }
       },
     );
     cancelRef.current = handle;
-  }, [input, streaming, agent, interactionId]);
+  }, [input, streaming, agent, interactionId, enqueueTts]);
 
   const stop = useCallback(() => {
     cancelRef.current?.cancel();
@@ -187,6 +267,96 @@ export const Chat: React.FC<{
       return copy;
     });
   }, []);
+
+  // ── STT: push-to-talk mic capture (getUserMedia + MediaRecorder) ──
+  const startRecording = useCallback(async () => {
+    if (recording || transcribing) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      const mr = new MediaRecorder(stream);
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size) chunksRef.current.push(e.data);
+      };
+      mr.onstop = async () => {
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' });
+        chunksRef.current = [];
+        if (!blob.size) return;
+        setTranscribing(true);
+        try {
+          const lang = voiceCfg?.stt?.language || undefined;
+          const t = (await xgen.voice.transcribe(blob, lang)).trim();
+          if (t) send(t);
+        } catch {
+          /* transcription failed — leave the input untouched */
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      mr.start();
+      mediaRef.current = mr;
+      setRecording(true);
+    } catch {
+      // Permission denied / no mic — reset state.
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setRecording(false);
+    }
+  }, [recording, transcribing, voiceCfg, send]);
+
+  const stopRecording = useCallback(() => {
+    const mr = mediaRef.current;
+    if (mr && mr.state !== 'inactive') mr.stop();
+    mediaRef.current = null;
+    setRecording(false);
+  }, []);
+
+  const toggleMic = useCallback(() => {
+    if (recording) stopRecording();
+    else void startRecording();
+  }, [recording, startRecording, stopRecording]);
+
+  // Load voice config (server hints) + device-local overrides; track live changes.
+  useEffect(() => {
+    let alive = true;
+    xgen.voice
+      .getConfig()
+      .then((c) => alive && setVoiceCfg(c))
+      .catch(() => undefined);
+    xgen.config
+      .get()
+      .then((cfg) => alive && setLocalVoice({ input: cfg.voiceInput !== false, output: cfg.voiceOutput !== false }))
+      .catch(() => undefined);
+    const off = xgen.config.onChange((cfg) =>
+      setLocalVoice({ input: cfg.voiceInput !== false, output: cfg.voiceOutput !== false }),
+    );
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+
+  // Keep async-callback mirrors in sync; muting also stops in-flight playback.
+  useEffect(() => {
+    mutedRef.current = muted;
+    if (muted) stopTts();
+  }, [muted, stopTts]);
+  useEffect(() => {
+    ttsOnRef.current = ttsOn;
+    if (!ttsOn) stopTts();
+  }, [ttsOn, stopTts]);
+
+  // Tear down mic + audio when the view unmounts / session switches.
+  useEffect(
+    () => () => {
+      stopRecording();
+      stopTts();
+    },
+    [stopRecording, stopTts],
+  );
 
   const avatarState: AvatarState = useMemo(() => {
     const last = messages[messages.length - 1];
@@ -235,6 +405,16 @@ export const Chat: React.FC<{
           </div>
         </div>
         <div className="chat-header-actions">
+          {ttsOn && (
+            <button
+              className="secondary"
+              onClick={() => setMuted((v) => !v)}
+              title={muted ? '음성 출력 켜기' : '음성 출력 끄기'}
+              aria-label={muted ? '음성 출력 켜기' : '음성 출력 끄기'}
+            >
+              {muted ? '🔇' : '🔊'}
+            </button>
+          )}
           <button className="secondary" onClick={newConversation}>
             <PlusIcon size={15} /> 새 대화
           </button>
@@ -275,6 +455,15 @@ export const Chat: React.FC<{
                   {m.text || (m.streaming ? <span className="cursor" /> : '')}
                   {m.text && m.streaming && <span className="cursor" />}
                 </div>
+                {m.role === 'assistant' && ttsOn && m.text && !m.streaming && !m.error && (
+                  <button
+                    className="link msg-tts"
+                    onClick={() => enqueueTts(m.text)}
+                    title="다시 듣기"
+                  >
+                    🔊 재생
+                  </button>
+                )}
                 {m.citations && m.citations.length > 0 && (
                   <div className="citations">
                     <span className="label">출처</span>
@@ -312,6 +501,17 @@ export const Chat: React.FC<{
             rows={1}
             spellCheck={false}
           />
+          {sttOn && (
+            <button
+              className={`composer-mic${recording ? ' recording' : ''}`}
+              onClick={toggleMic}
+              disabled={transcribing || streaming}
+              title={transcribing ? '변환 중…' : recording ? '녹음 중지' : '음성 입력'}
+              aria-label="음성 입력"
+            >
+              {transcribing ? '…' : recording ? '⏹' : '🎤'}
+            </button>
+          )}
           {streaming ? (
             <button className="composer-send stop" onClick={stop} title="중지" aria-label="중지">
               <StopIcon size={15} />

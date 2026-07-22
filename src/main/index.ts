@@ -21,9 +21,10 @@ import {
   nativeImage,
   protocol,
   net,
+  session,
 } from 'electron';
 import { join } from 'node:path';
-import { XgenClient, type ChatEvent } from '../core/index';
+import { XgenClient, type ChatEvent, type TtsSpeakOptions } from '../core/index';
 import { loadConfig, saveConfig, normalizeServerUrl, type ConnectorConfig } from './config';
 import { tokenStore, credentialStore } from './keychain';
 import { initUpdater, setAutoUpdate, getAutoUpdate, checkNow, disposeUpdater } from './updater';
@@ -964,6 +965,25 @@ ipcMain.handle(CHANNELS.avatarStoreUnpublish, (_e, storeId: string) => getClient
 // ── IPC: agents ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.agentsList, (_e, query) => getClient().agents.list(query ?? {}));
 
+// ── IPC: voice (STT/TTS) ─────────────────────────────────────────
+// The renderer captures audio via getUserMedia and hands bytes to main; main
+// proxies to the backend with the Bearer token. Secrets never reach here.
+ipcMain.handle(CHANNELS.voiceConfig, () => getClient().voice.getVoiceConfig());
+ipcMain.handle(CHANNELS.voiceTranscribe, (_e, bytes: Uint8Array, mime: string, language?: string) => {
+  // Copy to a standalone ArrayBuffer (the IPC view may span a shared buffer).
+  const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const blob = new Blob([buf], { type: mime || 'audio/webm' });
+  return getClient().voice.transcribe(blob, language);
+});
+ipcMain.handle(
+  CHANNELS.voiceSpeak,
+  async (_e, text: string, opts?: TtsSpeakOptions) => {
+    const blob = await getClient().voice.speak(text, opts);
+    const buf = Buffer.from(await blob.arrayBuffer());
+    return { bytes: new Uint8Array(buf), mime: blob.type };
+  },
+);
+
 // ── IPC: history ─────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.historyTurns, (_e, workflowId: string, interactionId: string, name?: string) =>
   getClient().history.turns(workflowId, interactionId, name),
@@ -1180,6 +1200,14 @@ if (!gotLock) {
   app.whenReady().then(() => {
     const cfg = loadConfig();
     if (cfg.theme) nativeTheme.themeSource = cfg.theme;
+
+    // Voice input: the renderer calls navigator.mediaDevices.getUserMedia for the
+    // push-to-talk mic. Electron denies media by default unless we approve it —
+    // grant ONLY 'media', deny every other permission request.
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
+      cb(permission === 'media');
+    });
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media');
 
     // Avatar asset proxy: xgenavatar://a/<path> → <serverUrl>/<path>, fetched in
     // the main process (no CORS/CSP). The renderer points the Live2D/Spine loader

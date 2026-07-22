@@ -3,6 +3,7 @@ import { xgen } from '../bridge';
 import type { ConnectorConfig } from '../../../main/config';
 import { HotkeyCapture } from './HotkeyCapture';
 import { McpSettings } from './McpSettings';
+import { VoiceSettings } from './VoiceSettings';
 
 type Theme = NonNullable<ConnectorConfig['theme']>;
 
@@ -27,6 +28,7 @@ export const Settings: React.FC<{
   const [checking, setChecking] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showMcp, setShowMcp] = useState(false);
+  const [showVoice, setShowVoice] = useState(false);
 
   // Any status message means the check is underway/done → drop the button spinner
   // (the message line then shows progress like "내려받는 중… 45%").
@@ -72,6 +74,7 @@ export const Settings: React.FC<{
   };
 
   if (showMcp) return <McpSettings onClose={() => setShowMcp(false)} />;
+  if (showVoice) return <VoiceSettings onClose={() => setShowVoice(false)} />;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -222,6 +225,13 @@ export const Settings: React.FC<{
               <span className="track" />
             </label>
           </div>
+        </div>
+
+        <div className="field-row">
+          <span>음성 (STT/TTS)</span>
+          <button className="secondary" onClick={() => setShowVoice(true)}>
+            관리
+          </button>
         </div>
 
         <div className="field-row">

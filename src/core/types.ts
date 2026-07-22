@@ -133,6 +133,58 @@ export interface ChatRequest {
   includeToolEvents?: boolean;
 }
 
+/**
+ * Voice (STT/TTS) preferences — read-only hints surfaced to the connector UI.
+ * The authoritative config is edited in the XGEN web 마이페이지; the connector
+ * only reflects it. Shapes mirror the stored `preferences.stt` / `preferences.tts`
+ * JSON (snake_case on the wire) so no lossy mapping is needed. Secrets
+ * (base_url/api_key) NEVER appear here — those stay server-side.
+ */
+export interface SttPref {
+  enabled: boolean;
+  provider?: string;
+  model_id?: string;
+  language?: string;
+}
+
+/** One TTS voice profile: a saved named {voice + params} bundle (no cloning). */
+export interface TtsProfile {
+  id: string;
+  name: string;
+  provider: string;
+  voice_id: string;
+  speed: number;
+  format: string;
+  language: string;
+  emotion: string;
+}
+
+export interface TtsPref {
+  enabled: boolean;
+  active_profile_id: string | null;
+  profiles: TtsProfile[];
+}
+
+/** Voice config as read by the connector (UI hints only). */
+export interface VoiceConfig {
+  stt: SttPref | null;
+  tts: TtsPref | null;
+}
+
+/**
+ * Per-request overrides for TTS `speak`. All optional — when omitted the backend
+ * uses the caller's active TTS profile. Snake_case to match the proxy body
+ * `{ text, voice_id?, provider?, speed?, format?, language?, emotion? }`.
+ */
+export interface TtsSpeakOptions {
+  voice_id?: string;
+  provider?: string;
+  speed?: number;
+  format?: string;
+  language?: string;
+  emotion?: string;
+}
+
 /** One past turn from the conversation history (io-logs). */
 export interface HistoryTurn {
   logId: number;

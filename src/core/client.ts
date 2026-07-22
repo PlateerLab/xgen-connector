@@ -152,6 +152,38 @@ export class HttpClient {
     return this.json<T>('POST', path, body, opts);
   }
 
+  /**
+   * POST a JSON body and read the raw BINARY response (e.g. TTS audio bytes).
+   * Returns the bytes plus the response `Content-Type` so the caller can wrap a
+   * correctly-typed Blob (audio/wav|mpeg|ogg). Throws ApiError on non-2xx.
+   */
+  async postBinary(
+    path: string,
+    body: unknown,
+    opts?: { timeoutMs?: number },
+  ): Promise<{ bytes: Uint8Array; contentType: string }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? this.timeoutMs);
+    let res: Response;
+    try {
+      res = await this.fetchImpl(this.url(path), {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json', Accept: 'audio/*' }),
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      if (res.status === 401) this.onAuthFailure?.();
+      const text = await res.text().catch(() => '');
+      throw new ApiError(res.status, `POST ${path} → ${res.status}`, text);
+    }
+    const ab = await res.arrayBuffer();
+    return { bytes: new Uint8Array(ab), contentType: res.headers.get('content-type') ?? '' };
+  }
+
   put<T>(path: string, body?: unknown, opts?: { auth?: boolean; timeoutMs?: number }): Promise<T> {
     return this.json<T>('PUT', path, body, opts);
   }

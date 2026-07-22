@@ -7,7 +7,7 @@
  */
 import { contextBridge, ipcRenderer } from 'electron';
 import { CHANNELS } from '../main/ipc';
-import type { ChatEvent, ChatRequest, CurrentUser, AgentListQuery, AgentListResult, HistoryTurn, Conversation } from '../core/index';
+import type { ChatEvent, ChatRequest, CurrentUser, AgentListQuery, AgentListResult, HistoryTurn, Conversation, VoiceConfig, TtsSpeakOptions } from '../core/index';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
 import type { ConnectorConfig, McpServerConfig } from '../main/config';
@@ -136,6 +136,30 @@ const api = {
           ipcRenderer.removeListener(CHANNELS.chatEvent, h);
         },
       };
+    },
+  },
+
+  /** Voice — STT (mic→text) and TTS (text→audio). Audio is captured in the
+   *  renderer (getUserMedia) and shuttled to main as bytes; secrets stay in main. */
+  voice: {
+    /** preferences.stt / preferences.tts (UI hints only — no secrets). */
+    getConfig: (): Promise<VoiceConfig> => ipcRenderer.invoke(CHANNELS.voiceConfig),
+    /** Send a recorded clip → transcript text. */
+    transcribe: async (blob: Blob, language?: string): Promise<string> => {
+      const buf = await blob.arrayBuffer();
+      return ipcRenderer.invoke(CHANNELS.voiceTranscribe, new Uint8Array(buf), blob.type, language);
+    },
+    /** Synthesize `text` → a playable audio Blob. */
+    speak: async (text: string, opts?: TtsSpeakOptions): Promise<Blob> => {
+      const r = (await ipcRenderer.invoke(CHANNELS.voiceSpeak, text, opts)) as {
+        bytes: Uint8Array;
+        mime: string;
+      };
+      const buf = r.bytes.buffer.slice(
+        r.bytes.byteOffset,
+        r.bytes.byteOffset + r.bytes.byteLength,
+      ) as ArrayBuffer;
+      return new Blob([buf], { type: r.mime || 'audio/wav' });
     },
   },
 
