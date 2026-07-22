@@ -118,8 +118,29 @@ function getUpdater(): AppUpdater | null {
       detail: '지금 재시작하면 새 버전이 설치됩니다.',
     });
     if (res.response === 0) {
-      appWillInstall();
-      autoUpdater.quitAndInstall(false, true);
+      appWillInstall(); // flips appQuitting so close-to-tray can't block the quit
+      // SILENT install (isSilent=true). In non-silent mode the NSIS installer
+      // pops its interactive "XGEN Connector cannot be closed — Retry" dialog,
+      // which RACES the app's own shutdown: the installer runs its app-running
+      // check within milliseconds, before app.quit() has finished tearing the
+      // windows down and exiting, so it wrongly reports the app as un-closable.
+      // Silent + isForceRunAfter=true swaps the files and relaunches without any
+      // dialog. (quitAndInstall also calls app.quit() itself.)
+      try {
+        autoUpdater.quitAndInstall(true, true);
+      } catch (e) {
+        log('quitAndInstall', e);
+      }
+      // Safety net: a tray app can linger on quit (MCP stdio child pipes, the
+      // overlay/quick-chat sockets). If the process is somehow still alive a few
+      // seconds later, force-exit so the installer can replace the locked files.
+      setTimeout(() => {
+        try {
+          app.exit(0);
+        } catch {
+          /* already gone */
+        }
+      }, 3500);
     }
   });
   autoUpdater.on('error', (err) => log('error', err?.message ?? err));
