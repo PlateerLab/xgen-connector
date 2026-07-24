@@ -79,6 +79,19 @@ const api = {
     storeRate: async (storeId, stars) => ({ ...storeItems.find((i) => i.storeId === storeId), myRating: stars }),
     storeUnpublish: async () => {},
   },
+  voice: {
+    // 'voice' 힌트: STT/TTS 서버 활성 상태로 목킹 → 채팅에 마이크/스피커 버튼 노출
+    getConfig: async () => ({
+      stt: { enabled: true, provider: 'openai', model_id: 'whisper-1', language: 'ko' },
+      tts: {
+        enabled: true,
+        active_profile_id: 'p1',
+        profiles: [{ id: 'p1', name: '기본 목소리', voice_id: 'alloy', language: 'ko' }],
+      },
+    }),
+    transcribe: async () => '안녕하세요',
+    speak: async () => new Blob([new Uint8Array(16)], { type: 'audio/wav' }),
+  },
   agents: {
     list: async (q) => {
       let items = agents.slice();

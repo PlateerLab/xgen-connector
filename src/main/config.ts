@@ -63,6 +63,11 @@ export interface ConnectorConfig {
   quickChatHotkey?: string;
   /** Remembered quick-chat bar position. */
   quickChatBar?: { x: number; y: number };
+  /** Device-local voice INPUT (STT) toggle. Default true. The server gate still
+   *  applies — voice input works only when preferences.stt.enabled is also on. */
+  voiceInput?: boolean;
+  /** Device-local voice OUTPUT (TTS) toggle. Default true. Server gate applies. */
+  voiceOutput?: boolean;
   /** Enable hosting local MCP servers + bridging their tools to your agents. */
   mcp?: boolean;
   /** Configured local MCP servers. */
