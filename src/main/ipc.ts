@@ -38,8 +38,6 @@ export const CHANNELS = {
   voiceTranscribe: 'voice:transcribe', // audio bytes → POST /api/audio/stt/transcribe → text
   voiceSpeak: 'voice:speak', // text → POST /api/audio/tts/speak → audio bytes
 
-
-
   historyTurns: 'history:turns',
   historyConversations: 'history:conversations',
 

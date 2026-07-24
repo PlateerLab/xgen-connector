@@ -13,7 +13,7 @@ import { xgen } from '../bridge';
 import type { Agent, ChatEvent, ToolEvent, Citation, VoiceConfig } from '../../../core/index';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
-import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon, PanelLeftIcon } from '../brand/icons';
+import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon, PanelLeftIcon, MicIcon, SpeakerIcon, SpeakerOffIcon } from '../brand/icons';
 
 /** An open chat: a fresh agent chat, or a resumed past conversation. */
 export interface ChatSession {
@@ -322,10 +322,11 @@ export const Chat: React.FC<{
   // Load voice config (server hints) + device-local overrides; track live changes.
   useEffect(() => {
     let alive = true;
+    // 구버전 preload(업데이트 직후) / 목 하네스에는 voice 브릿지가 없을 수 있다.
     xgen.voice
-      .getConfig()
-      .then((c) => alive && setVoiceCfg(c))
-      .catch(() => undefined);
+      ?.getConfig?.()
+      ?.then((c) => alive && setVoiceCfg(c))
+      ?.catch(() => undefined);
     xgen.config
       .get()
       .then((cfg) => alive && setLocalVoice({ input: cfg.voiceInput !== false, output: cfg.voiceOutput !== false }))
@@ -412,7 +413,7 @@ export const Chat: React.FC<{
               title={muted ? '음성 출력 켜기' : '음성 출력 끄기'}
               aria-label={muted ? '음성 출력 켜기' : '음성 출력 끄기'}
             >
-              {muted ? '🔇' : '🔊'}
+              {muted ? <SpeakerOffIcon size={15} /> : <SpeakerIcon size={15} />}
             </button>
           )}
           <button className="secondary" onClick={newConversation}>
@@ -461,7 +462,7 @@ export const Chat: React.FC<{
                     onClick={() => enqueueTts(m.text)}
                     title="다시 듣기"
                   >
-                    🔊 재생
+                    <SpeakerIcon size={12} /> 재생
                   </button>
                 )}
                 {m.citations && m.citations.length > 0 && (
@@ -509,7 +510,7 @@ export const Chat: React.FC<{
               title={transcribing ? '변환 중…' : recording ? '녹음 중지' : '음성 입력'}
               aria-label="음성 입력"
             >
-              {transcribing ? '…' : recording ? '⏹' : '🎤'}
+              {transcribing ? '…' : recording ? <StopIcon size={15} /> : <MicIcon size={16} />}
             </button>
           )}
           {streaming ? (

@@ -1114,7 +1114,7 @@ button {
   transition: background 0.15s ease, transform 0.08s ease, opacity 0.15s ease;
 }
 .composer-mic:hover:not(:disabled) {
-  background: var(--hover);
+  background: var(--panel-2); /* .secondary:hover 와 동일 토큰 (--hover 토큰은 없음) */
 }
 .composer-mic:active:not(:disabled) {
   transform: scale(0.94);
@@ -1142,6 +1142,9 @@ button {
   margin-top: 2px;
   font-size: 11px;
   padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .composer-foot {
   padding: 0 4px;
