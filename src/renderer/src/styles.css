@@ -2116,3 +2116,15 @@ button {
   0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.45); }
   50% { box-shadow: 0 0 0 5px rgba(52, 211, 153, 0); }
 }
+
+/* 음성 입력/출력 토글 (오버레이) — 켜짐 상태를 색으로 표시 */
+.ov-voice.stt-on {
+  color: #93c5fd;
+  border-color: rgba(147, 197, 253, 0.45);
+  background: rgba(147, 197, 253, 0.12);
+}
+.ov-voice.tts-on {
+  color: #93c5fd;
+  border-color: rgba(147, 197, 253, 0.45);
+  background: rgba(147, 197, 253, 0.12);
+}
