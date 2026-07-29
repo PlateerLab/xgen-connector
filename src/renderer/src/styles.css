@@ -1137,15 +1137,6 @@ button {
     box-shadow: 0 0 0 5px rgba(230, 70, 70, 0);
   }
 }
-.msg-tts {
-  align-self: flex-start;
-  margin-top: 2px;
-  font-size: 11px;
-  padding: 2px 4px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
 .composer-foot {
   padding: 0 4px;
   min-height: 15px;
@@ -2127,4 +2118,18 @@ button {
   color: #93c5fd;
   border-color: rgba(147, 197, 253, 0.45);
   background: rgba(147, 197, 253, 0.12);
+}
+
+/* 음성 재생 실패 알림 (컴포저 위, 일시 표시) */
+.voice-error {
+  max-width: 900px;
+  margin: 0 auto 6px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  color: var(--error);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

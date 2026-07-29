@@ -16,6 +16,7 @@ const state = { theme: process.env.VERIFY_THEME || 'system' };
 const config = { serverUrl: 'https://xgen.plateer.com', theme: state.theme, autoUpdate: true, lang: 'ko' };
 
 const restoreUser = process.env.VERIFY_STAGE === 'login' ? null : user;
+const speakCalls = [];
 
 const avatarCfg = {
   enabled: true,
@@ -90,7 +91,12 @@ const api = {
       },
     }),
     transcribe: async () => '안녕하세요',
-    speak: async () => new Blob([new Uint8Array(16)], { type: 'audio/wav' }),
+    speak: async (text) => {
+      speakCalls.push(String(text || ''));
+      return new Blob([new Uint8Array(16)], { type: 'audio/wav' });
+    },
+    /* 검증용 계측 — 자동 TTS 가 문장 단위로 호출됐는지 하네스가 조회 */
+    _speakCalls: () => speakCalls.slice(),
   },
   agents: {
     list: async (q) => {
