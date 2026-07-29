@@ -88,6 +88,10 @@ export const Chat: React.FC<{
   const ttsQueueRef = useRef<string[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playingRef = useRef(false);
+  // 기기 로컬 볼륨 (0~300%) — 100% 초과 부스트는 WebAudio GainNode 로.
+  const volumeRef = useRef(100);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const gainRef = useRef<GainNode | null>(null);
   // Mirrors for use inside async/stream callbacks (avoid stale closures + dep churn).
   const mutedRef = useRef(muted);
   const ttsOnRef = useRef(ttsOn);
@@ -165,6 +169,28 @@ export const Chat: React.FC<{
       if (!el) {
         el = new Audio();
         audioRef.current = el;
+        // WebAudio 게인 체인 — element.volume 은 1.0 이 상한이라 100% 초과
+        // 부스트가 불가능하다. MediaElementSource 는 요소당 1회만 생성 가능
+        // 하므로 여기서 한 번 배선하고 gain 값만 갱신한다.
+        try {
+          const ctx = new AudioContext();
+          const srcNode = ctx.createMediaElementSource(el);
+          const gain = ctx.createGain();
+          srcNode.connect(gain);
+          gain.connect(ctx.destination);
+          audioCtxRef.current = ctx;
+          gainRef.current = gain;
+        } catch {
+          /* WebAudio 불가 → element.volume 폴백 (≤100%) */
+        }
+      }
+      const vol = Math.max(0, Math.min(300, volumeRef.current)) / 100;
+      if (gainRef.current) {
+        gainRef.current.gain.value = vol;
+        el.volume = 1;
+        void audioCtxRef.current?.resume().catch(() => undefined);
+      } else {
+        el.volume = Math.min(1, vol);
       }
       el.onended = done;
       el.onerror = done;
@@ -329,11 +355,18 @@ export const Chat: React.FC<{
       ?.catch(() => undefined);
     xgen.config
       .get()
-      .then((cfg) => alive && setLocalVoice({ input: cfg.voiceInput !== false, output: cfg.voiceOutput !== false }))
+      .then((cfg) => {
+        if (!alive) return;
+        setLocalVoice({ input: cfg.voiceInput !== false, output: cfg.voiceOutput !== false });
+        volumeRef.current = typeof cfg.voiceVolume === 'number' ? cfg.voiceVolume : 100;
+      })
       .catch(() => undefined);
-    const off = xgen.config.onChange((cfg) =>
-      setLocalVoice({ input: cfg.voiceInput !== false, output: cfg.voiceOutput !== false }),
-    );
+    const off = xgen.config.onChange((cfg) => {
+      setLocalVoice({ input: cfg.voiceInput !== false, output: cfg.voiceOutput !== false });
+      volumeRef.current = typeof cfg.voiceVolume === 'number' ? cfg.voiceVolume : 100;
+      // 재생 중에도 즉시 반영
+      if (gainRef.current) gainRef.current.gain.value = Math.max(0, Math.min(300, volumeRef.current)) / 100;
+    });
     return () => {
       alive = false;
       off();

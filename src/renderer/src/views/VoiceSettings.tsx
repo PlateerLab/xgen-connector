@@ -15,6 +15,7 @@ export const VoiceSettings: React.FC<{ onClose: () => void }> = ({ onClose }) =>
   const [err, setErr] = useState<string | null>(null);
   const [input, setInput] = useState(true);
   const [output, setOutput] = useState(true);
+  const [volume, setVolume] = useState(100);
 
   useEffect(() => {
     let alive = true;
@@ -24,6 +25,7 @@ export const VoiceSettings: React.FC<{ onClose: () => void }> = ({ onClose }) =>
         if (!alive) return;
         setInput(c.voiceInput !== false);
         setOutput(c.voiceOutput !== false);
+        setVolume(typeof c.voiceVolume === 'number' ? c.voiceVolume : 100);
       })
       .catch(() => undefined);
     xgen.voice
@@ -109,6 +111,29 @@ export const VoiceSettings: React.FC<{ onClose: () => void }> = ({ onClose }) =>
                 <span className="track" />
               </label>
             </div>
+            {tts?.enabled && (
+              <div className="field-row">
+                <span>
+                  재생 볼륨
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {volume}%{volume > 100 ? ' (부스트)' : ''}
+                  </span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={300}
+                  step={5}
+                  value={volume}
+                  style={{ width: 180, accentColor: 'var(--primary-end)' }}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setVolume(v);
+                    void xgen.config.set({ voiceVolume: v });
+                  }}
+                />
+              </div>
+            )}
             {tts?.enabled && (
               <div className="small muted" style={{ marginBottom: 8 }}>
                 목소리:{' '}
