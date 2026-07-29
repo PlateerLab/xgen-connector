@@ -22,7 +22,7 @@ import { xgen } from '../bridge';
 import type { OverlayState } from '../../../preload/index';
 import { AvatarSlot, hasAvatarRenderer, type AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
-import { EyeIcon, EyeOffIcon, MicIcon } from '../brand/icons';
+import { EyeIcon, EyeOffIcon, MicIcon, MicOffIcon, SpeakerIcon, SpeakerOffIcon, HandsfreeIcon } from '../brand/icons';
 import { useHandsfree } from './handsfree';
 
 const EMPTY: OverlayState = { workflowId: '', workflowName: '', streamingText: '', speaking: false };
@@ -226,7 +226,9 @@ export function OverlayApp(): React.ReactElement {
   // 핸즈프리 음성 대화 (Geny 방식): 로컬 토글 + 서버 STT 게이트
   const [handsfreeOn, setHandsfreeOn] = useState(false);
   const [sttAvailable, setSttAvailable] = useState(false);
+  const [ttsAvailable, setTtsAvailable] = useState(false);
   const [voiceInputOn, setVoiceInputOn] = useState(true);
+  const [voiceOutputOn, setVoiceOutputOn] = useState(true);
   const dragging = useRef(false);
   const hasAvatar = hasAvatarRenderer();
 
@@ -243,6 +245,7 @@ export function OverlayApp(): React.ReactElement {
       avatarHidden?: boolean;
       voiceHandsfree?: boolean;
       voiceInput?: boolean;
+      voiceOutput?: boolean;
     }) => {
       setSubtitles(c.subtitles !== false);
       setCharMs(typeof c.subtitleCharMs === 'number' ? c.subtitleCharMs : 50);
@@ -250,6 +253,7 @@ export function OverlayApp(): React.ReactElement {
       setAvatarHidden(!!c.avatarHidden);
       setHandsfreeOn(!!c.voiceHandsfree);
       setVoiceInputOn(c.voiceInput !== false);
+      setVoiceOutputOn(c.voiceOutput !== false);
     };
     xgen.config.get().then(apply);
     return xgen.config.onChange(apply);
@@ -261,7 +265,11 @@ export function OverlayApp(): React.ReactElement {
     const check = () => {
       xgen.voice
         ?.getConfig?.()
-        ?.then((c) => alive && setSttAvailable(!!c?.stt?.enabled))
+        ?.then((c) => {
+          if (!alive) return;
+          setSttAvailable(!!c?.stt?.enabled);
+          setTtsAvailable(!!c?.tts?.enabled);
+        })
         ?.catch(() => undefined);
     };
     check();
@@ -273,6 +281,8 @@ export function OverlayApp(): React.ReactElement {
   }, []);
 
   const toggleHandsfree = () => void xgen.config.set({ voiceHandsfree: !handsfreeOn });
+  const toggleVoiceInput = () => void xgen.config.set({ voiceInput: !voiceInputOn });
+  const toggleVoiceOutput = () => void xgen.config.set({ voiceOutput: !voiceOutputOn });
 
   // Apply the lock state to the OS window: locked → click-through, unlocked →
   // the whole window captures input (so it can be dragged / resized).
@@ -341,11 +351,29 @@ export function OverlayApp(): React.ReactElement {
         <div className="ov-lockchip" onMouseEnter={onBarEnter} onMouseLeave={onBarLeave} onMouseDown={onDrag} title="드래그하여 이동">
           {sttAvailable && (
             <button
+              className={`ov-icon-btn ov-voice ${voiceInputOn ? 'stt-on' : ''}`}
+              onClick={toggleVoiceInput}
+              title={voiceInputOn ? '음성 입력(STT) 끄기' : '음성 입력(STT) 켜기'}
+            >
+              {voiceInputOn ? <MicIcon size={15} /> : <MicOffIcon size={15} />}
+            </button>
+          )}
+          {ttsAvailable && (
+            <button
+              className={`ov-icon-btn ov-voice ${voiceOutputOn ? 'tts-on' : ''}`}
+              onClick={toggleVoiceOutput}
+              title={voiceOutputOn ? '음성 출력(TTS) 끄기' : '음성 출력(TTS) 켜기'}
+            >
+              {voiceOutputOn ? <SpeakerIcon size={15} /> : <SpeakerOffIcon size={15} />}
+            </button>
+          )}
+          {sttAvailable && (
+            <button
               className={`ov-icon-btn ov-mic ${handsfreeActive ? `on ${hfState}` : ''}`}
               onClick={toggleHandsfree}
               title={handsfreeActive ? '핸즈프리 음성 대화 끄기' : '핸즈프리 음성 대화 켜기 — 말하면 자동으로 채팅에 입력됩니다'}
             >
-              <MicIcon size={15} />
+              <HandsfreeIcon size={15} />
             </button>
           )}
           <button className="ov-icon-btn" onClick={() => setLocked(false)} title="잠금 해제">
@@ -362,11 +390,29 @@ export function OverlayApp(): React.ReactElement {
           </button>
           {sttAvailable && (
             <button
+              className={`ov-icon-btn ov-voice ${voiceInputOn ? 'stt-on' : ''}`}
+              onClick={toggleVoiceInput}
+              title={voiceInputOn ? '음성 입력(STT) 끄기' : '음성 입력(STT) 켜기'}
+            >
+              {voiceInputOn ? <MicIcon size={15} /> : <MicOffIcon size={15} />}
+            </button>
+          )}
+          {ttsAvailable && (
+            <button
+              className={`ov-icon-btn ov-voice ${voiceOutputOn ? 'tts-on' : ''}`}
+              onClick={toggleVoiceOutput}
+              title={voiceOutputOn ? '음성 출력(TTS) 끄기' : '음성 출력(TTS) 켜기'}
+            >
+              {voiceOutputOn ? <SpeakerIcon size={15} /> : <SpeakerOffIcon size={15} />}
+            </button>
+          )}
+          {sttAvailable && (
+            <button
               className={`ov-icon-btn ov-mic ${handsfreeActive ? `on ${hfState}` : ''}`}
               onClick={toggleHandsfree}
-              title={handsfreeActive ? '핸즈프리 음성 대화 끄기' : '핸즈프리 음성 대화 켜기'}
+              title={handsfreeActive ? '핸즈프리 음성 대화 끄기' : '핸즈프리 음성 대화 켜기 — 말하면 자동으로 채팅에 입력됩니다'}
             >
-              <MicIcon size={15} />
+              <HandsfreeIcon size={15} />
             </button>
           )}
           <button className="ov-icon-btn" onClick={() => xgen.overlay.openSettings()} title="설정 열기">

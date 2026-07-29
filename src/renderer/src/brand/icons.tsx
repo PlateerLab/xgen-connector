@@ -137,6 +137,26 @@ export const MicIcon: React.FC<P> = ({ size = 16, className }) => (
     <line x1="12" y1="19" x2="12" y2="22" />
   </svg>
 );
+export const MicOffIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M9 9v3a3 3 0 0 0 5.12 2.12" />
+    <path d="M15 9.34V5a3 3 0 0 0-5.94-.6" />
+    <path d="M19 10v2a7 7 0 0 1-.11 1.23" />
+    <path d="M5 10v2a7 7 0 0 0 12 5" />
+    <line x1="12" y1="19" x2="12" y2="22" />
+    <line x1="2" y1="2" x2="22" y2="22" />
+  </svg>
+);
+export const HandsfreeIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M2 12h2" />
+    <path d="M6 8v8" />
+    <path d="M10 5v14" />
+    <path d="M14 8v8" />
+    <path d="M18 10v4" />
+    <path d="M22 12h-2" />
+  </svg>
+);
 export const SpeakerIcon: React.FC<P> = ({ size = 16, className }) => (
   <svg {...base(size)} className={className}>
     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
