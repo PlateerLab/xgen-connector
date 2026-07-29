@@ -116,12 +116,14 @@ export const Chat: React.FC<{
   const streamRef = useRef<MediaStream | null>(null);
   // TTS playback refs — a simple serial queue so replies never overlap.
   const ttsQueueRef = useRef<string[]>([]);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const playingRef = useRef(false);
   // 기기 로컬 볼륨 (0~300%) — 100% 초과 부스트는 WebAudio GainNode 로.
   const volumeRef = useRef(100);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const gainRef = useRef<GainNode | null>(null);
+  const bufferSrcRef = useRef<AudioBufferSourceNode | null>(null);
+  // stopTts 세대 표식 — 중단 이후 도착한 이전 세대의 합성/재생 결과를 버린다.
+  const ttsEpochRef = useRef(0);
   // Mirrors for use inside async/stream callbacks (avoid stale closures + dep churn).
   const mutedRef = useRef(muted);
   const ttsOnRef = useRef(ttsOn);
@@ -180,53 +182,55 @@ export const Chat: React.FC<{
     setStreaming(false);
   }, [agent.workflowId]);
 
-  // ── TTS playback: serial queue (one HTMLAudioElement, plays next on end) ──
+  // ── TTS playback: serial queue over WebAudio (Geny 방식) ──
+  // HTMLAudioElement + blob URL 은 CSP media-src 의 지배를 받고(누락 시
+  // "no supported source" 로 조용히 죽는다) 재생 오류 이벤트가 이중 콜백
+  // 레이스를 만든다. decodeAudioData + AudioBufferSourceNode 는 바이트를
+  // 직접 디코드하므로 CSP/MIME 과 무관하고, onended 단일 경로로 직렬이 보장된다.
   const playNext = useCallback(async () => {
     if (playingRef.current) return;
     const text = ttsQueueRef.current.shift();
     if (!text) return;
     playingRef.current = true;
-    let url: string | null = null;
-    const done = () => {
-      if (url) URL.revokeObjectURL(url);
-      playingRef.current = false;
-      void playNext();
-    };
+    const epoch = ttsEpochRef.current;
     try {
       const blob = await xgen.voice.speak(text);
+      if (ttsEpochRef.current !== epoch) return;
+      let ctx = audioCtxRef.current;
+      if (!ctx || ctx.state === 'closed') {
+        ctx = new AudioContext();
+        audioCtxRef.current = ctx;
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        gainRef.current = gain;
+      }
+      if (ctx.state === 'suspended') await ctx.resume().catch(() => undefined);
+      const bytes = await blob.arrayBuffer();
+      let decoded: AudioBuffer;
+      try {
+        decoded = await ctx.decodeAudioData(bytes.slice(0));
+      } catch {
+        // 디코드 실패 = 서버가 오디오가 아닌 것을 보냈다는 뜻 — 원인 추적이
+        // 되도록 응답의 정체(타입/크기/시그니처)를 오류에 담는다.
+        const head = new Uint8Array(bytes.slice(0, 4));
+        const sig = String.fromCharCode(...head).replace(/[^\x20-\x7e]/g, '?');
+        throw new Error(
+          `오디오 디코드 실패 (type=${blob.type || '?'}, ${bytes.byteLength}B, head="${sig}")`,
+        );
+      }
       setVoiceError(null);
-      url = URL.createObjectURL(blob);
-      let el = audioRef.current;
-      if (!el) {
-        el = new Audio();
-        audioRef.current = el;
-        // WebAudio 게인 체인 — element.volume 은 1.0 이 상한이라 100% 초과
-        // 부스트가 불가능하다. MediaElementSource 는 요소당 1회만 생성 가능
-        // 하므로 여기서 한 번 배선하고 gain 값만 갱신한다.
-        try {
-          const ctx = new AudioContext();
-          const srcNode = ctx.createMediaElementSource(el);
-          const gain = ctx.createGain();
-          srcNode.connect(gain);
-          gain.connect(ctx.destination);
-          audioCtxRef.current = ctx;
-          gainRef.current = gain;
-        } catch {
-          /* WebAudio 불가 → element.volume 폴백 (≤100%) */
-        }
-      }
-      const vol = Math.max(0, Math.min(300, volumeRef.current)) / 100;
+      if (ttsEpochRef.current !== epoch) return;
       if (gainRef.current) {
-        gainRef.current.gain.value = vol;
-        el.volume = 1;
-        void audioCtxRef.current?.resume().catch(() => undefined);
-      } else {
-        el.volume = Math.min(1, vol);
+        gainRef.current.gain.value = Math.max(0, Math.min(300, volumeRef.current)) / 100;
       }
-      el.onended = done;
-      el.onerror = done;
-      el.src = url;
-      await el.play();
+      await new Promise<void>((resolve) => {
+        const src = ctx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(gainRef.current ?? ctx.destination);
+        src.onended = () => resolve();
+        bufferSrcRef.current = src;
+        src.start();
+      });
     } catch (e) {
       // 합성/재생 실패 — 원인(예: 'TTS upstream 404: voice_profile_not_found...')
       // 을 잠깐 보여 준다. 큐의 다음 문장은 계속 시도한다.
@@ -234,7 +238,13 @@ export const Chat: React.FC<{
       setVoiceError(msg);
       if (voiceErrTimer.current) clearTimeout(voiceErrTimer.current);
       voiceErrTimer.current = setTimeout(() => setVoiceError(null), 6000);
-      done();
+    } finally {
+      // 세대가 바뀌었으면(stopTts) 새 루프가 이미 소유권을 가진다 — 손대지 않는다.
+      if (ttsEpochRef.current === epoch) {
+        bufferSrcRef.current = null;
+        playingRef.current = false;
+        void playNext();
+      }
     }
   }, []);
 
@@ -250,13 +260,13 @@ export const Chat: React.FC<{
 
   const stopTts = useCallback(() => {
     ttsQueueRef.current = [];
-    const el = audioRef.current;
-    if (el) {
-      el.pause();
-      el.onended = null;
-      el.onerror = null;
-      el.src = '';
+    ttsEpochRef.current += 1;
+    try {
+      bufferSrcRef.current?.stop();
+    } catch {
+      /* 이미 종료된 소스 */
     }
+    bufferSrcRef.current = null;
     playingRef.current = false;
   }, []);
 
