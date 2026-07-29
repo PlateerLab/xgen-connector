@@ -33,6 +33,33 @@ interface Msg {
   error?: boolean;
 }
 
+/** TTS 용 텍스트 정리 — 코드블록/마크다운 기호/링크를 걷어내 읽을 문장만 남긴다. */
+function cleanForSpeech(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' 코드 블록. ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/[*_~>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** 스트리밍 텍스트에서 "완결 문장까지" 잘라낼 위치를 찾는다 (없으면 0).
+ *  문장부호(./!/?/…/。/！/？) + 공백/개행, 또는 빈 줄 경계. 너무 짧은 조각
+ *  (MIN_TTS_CHUNK 미만)은 다음 경계까지 기다린다. */
+const MIN_TTS_CHUNK = 12;
+function sentenceCut(pending: string): number {
+  let cut = 0;
+  const re = /[.!?…。！？](?=["')\]]?(\s|$))|\n{2,}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(pending)) !== null) {
+    const end = m.index + m[0].length;
+    if (end >= MIN_TTS_CHUNK) cut = end;
+  }
+  return cut;
+}
+
 function newInteractionId(workflowId: string): string {
   return `conn-${workflowId}-${Date.now()}`;
 }
@@ -75,6 +102,9 @@ export const Chat: React.FC<{
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [muted, setMuted] = useState(false);
+  // 음성 합성 실패를 조용히 삼키지 않는다 — 마지막 오류를 잠깐 표시.
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voiceErrTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Effective gates: server must enable AND this device must not have turned off.
   const sttOn = !!voiceCfg?.stt?.enabled && localVoice.input;
@@ -164,6 +194,7 @@ export const Chat: React.FC<{
     };
     try {
       const blob = await xgen.voice.speak(text);
+      setVoiceError(null);
       url = URL.createObjectURL(blob);
       let el = audioRef.current;
       if (!el) {
@@ -196,7 +227,13 @@ export const Chat: React.FC<{
       el.onerror = done;
       el.src = url;
       await el.play();
-    } catch {
+    } catch (e) {
+      // 합성/재생 실패 — 원인(예: 'TTS upstream 404: voice_profile_not_found...')
+      // 을 잠깐 보여 준다. 큐의 다음 문장은 계속 시도한다.
+      const msg = e instanceof Error && e.message ? e.message : '음성 합성에 실패했습니다.';
+      setVoiceError(msg);
+      if (voiceErrTimer.current) clearTimeout(voiceErrTimer.current);
+      voiceErrTimer.current = setTimeout(() => setVoiceError(null), 6000);
       done();
     }
   }, []);
@@ -236,8 +273,27 @@ export const Chat: React.FC<{
 
     const tools: ToolEvent[] = [];
     let citations: Citation[] = [];
-    // Accumulate the assistant reply so we can hand the FULL text to TTS on end.
+    // 문장 단위 스트리밍 TTS — 응답이 흐르는 동안 완결 문장을 즉시 큐에 넣어
+    // "바로바로" 소리가 나게 한다 (끝까지 기다리지 않음).
     let assistantText = '';
+    let spokenUpto = 0;
+    const flushSpeech = (force: boolean) => {
+      if (!ttsOnRef.current) return;
+      const pending = assistantText.slice(spokenUpto);
+      if (!pending) return;
+      if (force) {
+        const tail = cleanForSpeech(pending);
+        if (tail) enqueueTts(tail);
+        spokenUpto = assistantText.length;
+        return;
+      }
+      const cut = sentenceCut(pending);
+      if (cut > 0) {
+        const chunk = cleanForSpeech(pending.slice(0, cut));
+        if (chunk) enqueueTts(chunk);
+        spokenUpto += cut;
+      }
+    };
     const handle = xgen.chat.stream(
       {
         workflowId: agent.workflowId,
@@ -246,8 +302,12 @@ export const Chat: React.FC<{
         interactionId,
       },
       (ev: ChatEvent) => {
-        if (ev.kind === 'text') assistantText += ev.content;
-        else if (ev.kind === 'summary' && !assistantText) assistantText = ev.text;
+        if (ev.kind === 'text') {
+          assistantText += ev.content;
+          flushSpeech(false);
+        } else if (ev.kind === 'summary' && !assistantText) {
+          assistantText = ev.text;
+        }
         setMessages((m) => {
           const copy = [...m];
           const last = copy[copy.length - 1];
@@ -274,8 +334,8 @@ export const Chat: React.FC<{
             return copy;
           });
           cancelRef.current = null;
-          // Speak the finished reply (auto-TTS), if enabled and not muted.
-          if (ev.kind === 'end' && ttsOnRef.current) enqueueTts(assistantText);
+          // 남은 꼬리 문장 재생 (스트리밍 중 이미 대부분 재생됨).
+          if (ev.kind === 'end') flushSpeech(true);
         }
       },
     );
@@ -348,11 +408,27 @@ export const Chat: React.FC<{
   // Load voice config (server hints) + device-local overrides; track live changes.
   useEffect(() => {
     let alive = true;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     // 구버전 preload(업데이트 직후) / 목 하네스에는 voice 브릿지가 없을 수 있다.
-    xgen.voice
-      ?.getConfig?.()
-      ?.then((c) => alive && setVoiceCfg(c))
-      ?.catch(() => undefined);
+    // 기동 직후 인증 준비 전 401 이면 몇 번 재시도해 TTS 가 영구히 꺼진 채
+    // 남지 않게 한다. avatarRefresh(로그인 완료/설정 변경)에도 재조회.
+    const loadVoice = () => {
+      xgen.voice
+        ?.getConfig?.()
+        ?.then((c) => alive && setVoiceCfg(c))
+        ?.catch(() => {
+          if (alive && tries < 5) {
+            tries += 1;
+            timer = setTimeout(loadVoice, 2000);
+          }
+        });
+    };
+    loadVoice();
+    const offRefresh = xgen.user?.onAvatarRefresh?.(() => {
+      tries = 0;
+      loadVoice();
+    });
     xgen.config
       .get()
       .then((cfg) => {
@@ -369,6 +445,8 @@ export const Chat: React.FC<{
     });
     return () => {
       alive = false;
+      if (timer) clearTimeout(timer);
+      offRefresh?.();
       off();
     };
   }, []);
@@ -489,15 +567,6 @@ export const Chat: React.FC<{
                   {m.text || (m.streaming ? <span className="cursor" /> : '')}
                   {m.text && m.streaming && <span className="cursor" />}
                 </div>
-                {m.role === 'assistant' && ttsOn && m.text && !m.streaming && !m.error && (
-                  <button
-                    className="link msg-tts"
-                    onClick={() => enqueueTts(m.text)}
-                    title="다시 듣기"
-                  >
-                    <SpeakerIcon size={12} /> 재생
-                  </button>
-                )}
                 {m.citations && m.citations.length > 0 && (
                   <div className="citations">
                     <span className="label">출처</span>
@@ -519,6 +588,11 @@ export const Chat: React.FC<{
       </div>
 
       <div className="chat-input">
+        {voiceError && (
+          <div className="voice-error small" title={voiceError}>
+            음성 재생 실패: {voiceError}
+          </div>
+        )}
         <div className="composer">
           <textarea
             ref={taRef}
