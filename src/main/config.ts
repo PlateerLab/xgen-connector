@@ -66,6 +66,8 @@ export interface ConnectorConfig {
   /** Device-local voice INPUT (STT) toggle. Default true. The server gate still
    *  applies — voice input works only when preferences.stt.enabled is also on. */
   voiceInput?: boolean;
+  /** 아바타 오버레이 핸즈프리 음성 대화 (VAD 마이크 → STT → 자동 전송). */
+  voiceHandsfree?: boolean;
   /** Device-local voice OUTPUT (TTS) toggle. Default true. Server gate applies. */
   voiceOutput?: boolean;
   /** Enable hosting local MCP servers + bridging their tools to your agents. */
