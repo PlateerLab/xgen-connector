@@ -22,7 +22,8 @@ import { xgen } from '../bridge';
 import type { OverlayState } from '../../../preload/index';
 import { AvatarSlot, hasAvatarRenderer, type AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
-import { EyeIcon, EyeOffIcon } from '../brand/icons';
+import { EyeIcon, EyeOffIcon, MicIcon } from '../brand/icons';
+import { useHandsfree } from './handsfree';
 
 const EMPTY: OverlayState = { workflowId: '', workflowName: '', streamingText: '', speaking: false };
 const SUBTITLE_DISMISS_MS = 4000;
@@ -222,8 +223,15 @@ export function OverlayApp(): React.ReactElement {
   const [charMs, setCharMs] = useState(50);
   const [subtitleSize, setSubtitleSize] = useState<'sm' | 'md' | 'lg'>('sm');
   const [avatarHidden, setAvatarHidden] = useState(false);
+  // 핸즈프리 음성 대화 (Geny 방식): 로컬 토글 + 서버 STT 게이트
+  const [handsfreeOn, setHandsfreeOn] = useState(false);
+  const [sttAvailable, setSttAvailable] = useState(false);
+  const [voiceInputOn, setVoiceInputOn] = useState(true);
   const dragging = useRef(false);
   const hasAvatar = hasAvatarRenderer();
+
+  const handsfreeActive = handsfreeOn && sttAvailable && voiceInputOn;
+  const { state: hfState } = useHandsfree(handsfreeActive);
 
   useEffect(() => xgen.overlay.onState((s) => setState(s)), []);
 
@@ -233,15 +241,38 @@ export function OverlayApp(): React.ReactElement {
       subtitleCharMs?: number;
       subtitleSize?: 'sm' | 'md' | 'lg';
       avatarHidden?: boolean;
+      voiceHandsfree?: boolean;
+      voiceInput?: boolean;
     }) => {
       setSubtitles(c.subtitles !== false);
       setCharMs(typeof c.subtitleCharMs === 'number' ? c.subtitleCharMs : 50);
       setSubtitleSize(c.subtitleSize ?? 'sm');
       setAvatarHidden(!!c.avatarHidden);
+      setHandsfreeOn(!!c.voiceHandsfree);
+      setVoiceInputOn(c.voiceInput !== false);
     };
     xgen.config.get().then(apply);
     return xgen.config.onChange(apply);
   }, []);
+
+  // 서버 STT 게이트 — 켜져 있어야 핸즈프리 버튼 노출. 인증 준비/설정 변경 시 재조회.
+  useEffect(() => {
+    let alive = true;
+    const check = () => {
+      xgen.voice
+        ?.getConfig?.()
+        ?.then((c) => alive && setSttAvailable(!!c?.stt?.enabled))
+        ?.catch(() => undefined);
+    };
+    check();
+    const off = xgen.user?.onAvatarRefresh?.(() => check());
+    return () => {
+      alive = false;
+      off?.();
+    };
+  }, []);
+
+  const toggleHandsfree = () => void xgen.config.set({ voiceHandsfree: !handsfreeOn });
 
   // Apply the lock state to the OS window: locked → click-through, unlocked →
   // the whole window captures input (so it can be dragged / resized).
@@ -308,6 +339,15 @@ export function OverlayApp(): React.ReactElement {
 
       {locked ? (
         <div className="ov-lockchip" onMouseEnter={onBarEnter} onMouseLeave={onBarLeave} onMouseDown={onDrag} title="드래그하여 이동">
+          {sttAvailable && (
+            <button
+              className={`ov-icon-btn ov-mic ${handsfreeActive ? `on ${hfState}` : ''}`}
+              onClick={toggleHandsfree}
+              title={handsfreeActive ? '핸즈프리 음성 대화 끄기' : '핸즈프리 음성 대화 켜기 — 말하면 자동으로 채팅에 입력됩니다'}
+            >
+              <MicIcon size={15} />
+            </button>
+          )}
           <button className="ov-icon-btn" onClick={() => setLocked(false)} title="잠금 해제">
             <LockIcon open={false} />
           </button>
@@ -320,6 +360,15 @@ export function OverlayApp(): React.ReactElement {
           <button className="ov-icon-btn" onClick={() => xgen.overlay.focusMain()} title="채팅 창 열기">
             <ChatBubbleIcon />
           </button>
+          {sttAvailable && (
+            <button
+              className={`ov-icon-btn ov-mic ${handsfreeActive ? `on ${hfState}` : ''}`}
+              onClick={toggleHandsfree}
+              title={handsfreeActive ? '핸즈프리 음성 대화 끄기' : '핸즈프리 음성 대화 켜기'}
+            >
+              <MicIcon size={15} />
+            </button>
+          )}
           <button className="ov-icon-btn" onClick={() => xgen.overlay.openSettings()} title="설정 열기">
             <GearIcon />
           </button>
