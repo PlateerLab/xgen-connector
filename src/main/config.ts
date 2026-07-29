@@ -68,6 +68,8 @@ export interface ConnectorConfig {
   voiceInput?: boolean;
   /** 아바타 오버레이 핸즈프리 음성 대화 (VAD 마이크 → STT → 자동 전송). */
   voiceHandsfree?: boolean;
+  /** TTS 재생 볼륨 % (0~300, 100 = 원음) — 이 기기 로컬, WebAudio 게인. */
+  voiceVolume?: number;
   /** Device-local voice OUTPUT (TTS) toggle. Default true. Server gate applies. */
   voiceOutput?: boolean;
   /** Enable hosting local MCP servers + bridging their tools to your agents. */
