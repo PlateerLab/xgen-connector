@@ -93,7 +93,18 @@ const api = {
     transcribe: async () => '안녕하세요',
     speak: async (text) => {
       speakCalls.push(String(text || ''));
-      return new Blob([new Uint8Array(16)], { type: 'audio/wav' });
+      // 실제 디코드 가능한 최소 WAV(24kHz mono PCM16, 60ms 무음) — 렌더러가
+      // decodeAudioData 로 재생하므로 가짜 바이트면 오류 경로로 빠진다.
+      const sr = 24000;
+      const n = Math.floor(sr * 0.06);
+      const buf = new ArrayBuffer(44 + n * 2);
+      const v = new DataView(buf);
+      const w = (o, s) => { for (let i = 0; i < s.length; i += 1) v.setUint8(o + i, s.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE');
+      w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+      w(36, 'data'); v.setUint32(40, n * 2, true);
+      return new Blob([buf], { type: 'audio/wav' });
     },
     /* 검증용 계측 — 자동 TTS 가 문장 단위로 호출됐는지 하네스가 조회 */
     _speakCalls: () => speakCalls.slice(),
