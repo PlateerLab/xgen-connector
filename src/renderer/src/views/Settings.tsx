@@ -3,6 +3,7 @@ import { xgen } from '../bridge';
 import type { ConnectorConfig } from '../../../main/config';
 import { HotkeyCapture } from './HotkeyCapture';
 import { McpSettings } from './McpSettings';
+import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
 
 type Theme = NonNullable<ConnectorConfig['theme']>;
@@ -22,6 +23,9 @@ export const Settings: React.FC<{
   const [quickChat, setQuickChat] = useState(config.quickChat ?? false);
   const [hotkey, setHotkey] = useState('Control+Shift+/');
   const [autostart, setAutostart] = useState(false);
+  const [autostartRefused, setAutostartRefused] = useState(false);
+  const [linuxClickThrough, setLinuxClickThrough] = useState(config.linuxClickThrough ?? false);
+  const isLinux = /linux/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
   const [resetDone, setResetDone] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [version, setVersion] = useState('');
@@ -29,6 +33,7 @@ export const Settings: React.FC<{
   const [saved, setSaved] = useState(false);
   const [showMcp, setShowMcp] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
+  const [showSync, setShowSync] = useState(false);
 
   // Any status message means the check is underway/done → drop the button spinner
   // (the message line then shows progress like "내려받는 중… 45%").
@@ -75,6 +80,7 @@ export const Settings: React.FC<{
 
   if (showMcp) return <McpSettings onClose={() => setShowMcp(false)} />;
   if (showVoice) return <VoiceSettings onClose={() => setShowVoice(false)} />;
+  if (showSync) return <SyncSettings onClose={() => setShowSync(false)} />;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -242,19 +248,60 @@ export const Settings: React.FC<{
         </div>
 
         <div className="field-row">
-          <span>로그인 시 시작</span>
+          <span>워크스페이스 동기화 (로컬 폴더 ↔ 에이전트)</span>
+          <button className="secondary" onClick={() => setShowSync(true)}>
+            관리
+          </button>
+        </div>
+
+        <div className="field-row">
+          <span>
+            로그인 시 시작
+            {autostartRefused && (
+              <span className="small notice-warn" style={{ marginLeft: 8 }}>
+                등록 불가 — AppImage 를 고정 경로에 두고 다시 시도하세요
+              </span>
+            )}
+          </span>
           <label className="switch">
             <input
               type="checkbox"
               checked={autostart}
               onChange={(e) => {
-                setAutostart(e.target.checked);
-                void xgen.appctl.setAutostart(e.target.checked);
+                const wanted = e.target.checked;
+                // main 이 **실효 결과**를 반환한다 (리눅스 임시 마운트 등 등록
+                // 거부 시 false) — 거짓 토글을 남기지 않는다.
+                void xgen.appctl.setAutostart(wanted).then((effective) => {
+                  setAutostart(effective);
+                  setAutostartRefused(wanted && !effective);
+                });
               }}
             />
             <span className="track" />
           </label>
         </div>
+
+        {isLinux && (
+          <div className="field-row">
+            <span>
+              오버레이 클릭 통과 (Linux)
+              <span className="small muted" style={{ marginLeft: 8 }}>
+                켜면 오버레이가 마우스에 완전히 투명해집니다 (상호작용 불가)
+              </span>
+            </span>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={linuxClickThrough}
+                onChange={(e) => {
+                  setLinuxClickThrough(e.target.checked);
+                  void apply({ linuxClickThrough: e.target.checked });
+                }}
+              />
+              <span className="track" />
+            </label>
+          </div>
+        )}
 
         <div className="field-row">
           <span>창 위치 초기화</span>

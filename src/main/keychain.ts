@@ -1,11 +1,26 @@
 /**
- * OS-keychain-backed token storage (keytar): Keychain / Credential Manager /
- * libsecret. The JWT never touches the config file. Mirrors geny-connector.
+ * 토큰/자격 증명 저장 — keytar(OS 키체인) 1차 + safeStorage 파일 폴백.
  *
- * keytar is a native module; if it fails to load (missing libsecret on a bare
- * Linux box, etc.) we fall back to an in-memory store for the session so the
- * app still works — the user just re-logs in after a restart.
+ * geny-connector 의 강건성 교훈 이식: keytar 는 리눅스에서 Secret Service
+ * (libsecret + 실행 중인 키링)가 없으면 로드/호출이 실패한다. 이전 구현은
+ * 이때 **무음으로 인메모리 Map** 에 떨어져 재시작하면 토큰이 증발했고,
+ * UI 는 저장 실패를 알 길이 없었다 (자동 로그인이 조용히 풀리는 미스터리).
+ *
+ * 새 사다리:
+ *   1. keytar (Keychain / Credential Manager / libsecret)
+ *   2. Electron safeStorage 로 암호화한 userData/secure-store.json (mode 0600,
+ *      값 접두사 `enc:`) — safeStorage 불가 시 `raw:`(base64) 로 저하하되
+ *      영속성은 유지한다 (데스크톱 로컬 파일, 평문 config 와 동급 노출면)
+ *   3. 인메모리 (최후 폴백 — 세션 한정)
+ *
+ * 저장 API 는 **persisted 여부를 반환**하고, storageStatus() 가 현재 백엔드를
+ * 보고한다 — 렌더러가 "키체인 사용 불가(재시작 시 재로그인 필요)"를 표시할
+ * 수 있게 (무음 실패 금지).
  */
+import { app, safeStorage } from 'electron';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 const SERVICE = 'xgen-connector';
 const ACCESS = 'xgen_access_token';
 const REFRESH = 'xgen_refresh_token';
@@ -15,42 +30,138 @@ type Keytar = typeof import('keytar');
 let keytarMod: Keytar | null | undefined;
 const memory = new Map<string, string>();
 
+export type SecureBackend = 'keychain' | 'encrypted-file' | 'plain-file' | 'memory';
+let lastBackend: SecureBackend = 'memory';
+
 async function keytar(): Promise<Keytar | null> {
   if (keytarMod !== undefined) return keytarMod;
   try {
     keytarMod = (await import('keytar')).default as unknown as Keytar;
   } catch {
-    keytarMod = null; // fall back to in-memory
+    keytarMod = null; // 파일 폴백으로
   }
   return keytarMod;
 }
 
-async function set(account: string, value: string | null): Promise<void> {
-  const k = await keytar();
-  if (!k) {
-    if (value === null) memory.delete(account);
-    else memory.set(account, value);
-    return;
+// ── safeStorage 파일 폴백 ──────────────────────────────────────────
+
+function storePath(): string {
+  const dir = app.getPath('userData');
+  mkdirSync(dir, { recursive: true });
+  return join(dir, 'secure-store.json');
+}
+
+function readStore(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(readFileSync(storePath(), 'utf-8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
   }
-  if (value === null) await k.deletePassword(SERVICE, account).catch(() => {});
-  else await k.setPassword(SERVICE, account, value);
+}
+
+function writeStore(data: Record<string, string>): boolean {
+  try {
+    writeFileSync(storePath(), JSON.stringify(data), { encoding: 'utf-8', mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function fileSet(account: string, value: string | null): boolean {
+  const store = readStore();
+  if (value === null) {
+    delete store[account];
+    return writeStore(store);
+  }
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      store[account] = 'enc:' + safeStorage.encryptString(value).toString('base64');
+      lastBackend = 'encrypted-file';
+    } else {
+      store[account] = 'raw:' + Buffer.from(value, 'utf-8').toString('base64');
+      lastBackend = 'plain-file';
+    }
+  } catch {
+    store[account] = 'raw:' + Buffer.from(value, 'utf-8').toString('base64');
+    lastBackend = 'plain-file';
+  }
+  return writeStore(store);
+}
+
+function fileGet(account: string): string | null {
+  const raw = readStore()[account];
+  if (!raw) return null;
+  try {
+    if (raw.startsWith('enc:')) {
+      return safeStorage.decryptString(Buffer.from(raw.slice(4), 'base64'));
+    }
+    if (raw.startsWith('raw:')) {
+      return Buffer.from(raw.slice(4), 'base64').toString('utf-8');
+    }
+  } catch {
+    return null; // OS 키 변경 등으로 복호 불가 — 재로그인 유도
+  }
+  return null;
+}
+
+// ── 공통 set/get (사다리) ─────────────────────────────────────────
+
+/** 저장 시도 — 영속 저장에 성공했으면 true (인메모리 폴백이면 false). */
+async function set(account: string, value: string | null): Promise<boolean> {
+  const k = await keytar();
+  if (k) {
+    try {
+      if (value === null) await k.deletePassword(SERVICE, account).catch(() => {});
+      else await k.setPassword(SERVICE, account, value);
+      lastBackend = 'keychain';
+      return true;
+    } catch {
+      // keytar 로드는 됐지만 런타임 실패(키링 미가동) — 파일 폴백
+    }
+  }
+  if (fileSet(account, value)) return true;
+  if (value === null) memory.delete(account);
+  else memory.set(account, value);
+  lastBackend = 'memory';
+  return false;
 }
 
 async function get(account: string): Promise<string | null> {
   const k = await keytar();
-  if (!k) return memory.get(account) ?? null;
-  return k.getPassword(SERVICE, account);
+  if (k) {
+    try {
+      const v = await k.getPassword(SERVICE, account);
+      if (v !== null) return v;
+    } catch {
+      /* 파일 폴백으로 */
+    }
+  }
+  const fromFile = fileGet(account);
+  if (fromFile !== null) return fromFile;
+  return memory.get(account) ?? null;
+}
+
+/** 현재 저장 백엔드 상태 — UI 가 "재시작 시 재로그인 필요"를 표시할 근거. */
+export async function storageStatus(): Promise<{ backend: SecureBackend; persistent: boolean }> {
+  // 실측: 마커 라운드트립으로 실제 영속 여부를 판정한다.
+  const probeKey = '__storage_probe__';
+  const persisted = await set(probeKey, 'ok');
+  await set(probeKey, null);
+  return { backend: lastBackend, persistent: persisted };
 }
 
 export const tokenStore = {
-  async setAccess(token: string | null) {
-    await set(ACCESS, token);
+  /** @returns 영속 저장 성공 여부 — false 면 재시작 시 토큰이 사라진다. */
+  async setAccess(token: string | null): Promise<boolean> {
+    return set(ACCESS, token);
   },
   async getAccess() {
     return get(ACCESS);
   },
-  async setRefresh(token: string | null) {
-    await set(REFRESH, token);
+  async setRefresh(token: string | null): Promise<boolean> {
+    return set(REFRESH, token);
   },
   async getRefresh() {
     return get(REFRESH);
@@ -61,15 +172,16 @@ export const tokenStore = {
   },
 };
 
-/** Auto-login credentials (email + password) in the OS keychain — only stored
- *  when the user opts into "자동 로그인". Never written to the config file. */
+/** Auto-login credentials (email + password) — 사용자가 "자동 로그인"을 켤
+ *  때만 저장. 평문 config 파일에는 절대 쓰지 않는다. */
 export interface SavedCredentials {
   email: string;
   password: string;
 }
 export const credentialStore = {
-  async save(creds: SavedCredentials): Promise<void> {
-    await set(CREDS, JSON.stringify(creds));
+  /** @returns 영속 저장 성공 여부. */
+  async save(creds: SavedCredentials): Promise<boolean> {
+    return set(CREDS, JSON.stringify(creds));
   },
   async get(): Promise<SavedCredentials | null> {
     const raw = await get(CREDS);

@@ -15,6 +15,9 @@ export const Login: React.FC<{
   const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 저장 실패 경고 + 보류된 사용자: 화면 전환 전에 반드시 사용자에게 보인다.
+  const [warn, setWarn] = useState<string | null>(null);
+  const [pendingUser, setPendingUser] = useState<CurrentUser | null>(null);
 
   // Prefill the remembered email + auto-login checkbox (password is never echoed).
   useEffect(() => {
@@ -35,8 +38,24 @@ export const Login: React.FC<{
     setBusy(true);
     setError(null);
     try {
-      const { user } = await xgen.auth.login(email, password, remember);
+      const { user, tokenPersisted, credsPersisted } = await xgen.auth.login(email, password, remember);
       if (!user) throw new Error('이메일 또는 비밀번호가 올바르지 않습니다.');
+      // 저장 실패 표면화 (무음 금지, geny-connector saved===false 동형):
+      // 로그인은 됐지만 세션이 이 실행에만 유지된다 — 리눅스 키링 부재 등.
+      // 화면 전환으로 경고가 묻히지 않게 [계속] 확인 후 진입한다.
+      if (tokenPersisted === false) {
+        setWarn(
+          '로그인은 되었지만 보안 저장소(키체인)를 사용할 수 없어 세션이 저장되지 않았습니다. ' +
+            '앱을 재시작하면 다시 로그인해야 합니다. (Linux: gnome-keyring 등 키링 서비스와 libsecret 설치 필요)',
+        );
+        setPendingUser(user);
+        return;
+      }
+      if (remember && credsPersisted === false) {
+        setWarn('자동 로그인 정보를 저장하지 못했습니다 — 보안 저장소(키체인)를 확인하세요.');
+        setPendingUser(user);
+        return;
+      }
       onLoggedIn(user);
     } catch (e) {
       setError(e instanceof Error ? e.message : '로그인에 실패했습니다.');
@@ -107,9 +126,22 @@ export const Login: React.FC<{
             </div>
           )}
 
-          <button type="submit" className="primary" disabled={busy}>
-            {busy ? '로그인 중…' : '로그인'}
-          </button>
+          {warn && pendingUser && (
+            <div className="alert-error" role="alert">
+              <span aria-hidden>🔐</span>
+              <span>{warn}</span>
+            </div>
+          )}
+
+          {warn && pendingUser ? (
+            <button type="button" className="primary" onClick={() => onLoggedIn(pendingUser)}>
+              확인하고 계속
+            </button>
+          ) : (
+            <button type="submit" className="primary" disabled={busy}>
+              {busy ? '로그인 중…' : '로그인'}
+            </button>
+          )}
         </form>
 
         <div className="auth-foot">

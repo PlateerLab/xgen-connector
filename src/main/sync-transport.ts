@@ -1,0 +1,346 @@
+/**
+ * sync-transport — real HTTP implementation of the sync-core Transport
+ * against the XGEN geny-workspace storage API (xgen-workflow), plus the
+ * thin change-notify WebSocket client
+ * (/api/agentflow/ws/geny-workspace/{workflowId}).
+ *
+ * Geny desktop/sync-transport 이식 — 축이 세션이 아니라 **에이전트
+ * (workflowId)** 라는 점만 다르고 프로토콜(base_sha 낙관적 동시성, 청크/
+ * 재개 업로드, thin WS notify)은 동일하다.
+ *
+ * Paths: sync-core speaks WORKSPACE-relative paths; the REST API speaks
+ * storage-root-relative ("workspace/<p>") — mapped here and nowhere else.
+ */
+
+import { createReadStream, createWriteStream } from 'fs'
+import { createHash } from 'crypto'
+import { mkdir, open, rename, rm, stat } from 'fs/promises'
+import { dirname, join } from 'path'
+import { Readable } from 'stream'
+import { pipeline } from 'stream/promises'
+import WebSocket from 'ws'
+import { ChangesResponse, SyncConflictError, Transport } from './sync-core'
+
+export interface TransportAuth {
+  baseUrl: string // e.g. https://xgen.example.com (no trailing slash)
+  token: () => string | Promise<string>
+  workflowId: string
+  deviceId: string
+}
+
+function wsPath(p: string): string {
+  return `workspace/${p}`
+}
+
+function encPath(p: string): string {
+  return p.split('/').map(encodeURIComponent).join('/')
+}
+
+async function authHeaders(auth: TransportAuth): Promise<Record<string, string>> {
+  return { Authorization: `Bearer ${await auth.token()}` }
+}
+
+/** Files above this go through the chunked/resumable path. */
+const CHUNK_THRESHOLD_DEFAULT = 64 * 1024 * 1024
+const CHUNK_SIZE = 8 * 1024 * 1024
+
+export class HttpSyncTransport implements Transport {
+  private chunkThreshold: number
+
+  constructor(
+    private auth: TransportAuth,
+    private tmpDir: string,
+    opts: { chunkThresholdBytes?: number } = {},
+  ) {
+    this.chunkThreshold = opts.chunkThresholdBytes ?? CHUNK_THRESHOLD_DEFAULT
+  }
+
+  private url(path: string, qs: Record<string, string | number | undefined> = {}): string {
+    const u = new URL(
+      `${this.auth.baseUrl}/api/agentflow/geny-workspace/${encodeURIComponent(this.auth.workflowId)}${path}`,
+    )
+    for (const [k, v] of Object.entries(qs)) {
+      if (v !== undefined) u.searchParams.set(k, String(v))
+    }
+    return u.toString()
+  }
+
+  async changes(since: number): Promise<ChangesResponse> {
+    const res = await fetch(this.url('/storage/changes', { since }), {
+      headers: await authHeaders(this.auth),
+    })
+    if (!res.ok) throw Object.assign(new Error(`changes HTTP ${res.status}`), { status: res.status })
+    return (await res.json()) as ChangesResponse
+  }
+
+  async download(path: string, toAbs: string): Promise<void> {
+    const res = await fetch(this.url(`/storage-raw/${encPath(wsPath(path))}`), {
+      headers: await authHeaders(this.auth),
+    })
+    if (!res.ok || !res.body) {
+      throw Object.assign(new Error(`download HTTP ${res.status}`), { status: res.status })
+    }
+    await mkdir(this.tmpDir, { recursive: true })
+    const tmp = join(this.tmpDir, `dl-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    try {
+      await pipeline(Readable.fromWeb(res.body as any), createWriteStream(tmp))
+      await mkdir(dirname(toAbs), { recursive: true })
+      await rename(tmp, toAbs)
+    } catch (e) {
+      await rm(tmp, { force: true })
+      throw e
+    }
+  }
+
+  async put(path: string, fromAbs: string, baseSha: string): Promise<{ sha256: string }> {
+    const size = (await stat(fromAbs)).size
+    if (size > this.chunkThreshold) {
+      return this.putChunked(path, fromAbs, baseSha, size)
+    }
+    const res = await fetch(
+      this.url('/storage/file', {
+        path: wsPath(path),
+        base_sha: baseSha,
+        device: this.auth.deviceId,
+      }),
+      {
+        method: 'PUT',
+        headers: {
+          ...(await authHeaders(this.auth)),
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': String(size),
+        },
+        body: Readable.toWeb(createReadStream(fromAbs)) as any,
+        // node fetch requires duplex for streaming bodies
+        // @ts-expect-error node-only option
+        duplex: 'half',
+      },
+    )
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}) as any)
+      throw new SyncConflictError(body?.detail?.current_sha)
+    }
+    if (!res.ok) throw Object.assign(new Error(`put HTTP ${res.status}`), { status: res.status })
+    const data = (await res.json()) as { sha256: string }
+    return { sha256: data.sha256 }
+  }
+
+  /** Chunked/resumable upload for large files: start → sequential 8MiB
+   *  parts (resuming from the server's byte count after any hiccup) →
+   *  atomic commit with the same base_sha conflict contract as PUT. */
+  private async putChunked(
+    path: string,
+    fromAbs: string,
+    baseSha: string,
+    size: number,
+  ): Promise<{ sha256: string }> {
+    const sha = await hashFileSha256(fromAbs)
+    const startRes = await fetch(
+      this.url('/storage/file/chunks/start', { path: wsPath(path), size, sha256: sha }),
+      { method: 'POST', headers: await authHeaders(this.auth) },
+    )
+    if (!startRes.ok) {
+      throw Object.assign(new Error(`chunk start HTTP ${startRes.status}`), { status: startRes.status })
+    }
+    const { upload_id: uploadId } = (await startRes.json()) as { upload_id: string }
+
+    let offset = 0
+    let attempts = 0
+    let stalls = 0
+    const fd = await open(fromAbs, 'r')
+    try {
+      while (offset < size) {
+        const len = Math.min(CHUNK_SIZE, size - offset)
+        const buf = Buffer.alloc(len)
+        const { bytesRead } = await fd.read(buf, 0, len, offset)
+        if (bytesRead <= 0) throw new Error('local file shrank during chunked upload')
+        try {
+          const res = await fetch(
+            this.url(`/storage/file/chunks/${uploadId}`, { offset }),
+            {
+              method: 'PUT',
+              headers: {
+                ...(await authHeaders(this.auth)),
+                'Content-Type': 'application/octet-stream',
+              },
+              body: buf.subarray(0, bytesRead) as unknown as BodyInit,
+            },
+          )
+          if (res.status === 409) {
+            // out-of-sync — server tells us the true resume point.
+            // Progress guard: a resume point that never advances would
+            // otherwise hammer the server in a tight loop.
+            const body = (await res.json().catch(() => ({}))) as any
+            const resume = Number(body?.detail?.received ?? 0)
+            if (resume <= offset) {
+              if (++stalls > 3) throw new Error('chunked upload stalled (no resume progress)')
+            } else {
+              stalls = 0
+            }
+            offset = resume
+            continue
+          }
+          if (!res.ok) throw Object.assign(new Error(`chunk HTTP ${res.status}`), { status: res.status })
+          const data = (await res.json()) as { received: number }
+          offset = data.received
+          attempts = 0
+        } catch (e) {
+          if ((e as any)?.status) throw e // HTTP-level error: don't loop
+          // network hiccup → ask the server where to resume
+          if (++attempts > 5) throw e
+          await new Promise((r) => setTimeout(r, 1000 * attempts))
+          const st = await fetch(this.url(`/storage/file/chunks/${uploadId}`), {
+            headers: await authHeaders(this.auth),
+          })
+          if (st.ok) offset = Number(((await st.json()) as any).received ?? offset)
+        }
+      }
+    } finally {
+      await fd.close()
+    }
+
+    const commit = await fetch(
+      this.url(`/storage/file/chunks/${uploadId}/commit`, { base_sha: baseSha }),
+      { method: 'POST', headers: await authHeaders(this.auth) },
+    )
+    if (commit.status === 409) {
+      const body = (await commit.json().catch(() => ({}))) as any
+      throw new SyncConflictError(body?.detail?.current_sha)
+    }
+    if (!commit.ok) {
+      throw Object.assign(new Error(`chunk commit HTTP ${commit.status}`), { status: commit.status })
+    }
+    const done = (await commit.json()) as { sha256: string }
+    return { sha256: done.sha256 }
+  }
+
+  async del(path: string, baseSha?: string): Promise<void> {
+    const res = await fetch(
+      this.url('/storage/entry', { path: wsPath(path), base_sha: baseSha }),
+      { method: 'DELETE', headers: await authHeaders(this.auth) },
+    )
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}) as any)
+      throw new SyncConflictError(body?.detail?.current_sha)
+    }
+    if (res.status === 404) throw Object.assign(new Error('not found'), { status: 404 })
+    if (!res.ok) throw Object.assign(new Error(`delete HTTP ${res.status}`), { status: res.status })
+  }
+
+  async mkdir(path: string): Promise<void> {
+    const res = await fetch(this.url('/storage/mkdir', { path: wsPath(path) }), {
+      method: 'POST',
+      headers: await authHeaders(this.auth),
+    })
+    if (res.status === 409) return // already exists — fine
+    if (!res.ok) throw Object.assign(new Error(`mkdir HTTP ${res.status}`), { status: res.status })
+  }
+}
+
+/** Thin change-notification listener with auto-reconnect. Fires
+ *  `onChanged(latestSeq)` whenever the server says the workspace moved,
+ *  `onState(connected)` on connection transitions. */
+export class WorkspaceWsClient {
+  private ws: WebSocket | null = null
+  private closed = false
+  private retryMs = 2000
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+  constructor(
+    private auth: TransportAuth,
+    private deviceName: string,
+    private onChanged: (latestSeq: number) => void,
+    private onState: (connected: boolean) => void,
+  ) {}
+
+  async start(): Promise<void> {
+    this.closed = false
+    await this.connect()
+  }
+
+  stop(): void {
+    this.closed = true
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+    this.ws?.close()
+    this.ws = null
+  }
+
+  private async connect(): Promise<void> {
+    if (this.closed) return
+    let ws: WebSocket
+    try {
+      const base = this.auth.baseUrl.replace(/^http/, 'ws')
+      const token = await this.auth.token()
+      const url = `${base}/api/agentflow/ws/geny-workspace/${encodeURIComponent(this.auth.workflowId)}`
+      ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } })
+    } catch {
+      // token/keychain hiccup must not kill reconnection forever
+      this.onState(false)
+      const delay = this.retryMs
+      this.retryMs = Math.min(this.retryMs * 2, 60_000)
+      setTimeout(() => void this.connect(), delay)
+      return
+    }
+    this.ws = ws
+
+    ws.on('open', () => {
+      // Reset backoff only once the connection SURVIVES a few seconds —
+      // an accept-then-close server (expired auth) must keep backing off.
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) this.retryMs = 2000
+      }, 5000)
+      this.onState(true)
+      // Defensive: a send failure must degrade to a reconnect, never an
+      // uncaught main-process exception (error dialog).
+      const safeSend = (payload: unknown): void => {
+        try {
+          ws.send(JSON.stringify(payload))
+        } catch {
+          try { ws.close() } catch { /* already gone */ }
+        }
+      }
+      safeSend({
+        type: 'hello',
+        data: { device_id: this.auth.deviceId, device_name: this.deviceName },
+      })
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          safeSend({ type: 'heartbeat', ts: Date.now() })
+        }
+      }, 25_000)
+    })
+    ws.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(String(raw))
+        if (msg?.type === 'changed' || msg?.type === 'state') {
+          const seq = Number(msg?.data?.latest_seq ?? 0)
+          this.onChanged(seq)
+        }
+      } catch {
+        /* ignore malformed frames */
+      }
+    })
+    const scheduleRetry = () => {
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+      this.onState(false)
+      if (this.closed) return
+      const delay = this.retryMs
+      this.retryMs = Math.min(this.retryMs * 2, 60_000)
+      setTimeout(() => void this.connect(), delay)
+    }
+    ws.on('close', scheduleRetry)
+    ws.on('error', () => ws.close())
+  }
+}
+
+/** Streaming sha256 of a local file (chunked-upload manifest). */
+export function hashFileSha256(absPath: string): Promise<string> {
+  return new Promise((res, rej) => {
+    const h = createHash('sha256')
+    createReadStream(absPath)
+      .on('data', (c) => h.update(c))
+      .on('end', () => res(h.digest('hex')))
+      .on('error', rej)
+  })
+}
