@@ -200,7 +200,7 @@ export class HttpSyncTransport implements Transport {
     }
 
     const commit = await fetch(
-      this.url(`/storage/file/chunks/${uploadId}/commit`, { base_sha: baseSha }),
+      this.url(`/storage/file/chunks/${uploadId}/commit`, { base_sha: baseSha, device: this.auth.deviceId }),
       { method: 'POST', headers: await authHeaders(this.auth) },
     )
     if (commit.status === 409) {
@@ -216,7 +216,7 @@ export class HttpSyncTransport implements Transport {
 
   async del(path: string, baseSha?: string): Promise<void> {
     const res = await fetch(
-      this.url('/storage/entry', { path: wsPath(path), base_sha: baseSha }),
+      this.url('/storage/entry', { path: wsPath(path), base_sha: baseSha, device: this.auth.deviceId }),
       { method: 'DELETE', headers: await authHeaders(this.auth) },
     )
     if (res.status === 409) {
