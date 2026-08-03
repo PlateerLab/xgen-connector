@@ -106,6 +106,27 @@ function getUpdater(): AppUpdater | null {
     debug: () => {},
   } as never;
   autoUpdater.on('download-progress', (p) => notify(`업데이트 내려받는 중… ${Math.round(p.percent)}%`));
+  // Linux deb: electron-updater 의 재시작은 app.relaunch() 를 타는데, 리눅스의
+  // `--type=relauncher` 헬퍼가 NoNewPrivs 를 설정한다 — 비가역이라 재시작된
+  // 프로세스의 SUID chrome-sandbox 가 무력화돼 Ubuntu 24.04 에서 SIGTRAP 으로
+  // 죽는다 (geny-connector 이식). 설치 직전 훅에서 분리 셸로 1.5초 뒤 재실행을
+  // 예약해 NNP 없는 깨끗한 프로세스로 살아나게 한다.
+  if (process.platform === 'linux') {
+    // 'before-quit-for-update' 는 electron-updater 가 quitAndInstall 직전에
+    // 쏘는 이벤트 — Electron 타입 정의에 없어 EventEmitter 로 캐스팅.
+    (app as unknown as NodeJS.EventEmitter).on('before-quit-for-update', () => {
+      try {
+        const { spawn } = require('node:child_process') as typeof import('node:child_process');
+        const target = process.env.APPIMAGE || app.getPath('exe');
+        spawn('/bin/sh', ['-c', 'sleep 1.5; exec "$@"', 'relaunch', target], {
+          detached: true,
+          stdio: 'ignore',
+        }).unref();
+      } catch (e) {
+        log('linux relaunch schedule', e);
+      }
+    });
+  }
   autoUpdater.on('update-downloaded', async (info) => {
     notify(`업데이트 준비됨 (v${info.version})`);
     const res = await dialog.showMessageBox({

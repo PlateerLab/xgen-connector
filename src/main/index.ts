@@ -11,6 +11,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   shell,
   nativeTheme,
@@ -23,15 +24,28 @@ import {
   net,
   session,
 } from 'electron';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve, sep } from 'node:path';
 import { XgenClient, type ChatEvent, type TtsSpeakOptions } from '../core/index';
-import { loadConfig, saveConfig, normalizeServerUrl, type ConnectorConfig } from './config';
-import { tokenStore, credentialStore } from './keychain';
+import {
+  loadConfig,
+  saveConfig,
+  normalizeServerUrl,
+  type ConnectorConfig,
+  type SyncPairPersistConfig,
+} from './config';
+import { tokenStore, credentialStore, storageStatus } from './keychain';
 import { initUpdater, setAutoUpdate, getAutoUpdate, checkNow, disposeUpdater } from './updater';
 import { CHANNELS } from './ipc';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
+import { initSyncManager, getSyncManager, type SyncPairStatus } from './sync-manager';
+
+const IS_LINUX = process.platform === 'linux';
 
 // Custom scheme the avatar overlay loads model assets through. Registered
 // BEFORE app-ready. The renderer (a file:// / WebGL context) can't reliably
@@ -445,7 +459,7 @@ function createOverlay(): void {
     if (overlayWindow) loadRendererPage(overlayWindow, 'overlay.html');
   });
   // Click-through by default; the renderer flips this off over interactive regions.
-  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  applyOverlayIgnoreMouse(overlayWindow, true);
 
   overlayWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -468,6 +482,22 @@ function createOverlay(): void {
   });
 
   loadRendererPage(overlayWindow, 'overlay.html');
+}
+
+/** 오버레이 클릭 통과 정책 (geny-connector 리눅스 강건성 이식).
+ *
+ * `setIgnoreMouseEvents(true, {forward:true})` 의 forward 는 darwin/win32
+ * 전용이다 — 리눅스에서 클릭 통과를 켜면 마우스 이벤트가 **전혀** 오지 않아
+ * 렌더러의 hover 기반 인터랙션 복귀가 영원히 불가능하다 (오버레이 영구
+ * 입력 불능). 리눅스 기본값은 '항상 인터랙티브'; 사용자가 설정의
+ * linuxClickThrough 로 옵트인하면 완전 클릭 통과(상호작용 불가)를 감수한다. */
+function applyOverlayIgnoreMouse(win: BrowserWindow | null, ignore: boolean): void {
+  if (!win || win.isDestroyed()) return;
+  if (IS_LINUX) {
+    win.setIgnoreMouseEvents(ignore && !!loadConfig().linuxClickThrough);
+    return;
+  }
+  win.setIgnoreMouseEvents(ignore, { forward: true });
 }
 
 function setOverlayEnabled(enabled: boolean): void {
@@ -587,14 +617,18 @@ function createQuickChat(): void {
   });
   loadRendererPage(quickChatWindow, 'quickchat.html');
   positionQuickChat();
-  quickChatWindow.setIgnoreMouseEvents(true, { forward: true });
+  // 퀵챗은 hover 복귀가 필요 없다 (핫키 소환 시 ignore=false 를 명시 설정)
+  // — 리눅스에선 미지원 forward 옵션만 뺀다.
+  if (IS_LINUX) quickChatWindow.setIgnoreMouseEvents(true);
+  else quickChatWindow.setIgnoreMouseEvents(true, { forward: true });
   quickChatWindow.showInactive();
 }
 
 function dismissQuickChat(): void {
   if (!quickChatWindow || quickChatWindow.isDestroyed()) return;
   quickChatOpen = false;
-  quickChatWindow.setIgnoreMouseEvents(true, { forward: true });
+  if (IS_LINUX) quickChatWindow.setIgnoreMouseEvents(true);
+  else quickChatWindow.setIgnoreMouseEvents(true, { forward: true });
   quickChatWindow.webContents.send(CHANNELS.quickChatDismissed);
 }
 
@@ -680,10 +714,78 @@ function openMainSettings(): void {
   safeSend(mainWindow, CHANNELS.openSettingsModal);
 }
 
-function applyAutoLaunch(enabled: boolean): void {
-  // No-op on Linux (electron ignores setLoginItemSettings there); best-effort.
-  if (process.platform === 'linux') return;
-  app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: enabled, args: ['--hidden'] });
+/** 로그인 시 자동 시작 적용 — **실효 결과**를 반환한다 (UI 가 거짓 토글을
+ *  보여주지 않도록; geny-connector 동형).
+ *
+ *  Linux: electron 의 setLoginItemSettings 는 no-op 이라 XDG autostart
+ *  (.desktop) 파일을 직접 쓴다. AppImage 를 임시 마운트 경로(/tmp/.mount_*)
+ *  에서 실행 중이면 재부팅 후 존재하지 않는 경로라 등록을 거부한다.
+ *  Desktop-Entry 의 % 는 필드 코드라 %% 로 이스케이프한다. */
+function applyAutoLaunch(enabled: boolean): boolean {
+  if (!IS_LINUX) {
+    app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: enabled, args: ['--hidden'] });
+    return enabled;
+  }
+  const autostartDir = join(homedir(), '.config', 'autostart');
+  const desktopPath = join(autostartDir, 'xgen-connector.desktop');
+  if (!enabled) {
+    try {
+      rmSync(desktopPath, { force: true });
+    } catch {
+      /* best-effort */
+    }
+    return false;
+  }
+  // AppImage 는 $APPIMAGE(영속 파일)를, 그 외는 실행 바이너리를 가리킨다.
+  const target = process.env.APPIMAGE || app.getPath('exe');
+  if (!target || target.includes(`${sep}.mount_`) || target.startsWith('/tmp/')) {
+    // 임시 마운트에서 실행 중 — 재부팅 후 깨진 경로가 된다. 등록 거부.
+    return false;
+  }
+  try {
+    mkdirSync(autostartDir, { recursive: true });
+    const exec = `"${target.replace(/%/g, '%%')}" --hidden`;
+    writeFileSync(
+      desktopPath,
+      [
+        '[Desktop Entry]',
+        'Type=Application',
+        'Name=XGEN Connector',
+        `Exec=${exec}`,
+        'X-GNOME-Autostart-enabled=true',
+        'NoDisplay=false',
+        'Terminal=false',
+      ].join('\n') + '\n',
+      'utf-8',
+    );
+    chmodSync(desktopPath, 0o644);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Linux-안전 재시작 (geny-connector 이식): `app.relaunch()` 는 리눅스에서
+ *  `--type=relauncher` 헬퍼를 거치며 NoNewPrivs 를 설정한다 — 비가역이라
+ *  재시작된 프로세스의 SUID chrome-sandbox 가 죽는다 (Ubuntu 24.04 SIGTRAP).
+ *  리눅스는 분리된 셸로 1초 뒤 재실행; 그 외 플랫폼은 표준 relaunch. */
+function relaunchSelf(): void {
+  appQuitting = true;
+  if (IS_LINUX) {
+    const target = process.env.APPIMAGE || app.getPath('exe');
+    try {
+      spawn('/bin/sh', ['-c', 'sleep 1; exec "$@"', 'relaunch', target], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+    } catch {
+      app.relaunch(); // 폴백 — 없는 것보단 낫다
+    }
+    app.quit();
+    return;
+  }
+  app.relaunch();
+  app.quit();
 }
 
 function resetPositions(): void {
@@ -708,13 +810,22 @@ function resetPositions(): void {
 }
 
 // ── System tray (작업 표시줄) ─────────────────────────────────────
-function createTray(): void {
-  if (tray) return;
-  const icon = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_B64}`);
-  tray = new Tray(icon);
-  tray.setToolTip('XGEN Connector');
-  rebuildTrayMenu();
-  tray.on('click', () => showMain());
+/** 트레이 생성 — 실패를 허용한다 (리눅스에서 appindicator 부재 시 throw).
+ *  @returns 트레이가 실제로 생겼는지. false 면 호출자는 --hidden 시작을
+ *  취소해야 한다 — 트레이도 창도 없는 좀비 프로세스 방지 (geny 동형). */
+function createTray(): boolean {
+  if (tray) return true;
+  try {
+    const icon = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_B64}`);
+    tray = new Tray(icon);
+    tray.setToolTip('XGEN Connector');
+    rebuildTrayMenu();
+    tray.on('click', () => showMain());
+    return true;
+  } catch {
+    tray = null;
+    return false;
+  }
 }
 
 function rebuildTrayMenu(): void {
@@ -760,11 +871,7 @@ function rebuildTrayMenu(): void {
     { type: 'separator' },
     {
       label: '재시작',
-      click: () => {
-        appQuitting = true;
-        app.relaunch();
-        app.quit();
-      },
+      click: () => relaunchSelf(),
     },
     {
       label: '종료',
@@ -812,6 +919,52 @@ function setMcpEnabled(enabled: boolean): void {
   broadcastConfig(next);
 }
 
+// ── Workspace 동기화 (에이전트 workflow ↔ 로컬 폴더, Drive형) ─────
+/** 이 설치본의 안정 디바이스 id — 최초 1회 생성 후 config 에 영속. */
+function ensureDeviceId(): string {
+  const cfg = loadConfig();
+  if (cfg.deviceId) return cfg.deviceId;
+  const id = randomUUID();
+  saveConfig({ deviceId: id });
+  return id;
+}
+
+function wireSyncManager(): void {
+  initSyncManager({
+    indexDir: join(app.getPath('userData'), 'sync-index'),
+    serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+    token: () => tokenStore.getAccess(),
+    deviceId: () => ensureDeviceId(),
+    onStatus: (statuses: SyncPairStatus[]) => safeSend(mainWindow, CHANNELS.syncStatusEvent, statuses),
+    log: (msg: string) => console.log(`[sync] ${msg}`),
+    // 엔진의 자동 일시정지(쿼터 폭풍·에이전트 삭제)를 config 에 영속 —
+    // 재시작 후에도 이유가 표시되고 재해머링하지 않는다.
+    onAutoPause: (id: string, reason: string) => {
+      const pairs = (loadConfig().syncPairs ?? []).map((p) =>
+        p.id === id ? { ...p, paused: true, pausedReason: reason } : p,
+      );
+      saveConfig({ syncPairs: pairs });
+      getSyncManager()?.configure(pairs);
+    },
+  });
+  getSyncManager()?.configure(loadConfig().syncPairs ?? []);
+}
+
+/** 페어링 변경 → 저장 + 엔진 리컨사일 + 상태 브로드캐스트. */
+function saveSyncPairs(pairs: SyncPairPersistConfig[]): SyncPairPersistConfig[] {
+  const next = saveConfig({ syncPairs: pairs });
+  getSyncManager()?.configure(next.syncPairs ?? []);
+  return next.syncPairs ?? [];
+}
+
+/** 로컬 경로 중첩/중복 가드 — 같은 폴더(또는 부모/자식)를 두 페어링이 잡으면
+ *  두 허브가 서로 핑퐁하며 발산한다 (geny-connector 동형). */
+function syncPathOverlaps(a: string, b: string): boolean {
+  const ra = resolve(a) + sep;
+  const rb = resolve(b) + sep;
+  return ra === rb || ra.startsWith(rb) || rb.startsWith(ra);
+}
+
 // ── IPC: config ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.configGet, () => loadConfig());
 ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) => {
@@ -826,6 +979,17 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     normalizeServerUrl(patch.serverUrl) !== prevServer;
   if (serverChanged) {
     getMcpBridge().stop();
+    // 구 서버의 workflow 를 가리키는 페어링은 새 서버에서 무의미 — 엔진을
+    // 내리고 전부 일시정지로 전환한다 (재해머링·오연결 방지, 명시 재개 필요).
+    getSyncManager()?.stopAll();
+    patch = {
+      ...patch,
+      syncPairs: (loadConfig().syncPairs ?? []).map((p) => ({
+        ...p,
+        paused: true,
+        pausedReason: 'session_gone',
+      })),
+    };
     void client?.logout().catch(() => undefined); // 구 서버 세션 무효화 (rebind 전 호출)
     client = null; // in-memory user/token 을 남기지 않도록 새 인스턴스로
     await tokenStore.clear();
@@ -843,27 +1007,32 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
 
 // ── IPC: auth ────────────────────────────────────────────────────
 // Persist the rotated tokens + wake dependent subsystems after any successful sign-in.
-async function afterAuthSuccess(refreshToken?: string): Promise<void> {
+// @returns 토큰이 **영속** 저장됐는지 — false 면 재시작 시 재로그인이 필요하다
+// (키체인/암호화 저장 전부 불가). 무음 실패 금지: 호출자가 UI 에 표면화한다.
+async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   const c = getClient();
-  await tokenStore.setAccess(c.getAccessTokenAfterRotation());
+  const persisted = await tokenStore.setAccess(c.getAccessTokenAfterRotation());
   if (refreshToken) await tokenStore.setRefresh(refreshToken);
   syncMcp();
+  getSyncManager()?.configure(loadConfig().syncPairs ?? []); // 로그인 → 페어링 재가동
   safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
+  return persisted;
 }
 
 ipcMain.handle(CHANNELS.authLogin, async (_e, email: string, password: string, remember?: boolean) => {
   const c = getClient();
   const res = await c.login(email, password);
-  await afterAuthSuccess(res.refreshToken);
+  const tokenPersisted = await afterAuthSuccess(res.refreshToken);
   // Remember (or forget) credentials for auto-login, per the login-form checkbox.
+  let credsPersisted = true;
   if (remember) {
-    await credentialStore.save({ email, password });
-    saveConfig({ autoLogin: true });
+    credsPersisted = await credentialStore.save({ email, password });
+    saveConfig({ autoLogin: credsPersisted }); // 저장 실패면 다음 실행 자동 로그인은 불가
   } else {
     await credentialStore.clear();
     saveConfig({ autoLogin: false });
   }
-  return { user: c.user };
+  return { user: c.user, tokenPersisted, credsPersisted };
 });
 
 // Launch: sign in with the remembered credentials (only when 자동 로그인 is on).
@@ -895,22 +1064,28 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
   const access = await tokenStore.getAccess();
   const refresh = await tokenStore.getRefresh();
   if (!access) return { user: null };
-  const ok = await c.restore(access, refresh ?? undefined);
-  if (ok) {
+  const verdict = await c.restoreDetailed(access, refresh ?? undefined).catch(() => 'network' as const);
+  if (verdict === 'valid') {
     const rotated = c.getAccessTokenAfterRotation();
     if (rotated && rotated !== access) await tokenStore.setAccess(rotated);
     const rotatedRefresh = c.getRefreshToken();
     if (rotatedRefresh && rotatedRefresh !== refresh) await tokenStore.setRefresh(rotatedRefresh);
     syncMcp();
+    getSyncManager()?.configure(loadConfig().syncPairs ?? []);
     safeSend(overlayWindow, CHANNELS.avatarRefresh); // session restored → overlay can load the avatar
     return { user: c.user };
   }
-  await tokenStore.clear();
-  return { user: null };
+  if (verdict === 'invalid') {
+    // 서버가 명시적으로 거부했을 때만 토큰 폐기 — 일시적 네트워크 장애로
+    // 로그인을 날리지 않는다 (geny-connector validateAndRefreshAuth 동형).
+    await tokenStore.clear();
+  }
+  return { user: null, offline: verdict === 'network' };
 });
 
 ipcMain.handle(CHANNELS.authLogout, async () => {
   getMcpBridge().stop();
+  getSyncManager()?.stopAll(); // 토큰 없이 401 을 반복 해머링하지 않게 (재로그인 시 재가동)
   if (client) await client.logout();
   await tokenStore.clear();
   // An explicit logout also disables auto-login (else next launch signs right back in).
@@ -1049,7 +1224,7 @@ ipcMain.on(CHANNELS.overlayPushState, (_e, state: unknown) => {
 });
 // Overlay renderer → native window controls.
 ipcMain.on(CHANNELS.overlaySetIgnoreMouse, (_e, ignore: boolean) => {
-  overlayWindow?.setIgnoreMouseEvents(!!ignore, { forward: true });
+  applyOverlayIgnoreMouse(overlayWindow, !!ignore);
 });
 ipcMain.on(CHANNELS.overlayMoveBy, (_e, dx: number, dy: number) => {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
@@ -1123,17 +1298,17 @@ ipcMain.on(CHANNELS.overlayHide, () => setOverlayEnabled(false));
 // ── IPC: app / window management ─────────────────────────────────
 ipcMain.handle(CHANNELS.autostartGet, () => loadConfig().autoLaunch === true);
 ipcMain.handle(CHANNELS.autostartSet, (_e, enabled: boolean) => {
-  saveConfig({ autoLaunch: !!enabled });
-  applyAutoLaunch(!!enabled);
+  // 실효 결과를 저장·반환 — 리눅스 AppImage 임시 마운트 등 등록이 거부되면
+  // 토글도 꺼진 상태로 남는다 (UI 가 거짓말하지 않게).
+  const effective = applyAutoLaunch(!!enabled);
+  saveConfig({ autoLaunch: effective });
   rebuildTrayMenu();
-  return !!enabled;
+  return effective;
 });
 ipcMain.on(CHANNELS.resetPositions, () => resetPositions());
 ipcMain.on(CHANNELS.appRestart, () => {
-  appQuitting = true;
   saveOverlayGeometry(true); // persist any pending move/resize before relaunching
-  app.relaunch();
-  app.quit();
+  relaunchSelf();
 });
 ipcMain.on(CHANNELS.appQuit, () => {
   appQuitting = true;
@@ -1173,6 +1348,74 @@ ipcMain.handle(CHANNELS.mcpSaveServers, (_e, servers) => {
 });
 ipcMain.handle(CHANNELS.mcpTestServer, (_e, cfg) => getMcpManager().test(cfg));
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
+
+// ── IPC: workspace 동기화 ────────────────────────────────────────
+ipcMain.handle(CHANNELS.syncList, () => ({
+  pairs: loadConfig().syncPairs ?? [],
+  statuses: getSyncManager()?.statuses() ?? [],
+}));
+ipcMain.handle(CHANNELS.syncPickFolder, async () => {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const res = win
+    ? await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
+    : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+  return res.canceled || !res.filePaths.length ? null : res.filePaths[0];
+});
+ipcMain.handle(
+  CHANNELS.syncAddPair,
+  (_e, workflowId: string, workflowLabel: string, localPath: string) => {
+    if (!workflowId || !localPath) return { ok: false, error: 'invalid arguments' };
+    const pairs = loadConfig().syncPairs ?? [];
+    for (const p of pairs) {
+      if (syncPathOverlaps(p.localPath, localPath)) {
+        return {
+          ok: false,
+          error: '이미 동기화 중인 폴더(또는 그 상위/하위 폴더)입니다 — 겹치는 페어링은 서로 충돌합니다.',
+        };
+      }
+    }
+    const pair: SyncPairPersistConfig = {
+      id: randomUUID(),
+      workflowId,
+      workflowLabel: workflowLabel || undefined,
+      localPath,
+    };
+    return { ok: true, pairs: saveSyncPairs([...pairs, pair]) };
+  },
+);
+ipcMain.handle(CHANNELS.syncRemovePair, (_e, id: string) => {
+  const pairs = (loadConfig().syncPairs ?? []).filter((p) => p.id !== id);
+  return saveSyncPairs(pairs);
+});
+ipcMain.handle(CHANNELS.syncSetPaused, (_e, id: string, paused: boolean) => {
+  const pairs = (loadConfig().syncPairs ?? []).map((p) =>
+    p.id === id ? { ...p, paused: !!paused, pausedReason: undefined } : p,
+  );
+  return saveSyncPairs(pairs);
+});
+ipcMain.handle(CHANNELS.syncNow, (_e, id: string) => {
+  getSyncManager()?.syncNow(id);
+  return true;
+});
+ipcMain.handle(CHANNELS.syncConfirmMassDelete, (_e, id: string, accept: boolean) => {
+  getSyncManager()?.confirmMassDelete(id, !!accept);
+  // 거부는 일시정지로 이어진다 — config 에도 반영해 재시작 후 유지.
+  if (!accept) {
+    const pairs = (loadConfig().syncPairs ?? []).map((p) =>
+      p.id === id ? { ...p, paused: true } : p,
+    );
+    saveConfig({ syncPairs: pairs });
+  }
+  return true;
+});
+ipcMain.handle(CHANNELS.syncOpenFolder, (_e, id: string) => {
+  const pair = (loadConfig().syncPairs ?? []).find((p) => p.id === id);
+  if (pair) void shell.openPath(pair.localPath);
+  return true;
+});
+
+// ── IPC: 시크릿 저장 상태 (키체인 불가 표면화) ────────────────────
+ipcMain.handle(CHANNELS.secureStorageStatus, () => storageStatus());
 
 // ── IPC: quick-chat ──────────────────────────────────────────────
 ipcMain.handle(CHANNELS.quickChatGetEnabled, () => !!loadConfig().quickChat);
@@ -1229,11 +1472,16 @@ if (!gotLock) {
     initUpdater(cfg.autoUpdate ?? true, () => {
       appQuitting = true;
     });
-    createTray();
+    const trayOk = createTray();
     // `--hidden` (autostart) → start in the tray without showing the window.
-    const startHidden = process.argv.includes('--hidden');
+    // 트레이 생성 실패(리눅스 appindicator 부재 등) 시 --hidden 을 취소한다 —
+    // 트레이도 창도 없는 도달 불가 프로세스 방지 (geny-connector 동형).
+    const startHidden = process.argv.includes('--hidden') && trayOk;
     createWindow();
     if (startHidden) mainWindow?.removeAllListeners('ready-to-show');
+    // Workspace 동기화 엔진 — 저장된 페어링을 즉시 가동한다 (토큰이 아직
+    // 없으면 changes 가 401 로 실패하고 로그인/restore 후 재가동된다).
+    wireSyncManager();
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
       createQuickChat();
@@ -1269,5 +1517,6 @@ if (!gotLock) {
     disposeUpdater();
     getMcpBridge().stop();
     void getMcpManager().closeAll();
+    getSyncManager()?.stopAll(); // 인덱스 플러시 + 워처/WS 정리
   });
 }

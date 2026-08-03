@@ -10,7 +10,22 @@ import { CHANNELS } from '../main/ipc';
 import type { ChatEvent, ChatRequest, CurrentUser, AgentListQuery, AgentListResult, HistoryTurn, Conversation, VoiceConfig, TtsSpeakOptions } from '../core/index';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
-import type { ConnectorConfig, McpServerConfig } from '../main/config';
+import type { ConnectorConfig, McpServerConfig, SyncPairPersistConfig } from '../main/config';
+
+/** Workspace 동기화 페어링 상태 (main sync-manager.SyncPairStatus 미러 —
+ *  preload 는 main 모듈을 런타임 import 하지 않으므로 타입만 재선언). */
+export interface SyncPairStatusLike {
+  id: string;
+  workflowId: string;
+  workflowLabel?: string;
+  localPath: string;
+  state: 'idle' | 'syncing' | 'paused' | 'offline' | 'error' | 'session_gone' | 'awaiting_confirmation';
+  connected: boolean;
+  lastSyncAt: number | null;
+  lastError: string | null;
+  counts: { downloaded: number; uploaded: number; conflicts: number; skippedLarge: number };
+  pendingMassDelete: { count: number; total: number } | null;
+}
 
 /** Local-MCP bridge status pushed to the settings UI. */
 export interface McpBridgeStatusLike {
@@ -45,9 +60,17 @@ const api = {
   },
 
   auth: {
-    login: (email: string, password: string, remember?: boolean): Promise<{ user: CurrentUser | null }> =>
+    login: (
+      email: string,
+      password: string,
+      remember?: boolean,
+    ): Promise<{ user: CurrentUser | null; tokenPersisted?: boolean; credsPersisted?: boolean }> =>
       ipcRenderer.invoke(CHANNELS.authLogin, email, password, remember),
-    restore: (): Promise<{ user: CurrentUser | null }> => ipcRenderer.invoke(CHANNELS.authRestore),
+    restore: (): Promise<{ user: CurrentUser | null; offline?: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.authRestore),
+    /** 시크릿 저장 백엔드 상태 — persistent=false 면 재시작 시 재로그인 필요. */
+    secureStorageStatus: (): Promise<{ backend: string; persistent: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.secureStorageStatus),
     /** Launch: sign in with saved credentials when 자동 로그인 is enabled. */
     autoLogin: (): Promise<{ user: CurrentUser | null }> => ipcRenderer.invoke(CHANNELS.authAutoLogin),
     /** Login form: remembered email + auto-login checkbox state. */
@@ -212,6 +235,32 @@ const api = {
   },
 
   /** Local MCP — host MCP servers here and bridge their tools to your agents. */
+  /** Workspace 동기화 — 에이전트(workflow) ↔ 로컬 폴더 Drive형 동기화. */
+  sync: {
+    list: (): Promise<{ pairs: SyncPairPersistConfig[]; statuses: SyncPairStatusLike[] }> =>
+      ipcRenderer.invoke(CHANNELS.syncList),
+    pickFolder: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.syncPickFolder),
+    addPair: (
+      workflowId: string,
+      workflowLabel: string,
+      localPath: string,
+    ): Promise<{ ok: boolean; error?: string; pairs?: SyncPairPersistConfig[] }> =>
+      ipcRenderer.invoke(CHANNELS.syncAddPair, workflowId, workflowLabel, localPath),
+    removePair: (id: string): Promise<SyncPairPersistConfig[]> =>
+      ipcRenderer.invoke(CHANNELS.syncRemovePair, id),
+    setPaused: (id: string, paused: boolean): Promise<SyncPairPersistConfig[]> =>
+      ipcRenderer.invoke(CHANNELS.syncSetPaused, id, paused),
+    syncNow: (id: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.syncNow, id),
+    confirmMassDelete: (id: string, accept: boolean): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.syncConfirmMassDelete, id, accept),
+    openFolder: (id: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.syncOpenFolder, id),
+    onStatus: (cb: (statuses: SyncPairStatusLike[]) => void): (() => void) => {
+      const h = (_e: unknown, statuses: SyncPairStatusLike[]) => cb(statuses);
+      ipcRenderer.on(CHANNELS.syncStatusEvent, h);
+      return () => ipcRenderer.removeListener(CHANNELS.syncStatusEvent, h);
+    },
+  },
+
   mcp: {
     getEnabled: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.mcpGetEnabled),
     setEnabled: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke(CHANNELS.mcpSetEnabled, enabled),

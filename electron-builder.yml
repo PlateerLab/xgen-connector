@@ -38,6 +38,27 @@ linux:
   maintainer: PlateerLab <noreply@plateerlab.dev>
   synopsis: XGEN desktop connector — log in, browse your agents, chat
   artifactName: XGEN-Connector-${version}.${ext}
+  # 창 ↔ .desktop 매칭 (GNOME 독 아이콘 중복/무명 창 방지).
+  desktop:
+    entry:
+      StartupWMClass: xgen-connector
+deb:
+  # 커스텀 postinst: chrome-sandbox 를 **무조건** SUID-root 로 만든다. 기본
+  # 템플릿의 `unshare --user` 프로브는 root 로 돌아 항상 성공하지만, Ubuntu
+  # 23.10+/24.04 는 apparmor_restrict_unprivileged_userns=1 로 실제 사용자의
+  # userns 를 막는다 → 헬퍼가 0755 로 남아 앱이 SIGTRAP 으로 죽는다.
+  afterInstall: build/linux-after-install.tpl
+  # 기본 depends 를 재기술하면 통째로 대체되므로 전체 목록 + 추가분을 명시:
+  # libsecret(키체인), appindicator(트레이).
+  depends:
+    - gconf2
+    - gconf-service
+    - libnotify4
+    - libappindicator1
+    - libxtst6
+    - libnss3
+    - libsecret-1-0
+    - libayatana-appindicator3-1 | libappindicator3-1
 win:
   target:
     - nsis

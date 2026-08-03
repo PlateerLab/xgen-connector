@@ -103,31 +103,53 @@ export class XgenClient {
    * returned a fresh one. Returns true if still/again authenticated.
    */
   async restore(accessToken: string, refreshToken?: string): Promise<boolean> {
+    return (await this.restoreDetailed(accessToken, refreshToken)) === 'valid';
+  }
+
+  /**
+   * restore() 의 판정 세분화 — 호출자가 토큰 폐기 여부를 올바르게 정할 수
+   * 있게 한다 (geny-connector validateAndRefreshAuth 강건성 이식):
+   *   'valid'   — 인증 성공 (토큰 회전 반영됨)
+   *   'invalid' — 서버가 **응답으로** 거부 (토큰 폐기가 맞다)
+   *   'network' — 서버 미응답/네트워크 오류 (토큰을 지우면 안 된다 — 일시
+   *               장애 후 재시작에서 재로그인을 강요하게 된다)
+   */
+  async restoreDetailed(
+    accessToken: string,
+    refreshToken?: string,
+  ): Promise<'valid' | 'invalid' | 'network'> {
     this.http.setToken(accessToken);
     this.refreshToken = refreshToken;
+    let sawNetworkError = false;
     try {
       const { user, newAccessToken } = await this.auth.validate(accessToken, refreshToken);
       if (newAccessToken) this.http.setToken(newAccessToken);
       if (user) {
         this.user = user;
-        return true;
+        return 'valid';
       }
     } catch {
-      /* fall through */
+      sawNetworkError = true;
     }
     // Try an explicit refresh as a fallback.
     if (refreshToken) {
-      const fresh = await this.auth.refresh(refreshToken).catch(() => null);
-      if (fresh) {
-        this.http.setToken(fresh);
-        const { user } = await this.auth.validate(fresh, refreshToken).catch(() => ({ user: null }));
-        if (user) {
-          this.user = user;
-          return true;
+      try {
+        const fresh = await this.auth.refresh(refreshToken);
+        if (fresh) {
+          this.http.setToken(fresh);
+          const { user } = await this.auth.validate(fresh, refreshToken);
+          if (user) {
+            this.user = user;
+            return 'valid';
+          }
         }
+        // 서버가 응답했고 거부했다 — 명시적 invalid.
+        sawNetworkError = false;
+      } catch {
+        sawNetworkError = true;
       }
     }
-    return false;
+    return sawNetworkError ? 'network' : 'invalid';
   }
 
   getAccessTokenAfterRotation(): string {
