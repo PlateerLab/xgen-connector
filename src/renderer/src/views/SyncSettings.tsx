@@ -147,66 +147,52 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           // 클릭을 요구했다).
           const isPaused = state === 'paused' || state === 'session_gone' || p.paused === true;
           return (
-            <div key={p.id} className="card" style={{ marginBottom: 10, padding: 12 }}>
-              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ minWidth: 0 }}>
-                  <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 8,
-                        background: STATE_COLOR[state],
-                        display: 'inline-block',
-                        flex: '0 0 auto',
-                      }}
-                    />
-                    <strong style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {p.workflowLabel || p.workflowId}
-                    </strong>
-                    <span className="small muted">{STATE_LABEL[state]}</span>
-                  </div>
-                  <div className="small muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {p.localPath}
-                  </div>
-                  {st && (
-                    <div className="small muted">
-                      ↓{st.counts.downloaded} ↑{st.counts.uploaded}
-                      {st.counts.conflicts > 0 && ` · 충돌 사본 ${st.counts.conflicts}`}
-                      {st.counts.skippedLarge > 0 && ` · 대형 파일 제외 ${st.counts.skippedLarge}`}
-                      {st.lastSyncAt && ` · ${new Date(st.lastSyncAt).toLocaleTimeString()}`}
-                    </div>
-                  )}
-                  {st?.lastError && (
-                    <div
-                      className="small"
-                      title={st.lastError}
-                      style={{ color: '#dc2626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    >
-                      {st.lastError}
-                    </div>
-                  )}
+            <div key={p.id} className="sync-pair">
+              <div className="sync-pair-head">
+                <span className="sync-pair-dot" style={{ background: STATE_COLOR[state] }} />
+                <span className="sync-pair-name" title={p.workflowLabel || p.workflowId}>
+                  {p.workflowLabel || p.workflowId}
+                </span>
+                <span className="sync-pair-state" style={{ color: STATE_COLOR[state] }}>
+                  {STATE_LABEL[state]}
+                </span>
+              </div>
+              <div className="sync-pair-path small muted" title={p.localPath}>
+                {p.localPath}
+              </div>
+              {st && (
+                <div className="sync-pair-meta small muted">
+                  ↓ {st.counts.downloaded} · ↑ {st.counts.uploaded}
+                  {st.counts.conflicts > 0 && ` · 충돌 사본 ${st.counts.conflicts}`}
+                  {st.counts.skippedLarge > 0 && ` · 대형 파일 제외 ${st.counts.skippedLarge}`}
+                  {st.lastSyncAt &&
+                    ` · 마지막 동기화 ${new Date(st.lastSyncAt).toLocaleTimeString()}`}
                 </div>
-                <div className="row" style={{ gap: 6, flex: '0 0 auto' }}>
-                  <button className="secondary" onClick={() => void xgen.sync.openFolder(p.id)}>
-                    폴더 열기
-                  </button>
-                  <button className="secondary" onClick={() => void xgen.sync.syncNow(p.id)}>
-                    지금 동기화
-                  </button>
-                  <button
-                    className="secondary"
-                    onClick={() => void xgen.sync.setPaused(p.id, !isPaused).then(() => reload())}
-                  >
-                    {isPaused ? '재개' : '일시정지'}
-                  </button>
-                  <button
-                    className="danger"
-                    onClick={() => void xgen.sync.removePair(p.id).then(() => reload())}
-                  >
-                    해제
-                  </button>
+              )}
+              {st?.lastError && (
+                <div className="sync-pair-error small" title={st.lastError}>
+                  {st.lastError}
                 </div>
+              )}
+              <div className="sync-pair-foot">
+                <button className="secondary" onClick={() => void xgen.sync.openFolder(p.id)}>
+                  폴더 열기
+                </button>
+                <button className="secondary" onClick={() => void xgen.sync.syncNow(p.id)}>
+                  지금 동기화
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => void xgen.sync.setPaused(p.id, !isPaused).then(() => reload())}
+                >
+                  {isPaused ? '재개' : '일시정지'}
+                </button>
+                <button
+                  className="danger"
+                  onClick={() => void xgen.sync.removePair(p.id).then(() => reload())}
+                >
+                  해제
+                </button>
               </div>
 
               {/* 대량 삭제 안전밸브 확인 배너 */}
