@@ -863,8 +863,11 @@ function rebuildTrayMenu(): void {
       type: 'checkbox',
       checked: cfg.autoLaunch === true,
       click: (item) => {
-        saveConfig({ autoLaunch: item.checked });
-        applyAutoLaunch(item.checked);
+        // IPC 핸들러와 동일하게 **실효 결과**를 저장 (리눅스 등록 거부 시
+        // 체크만 켜진 거짓 상태 방지).
+        const effective = applyAutoLaunch(item.checked);
+        saveConfig({ autoLaunch: effective });
+        rebuildTrayMenu();
       },
     },
     { label: '위치 초기화', click: () => resetPositions() },
@@ -1000,6 +1003,11 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
   if (patch.serverUrl !== undefined) getClient(); // rebind base URL
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
   if (patch.theme) nativeTheme.themeSource = patch.theme;
+  if (patch.linuxClickThrough !== undefined) {
+    // 즉시 재적용: 클릭 통과가 켜진 오버레이는 마우스 이벤트를 못 받아
+    // 렌더러 IPC 로는 다시 끌 수 없다 — 설정 토글이 유일한 복귀 경로.
+    applyOverlayIgnoreMouse(overlayWindow, true);
+  }
   broadcastConfig(next);
   if (serverChanged) safeSend(mainWindow, CHANNELS.authFailed); // → 로그인 화면
   return next;
@@ -1045,11 +1053,18 @@ ipcMain.handle(CHANNELS.authAutoLogin, async () => {
     const res = await c.login(creds.email, creds.password);
     await afterAuthSuccess(res.refreshToken);
     return { user: c.user };
-  } catch {
-    // Stale password (changed server-side) → stop retrying it on every launch.
-    await credentialStore.clear();
-    saveConfig({ autoLogin: false });
-    return { user: null };
+  } catch (e) {
+    // 명시적 거부(서버가 응답으로 거절 = 비밀번호 변경 등)일 때만 저장
+    // 자격을 폐기한다. 네트워크 일시 장애(오프라인 부팅·서버 재시작)는
+    // TypeError('fetch failed')/AbortError 로 나타난다 — 이때 지우면
+    // 자동 로그인이 장애 한 번에 영구 해제된다 (restoreDetailed 동일 원칙).
+    const name = (e as Error)?.name ?? '';
+    const transient = name === 'AbortError' || name === 'TypeError';
+    if (!transient) {
+      await credentialStore.clear();
+      saveConfig({ autoLogin: false });
+    }
+    return { user: null, offline: transient };
   }
 });
 

@@ -72,7 +72,8 @@ const api = {
     secureStorageStatus: (): Promise<{ backend: string; persistent: boolean }> =>
       ipcRenderer.invoke(CHANNELS.secureStorageStatus),
     /** Launch: sign in with saved credentials when 자동 로그인 is enabled. */
-    autoLogin: (): Promise<{ user: CurrentUser | null }> => ipcRenderer.invoke(CHANNELS.authAutoLogin),
+    autoLogin: (): Promise<{ user: CurrentUser | null; offline?: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.authAutoLogin),
     /** Login form: remembered email + auto-login checkbox state. */
     loginPrefill: (): Promise<{ autoLogin: boolean; email: string }> =>
       ipcRenderer.invoke(CHANNELS.authLoginPrefill),

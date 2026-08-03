@@ -108,25 +108,42 @@ function fileGet(account: string): string | null {
 
 // ── 공통 set/get (사다리) ─────────────────────────────────────────
 
-/** 저장 시도 — 영속 저장에 성공했으면 true (인메모리 폴백이면 false). */
+/** 저장 시도 — 영속 저장에 성공했으면 true (인메모리 폴백이면 false).
+ *
+ *  삭제(value=null)는 **모든 계층**에서 지운다: 과거 keytar 런타임 실패로
+ *  파일 폴백에 남은 사본이, keytar 가 복구된 뒤의 로그아웃에서 살아남아
+ *  get() 이 낡은 토큰을 부활시키는 구멍을 막는다 (mac 은 ad-hoc 재서명
+ *  업데이트마다 키체인 프롬프트가 재출현해 이 경로가 실제로 밟힌다). */
 async function set(account: string, value: string | null): Promise<boolean> {
   const k = await keytar();
+  if (value === null) {
+    if (k) await k.deletePassword(SERVICE, account).catch(() => {});
+    fileSet(account, null);
+    memory.delete(account);
+    return true;
+  }
   if (k) {
     try {
-      if (value === null) await k.deletePassword(SERVICE, account).catch(() => {});
-      else await k.setPassword(SERVICE, account, value);
+      await k.setPassword(SERVICE, account, value);
+      lastBackend = 'keychain';
+      // 키체인 저장 성공 → 파일 폴백의 낡은 사본을 정리해 단일 진실 유지.
+      fileSet(account, null);
       lastBackend = 'keychain';
       return true;
     } catch {
-      // keytar 로드는 됐지만 런타임 실패(키링 미가동) — 파일 폴백
+      // keytar 로드는 됐지만 런타임 실패(키링 미가동/프롬프트 거부) — 파일 폴백
     }
   }
   if (fileSet(account, value)) return true;
-  if (value === null) memory.delete(account);
-  else memory.set(account, value);
+  memory.set(account, value);
   lastBackend = 'memory';
   return false;
 }
+
+/** get() 에서 키체인 **읽기**가 거부된 적 있는지 — 쓰기 프로브만 보는
+ *  storageStatus 가 "정상"이라 보고하는 동안 읽기만 조용히 실패하는 상태
+ *  (mac 프롬프트 '거부')를 표면화한다. */
+let lastGetDenied = false;
 
 async function get(account: string): Promise<string | null> {
   const k = await keytar();
@@ -135,7 +152,7 @@ async function get(account: string): Promise<string | null> {
       const v = await k.getPassword(SERVICE, account);
       if (v !== null) return v;
     } catch {
-      /* 파일 폴백으로 */
+      lastGetDenied = true; // 프롬프트 거부/키링 잠김 — 파일 폴백으로
     }
   }
   const fromFile = fileGet(account);
@@ -144,12 +161,16 @@ async function get(account: string): Promise<string | null> {
 }
 
 /** 현재 저장 백엔드 상태 — UI 가 "재시작 시 재로그인 필요"를 표시할 근거. */
-export async function storageStatus(): Promise<{ backend: SecureBackend; persistent: boolean }> {
+export async function storageStatus(): Promise<{
+  backend: SecureBackend;
+  persistent: boolean;
+  readDenied: boolean;
+}> {
   // 실측: 마커 라운드트립으로 실제 영속 여부를 판정한다.
   const probeKey = '__storage_probe__';
   const persisted = await set(probeKey, 'ok');
   await set(probeKey, null);
-  return { backend: lastBackend, persistent: persisted };
+  return { backend: lastBackend, persistent: persisted, readDenied: lastGetDenied };
 }
 
 export const tokenStore = {

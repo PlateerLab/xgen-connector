@@ -54,8 +54,11 @@ export const App: React.FC = () => {
       }
       // Prefer a live session token; fall back to saved-credential auto-login
       // (자동 로그인) so the user lands in the workspace without the login screen.
+      // 오프라인(네트워크 장애) 판정이면 autoLogin 을 시도하지 않는다 — 어차피
+      // 같은 장애로 실패하고, 실패 분류가 어긋나면 저장 자격이 날아간다.
       const restored = await xgen.auth.restore();
-      const user = restored.user ?? (await xgen.auth.autoLogin()).user;
+      const user =
+        restored.user ?? (restored.offline ? null : (await xgen.auth.autoLogin()).user);
       if (user) {
         setUser(user);
         setStage('workspace');

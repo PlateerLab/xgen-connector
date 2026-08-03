@@ -85,6 +85,9 @@ export interface LocalFs {
    *  lets the engine skip case-colliding server paths instead of
    *  flip-flopping one local file between two server entries. */
   isCaseInsensitive?(): Promise<boolean>
+  /** 이 플랫폼에서 만들 수 없는 이름(win32 예약문자/디바이스명 등)인가 —
+   *  엔진이 리모트 경로를 정책 스킵(커서 전진)하는 데 쓴다. */
+  isNameLegal?(rel: string): boolean
   /** Client-side ignore predicate (same rules the scan applies). The
    *  engine filters REMOTE paths through it too, so ignore-asymmetry
    *  can never delete agent-side files the client simply doesn't scan. */
@@ -173,10 +176,24 @@ export async function syncOnce(
   const remoteByPath = new Map<string, RemoteChange>()
   for (const c of remote.changes) remoteByPath.set(c.path, c) // later seq wins (ordered)
 
+  // Platform-illegal remote names (win32: <>:"|?* · 예약 디바이스명 ·
+  // 끝 점/공백): 로컬에 절대 실체화될 수 없다 — 다운로드는 매 라운드
+  // 실패하고 holdBack 이 커서를 영구 웨지시킨다. case-collision 과 같은
+  // '정책 스킵'(loud + 커서 전진)으로 처리한다.
+  if (fs.isNameLegal) {
+    for (const [p, c] of [...remoteByPath]) {
+      if (!fs.isNameLegal(p)) {
+        remoteByPath.delete(p)
+        if (!c.deleted) stats.errors.push(`illegal-name skipped (platform): ${p}`)
+      }
+    }
+  }
+
   // Case-insensitive filesystems can hold only ONE of "A.txt"/"a.txt".
   // Keep the first server path per casefold key; skip the rest loudly —
   // otherwise a single local file flip-flops between two server entries.
-  if ((await fs.isCaseInsensitive?.()) ?? false) {
+  const caseInsensitive = (await fs.isCaseInsensitive?.()) ?? false
+  if (caseInsensitive) {
     const seen = new Map<string, string>()
     for (const [p, c] of [...remoteByPath]) {
       if (c.deleted) continue
@@ -209,6 +226,23 @@ export async function syncOnce(
   // would wipe the server workspace. Abort the round instead.
   if (local.size === 0 && Object.keys(index.entries).length > 5) {
     throw new Error('replica folder unavailable (empty scan over a tracked tree) — sync round aborted')
+  }
+
+  // Case-insensitive FS: 서버의 새 경로가 **철자만 다른** 기존 로컬 경로와
+  // casefold 충돌하면 NTFS/APFS 는 같은 파일로 해석한다 — 다운로드 가드가
+  // (expected=null vs 실존 파일) 매 라운드 거부·홀드백해 영구 웨지.
+  // 정책 스킵(loud + 커서 전진)하고 사용자가 한쪽 철자를 통일하게 한다.
+  if (caseInsensitive) {
+    const localFold = new Map<string, string>()
+    for (const lp of local.keys()) localFold.set(lp.toLowerCase(), lp)
+    for (const [p, c] of [...remoteByPath]) {
+      if (c.deleted) continue
+      const lp = localFold.get(p.toLowerCase())
+      if (lp && lp !== p && !index.entries[p]) {
+        remoteByPath.delete(p)
+        stats.errors.push(`case-collision with local skipped: ${p} (local: ${lp})`)
+      }
+    }
   }
 
   // Local content shas: hash only entries whose (size, mtimeMs) moved

@@ -292,6 +292,9 @@ class PairEngine {
         this.cfg.paused = true
         this.status.state = 'paused'
         this.status.lastError = 'workspace quota exceeded — sync paused'
+        // 엔진 자원 즉시 반납 (watcher/WS/60s 타이머) — configure 는 paused
+        // 동치라 stop 을 안 부른다. stop() 은 mid-run 안전 (I/O 만 닫는다).
+        this.stop()
         this.deps.onAutoPause?.(this.cfg.id, 'quota')
       }
       if (stats.downloaded || stats.uploaded || stats.deletedLocal || stats.deletedRemote) {
@@ -312,6 +315,8 @@ class PairEngine {
         this.status.state = 'session_gone'
         this.status.lastError = PAUSE_REASON_MESSAGES.session_gone
         this.cfg.paused = true
+        // 죽은 workflow 엔드포인트로의 WS 재접속 루프/워처를 즉시 종료.
+        this.stop()
         this.deps.log(
           `sync[${this.cfg.workflowId.slice(0, 8)}] agent gone (HTTP ${(e as { status?: number }).status}) — auto-pausing pair`,
         )

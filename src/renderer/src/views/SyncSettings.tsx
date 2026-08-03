@@ -142,6 +142,10 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
         {pairs.map((p) => {
           const st = statusOf(p.id);
           const state: SyncPairStatusLike['state'] = st?.state ?? (p.paused ? 'paused' : 'offline');
+          // 버튼은 **라이브 상태** 기준 — 자동 일시정지(쿼터/에이전트 삭제)
+          // 직후에도 첫 클릭이 곧바로 재개가 되게 (stale p.paused 는 두 번
+          // 클릭을 요구했다).
+          const isPaused = state === 'paused' || state === 'session_gone' || p.paused === true;
           return (
             <div key={p.id} className="card" style={{ marginBottom: 10, padding: 12 }}>
               <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
@@ -192,9 +196,9 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   </button>
                   <button
                     className="secondary"
-                    onClick={() => void xgen.sync.setPaused(p.id, !p.paused).then(() => reload())}
+                    onClick={() => void xgen.sync.setPaused(p.id, !isPaused).then(() => reload())}
                   >
-                    {p.paused ? '재개' : '일시정지'}
+                    {isPaused ? '재개' : '일시정지'}
                   </button>
                   <button
                     className="danger"
