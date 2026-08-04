@@ -6,14 +6,16 @@ import { EyeIcon, EyeOffIcon } from '../brand/icons';
 
 export const Login: React.FC<{
   serverUrl: string;
+  ssoEnabled: boolean;
   onLoggedIn: (u: CurrentUser) => void;
   onChangeServer: () => void;
-}> = ({ serverUrl, onLoggedIn, onChangeServer }) => {
+}> = ({ serverUrl, ssoEnabled, onLoggedIn, onChangeServer }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [ssoBusy, setSsoBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 저장 실패 경고 + 보류된 사용자: 화면 전환 전에 반드시 사용자에게 보인다.
   const [warn, setWarn] = useState<string | null>(null);
@@ -61,6 +63,24 @@ export const Login: React.FC<{
       setError(e instanceof Error ? e.message : '로그인에 실패했습니다.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const submitSso = async () => {
+    setSsoBusy(true);
+    setError(null);
+    try {
+      const { user, tokenPersisted } = await xgen.auth.ssoLogin();
+      if (tokenPersisted === false) {
+        setWarn('SSO 로그인은 되었지만 보안 저장소를 사용할 수 없어 앱을 재시작하면 다시 로그인해야 합니다.');
+        setPendingUser(user);
+        return;
+      }
+      onLoggedIn(user);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'SSO 로그인에 실패했습니다.');
+    } finally {
+      setSsoBusy(false);
     }
   };
 
@@ -138,11 +158,27 @@ export const Login: React.FC<{
               확인하고 계속
             </button>
           ) : (
-            <button type="submit" className="primary" disabled={busy}>
+            <button type="submit" className="primary" disabled={busy || ssoBusy}>
               {busy ? '로그인 중…' : '로그인'}
             </button>
           )}
         </form>
+
+        {ssoEnabled && !pendingUser && (
+          <>
+            <div className="auth-divider">
+              <span>또는</span>
+            </div>
+            <button
+              type="button"
+              className="secondary sso-login-button"
+              disabled={busy || ssoBusy}
+              onClick={() => void submitSso()}
+            >
+              {ssoBusy ? 'SSO 인증 중…' : 'SSO 로그인'}
+            </button>
+          </>
+        )}
 
         <div className="auth-foot">
           <span className="server-pill">

@@ -2,13 +2,19 @@ import React, { useState } from 'react';
 import { xgen } from '../bridge';
 import { XgenWordmark } from '../brand/Logo';
 import { ServerIcon } from '../brand/icons';
+import type { ConnectorConfig } from '../../../main/config';
 
 /** First-run / change-server screen: set the XGEN gateway base URL. */
-export const ServerSetup: React.FC<{ initialUrl: string; onSaved: () => void }> = ({
-  initialUrl,
-  onSaved,
-}) => {
-  const [url, setUrl] = useState(initialUrl);
+export const ServerSetup: React.FC<{
+  initialConfig: Pick<ConnectorConfig, 'serverUrl' | 'allowPrivateCertificate' | 'ssoEnabled' | 'ssoPath'>;
+  onSaved: () => void;
+}> = ({ initialConfig, onSaved }) => {
+  const [url, setUrl] = useState(initialConfig.serverUrl);
+  const [allowPrivateCertificate, setAllowPrivateCertificate] = useState(
+    initialConfig.allowPrivateCertificate ?? false,
+  );
+  const [ssoEnabled, setSsoEnabled] = useState(initialConfig.ssoEnabled ?? false);
+  const [ssoPath, setSsoPath] = useState(initialConfig.ssoPath ?? '/sso/signin');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,10 +24,20 @@ export const ServerSetup: React.FC<{ initialUrl: string; onSaved: () => void }> 
       setError('http:// 또는 https:// 로 시작하는 주소를 입력하세요.');
       return;
     }
+    const normalizedSsoPath = ssoPath.trim();
+    if (ssoEnabled && (!normalizedSsoPath.startsWith('/') || normalizedSsoPath.startsWith('//'))) {
+      setError('SSO PATH는 /로 시작하는 상대 경로로 입력하세요.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await xgen.config.set({ serverUrl: trimmed });
+      await xgen.config.set({
+        serverUrl: trimmed,
+        allowPrivateCertificate,
+        ssoEnabled,
+        ssoPath: normalizedSsoPath || '/sso/signin',
+      });
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -51,6 +67,33 @@ export const ServerSetup: React.FC<{ initialUrl: string; onSaved: () => void }> 
             autoFocus
           />
         </label>
+        <label className="setup-option">
+          <input
+            type="checkbox"
+            checked={allowPrivateCertificate}
+            onChange={(e) => setAllowPrivateCertificate(e.target.checked)}
+          />
+          <span>
+            사설 인증서 허용
+            <small>설정한 서버의 사설 CA 신뢰 오류만 허용합니다.</small>
+          </span>
+        </label>
+        <label className="setup-option">
+          <input type="checkbox" checked={ssoEnabled} onChange={(e) => setSsoEnabled(e.target.checked)} />
+          <span>SSO 로그인 사용</span>
+        </label>
+        {ssoEnabled && (
+          <label className="field setup-nested-field">
+            <span>SSO PATH</span>
+            <input
+              type="text"
+              placeholder="/sso/signin"
+              value={ssoPath}
+              onChange={(e) => setSsoPath(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void save()}
+            />
+          </label>
+        )}
         {error && (
           <div className="alert-error" role="alert">
             <span aria-hidden>⚠️</span>

@@ -66,6 +66,8 @@ const api = {
       remember?: boolean,
     ): Promise<{ user: CurrentUser | null; tokenPersisted?: boolean; credsPersisted?: boolean }> =>
       ipcRenderer.invoke(CHANNELS.authLogin, email, password, remember),
+    ssoLogin: (): Promise<{ user: CurrentUser; tokenPersisted: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.authSsoLogin),
     restore: (): Promise<{ user: CurrentUser | null; offline?: boolean }> =>
       ipcRenderer.invoke(CHANNELS.authRestore),
     /** 시크릿 저장 백엔드 상태 — persistent=false 면 재시작 시 재로그인 필요. */

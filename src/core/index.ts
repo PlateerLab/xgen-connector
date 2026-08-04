@@ -78,7 +78,11 @@ export class XgenClient {
 
   /** Log in and adopt the returned tokens. */
   async login(email: string, password: string): Promise<LoginResult> {
-    const res = await this.auth.login(email, password);
+    return this.adoptLogin(await this.auth.login(email, password));
+  }
+
+  /** Adopt tokens returned by an external SSO bridge and resolve full identity. */
+  async adoptLogin(res: LoginResult): Promise<LoginResult> {
     this.http.setToken(res.accessToken);
     this.refreshToken = res.refreshToken;
     this.user = {

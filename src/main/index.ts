@@ -44,6 +44,11 @@ import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
 import { initSyncManager, getSyncManager, type SyncPairStatus } from './sync-manager';
+import {
+  buildSsoUrl,
+  parseSsoLoginResponse,
+  shouldAllowPrivateCertificate,
+} from './connection-security';
 
 const IS_LINUX = process.platform === 'linux';
 
@@ -64,6 +69,7 @@ let tray: Tray | null = null;
 
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
+let ssoWindow: BrowserWindow | null = null;
 let client: XgenClient | null = null;
 const aborters = new Map<string, AbortController>();
 
@@ -106,13 +112,29 @@ function getClient(): XgenClient {
   if (!client) {
     client = new XgenClient({
       baseUrl: normalizeServerUrl(cfg.serverUrl),
-      // Node 18+ global fetch (undici) — long-lived SSE supported.
+      // Chromium 네트워크 스택을 사용해 OS 프록시·인증서 정책을 공유한다.
+      fetch: (input, init) => net.fetch(input, init),
       onAuthFailure: () => safeSend(mainWindow, CHANNELS.authFailed),
     });
   } else {
     client.setBaseUrl(normalizeServerUrl(cfg.serverUrl));
   }
   return client;
+}
+
+/** 기본 세션의 인증서 정책을 현재 서버 설정에 맞춰 설치한다. */
+function applyCertificatePolicy(): void {
+  session.defaultSession.setCertificateVerifyProc((request, callback) => {
+    const cfg = loadConfig();
+    const allowed = shouldAllowPrivateCertificate(
+      normalizeServerUrl(cfg.serverUrl),
+      cfg.allowPrivateCertificate === true,
+      request.hostname,
+      request.verificationResult,
+    );
+    // 0은 이번 인증서를 승인하고, -3은 Chromium의 원래 판정을 사용한다.
+    callback(allowed ? 0 : -3);
+  });
 }
 
 function createWindow(): void {
@@ -1001,6 +1023,12 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
   }
   const next = saveConfig(patch);
   if (patch.serverUrl !== undefined) getClient(); // rebind base URL
+  if (patch.serverUrl !== undefined || patch.allowPrivateCertificate !== undefined) {
+    // 검증 결과는 network service에 캐시되므로 proc을 다시 설치하고 기존
+    // 연결을 닫아 다음 요청부터 새 정책을 사용한다.
+    applyCertificatePolicy();
+    await session.defaultSession.closeAllConnections();
+  }
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
   if (patch.theme) nativeTheme.themeSource = patch.theme;
   if (patch.linuxClickThrough !== undefined) {
@@ -1026,6 +1054,105 @@ async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
   return persisted;
 }
+
+const SSO_CALLBACK = 'xgenConnectorSsoComplete';
+let pendingSso: {
+  resolve: (value: { user: NonNullable<XgenClient['user']>; tokenPersisted: boolean }) => void;
+  reject: (reason: Error) => void;
+} | null = null;
+
+function settleSsoWindow(): void {
+  const win = ssoWindow;
+  ssoWindow = null;
+  if (win && !win.isDestroyed()) win.close();
+}
+
+ipcMain.handle(CHANNELS.authSsoLogin, async () => {
+  const cfg = loadConfig();
+  if (!cfg.ssoEnabled) throw new Error('SSO 로그인이 활성화되지 않았습니다.');
+  const url = buildSsoUrl(normalizeServerUrl(cfg.serverUrl), cfg.ssoPath ?? '/sso/signin', SSO_CALLBACK);
+  if (ssoWindow && !ssoWindow.isDestroyed()) {
+    ssoWindow.show();
+    ssoWindow.focus();
+    throw new Error('SSO 로그인이 이미 진행 중입니다.');
+  }
+
+  return new Promise<{ user: NonNullable<XgenClient['user']>; tokenPersisted: boolean }>((resolve, reject) => {
+    const win = new BrowserWindow({
+      width: 560,
+      height: 720,
+      minWidth: 440,
+      minHeight: 560,
+      parent: mainWindow ?? undefined,
+      modal: false,
+      show: false,
+      title: 'XGEN SSO 로그인',
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: join(__dirname, '../preload/sso.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    ssoWindow = win;
+    pendingSso = { resolve, reject };
+    win.once('ready-to-show', () => win.show());
+    win.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
+      try {
+        const protocol = new URL(nextUrl).protocol;
+        if (protocol === 'http:' || protocol === 'https:') void win.loadURL(nextUrl);
+      } catch {
+        // 잘못된 팝업 URL은 무시한다.
+      }
+      return { action: 'deny' };
+    });
+    win.on('closed', () => {
+      ssoWindow = null;
+      if (pendingSso) {
+        const pending = pendingSso;
+        pendingSso = null;
+        pending.reject(new Error('SSO 로그인이 취소되었습니다.'));
+      }
+    });
+    void win.loadURL(url).catch((error) => {
+      if (!pendingSso) return;
+      const pending = pendingSso;
+      pendingSso = null;
+      settleSsoWindow();
+      pending.reject(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
+});
+
+ipcMain.on(CHANNELS.authSsoComplete, (event, payload: unknown) => {
+  if (!pendingSso || !ssoWindow || event.sender !== ssoWindow.webContents) return;
+  let callbackOrigin: string;
+  let serverOrigin: string;
+  try {
+    callbackOrigin = new URL(event.senderFrame.url).origin;
+    serverOrigin = new URL(normalizeServerUrl(loadConfig().serverUrl)).origin;
+  } catch {
+    return;
+  }
+  if (callbackOrigin !== serverOrigin) return;
+
+  const pending = pendingSso;
+  pendingSso = null;
+  void (async () => {
+    try {
+      const c = getClient();
+      const result = await c.adoptLogin(parseSsoLoginResponse(payload));
+      const tokenPersisted = await afterAuthSuccess(result.refreshToken);
+      if (!c.user) throw new Error('SSO 사용자 정보를 확인하지 못했습니다.');
+      pending.resolve({ user: c.user, tokenPersisted });
+    } catch (error) {
+      pending.reject(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      settleSsoWindow();
+    }
+  })();
+});
 
 ipcMain.handle(CHANNELS.authLogin, async (_e, email: string, password: string, remember?: boolean) => {
   const c = getClient();
@@ -1470,6 +1597,7 @@ if (!gotLock) {
   app.whenReady().then(() => {
     const cfg = loadConfig();
     if (cfg.theme) nativeTheme.themeSource = cfg.theme;
+    applyCertificatePolicy();
 
     // Voice input: the renderer calls navigator.mediaDevices.getUserMedia for the
     // push-to-talk mic. Electron denies media by default unless we approve it —

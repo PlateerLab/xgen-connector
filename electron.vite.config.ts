@@ -30,6 +30,14 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/preload/index.ts'),
+          sso: resolve('src/preload/sso.ts'),
+        },
+      },
+    },
   },
   renderer: {
     root: resolve('src/renderer'),
