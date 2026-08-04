@@ -21,7 +21,9 @@ test('PATH 에 있는 실행 파일을 절대 경로로 해석한다', () => {
   const bin = join(root, 'bin')
   const target = fakeBin(bin, 'uvx')
   const resolved = resolveExecutable('uvx', [join(root, 'nope'), bin].join(delimiter))
-  assert.equal(resolved, target, 'PATH 순회로 찾지 못했다')
+  // Windows 는 경로 대소문자를 구분하지 않는다 — 비교도 그렇게.
+  const norm = (p: string | null) => (p && isWin ? p.toLowerCase() : p)
+  assert.equal(norm(resolved), norm(target), 'PATH 순회로 찾지 못했다')
 })
 
 test('PATH 에 없으면 null 과 안내 메시지', () => {

@@ -110,7 +110,13 @@ function isExecutableFile(p: string): boolean {
 /** Windows 확장자 후보 (PATHEXT). npx/uvx 는 실제로 npx.cmd/uvx.exe 다. */
 function winExtensions(): string[] {
   const raw = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
-  return raw.split(';').map((e) => e.trim()).filter(Boolean);
+  // PATHEXT 는 관례상 대문자지만 실제 파일은 uvx.cmd/node.exe 처럼 소문자다.
+  // Windows 조회는 대소문자 무시라 어느 쪽이든 찾지만, 반환 경로가 실제
+  // 파일명과 같아야 로그/오류가 헷갈리지 않는다.
+  return raw
+    .split(';')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 /**
