@@ -399,6 +399,23 @@ button {
 .setup-nested-field {
   margin-left: 24px;
 }
+.setup-update-server {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-secondary, #5b616e);
+  font-size: 13px;
+}
+.setup-update-server small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  line-height: 1.4;
+}
 .auth-divider {
   display: flex;
   align-items: center;

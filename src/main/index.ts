@@ -1637,6 +1637,7 @@ if (!gotLock) {
     initUpdater({
       enabled: cfg.autoUpdate ?? true,
       updateServer: cfg.updateServer ?? 'github',
+      isConfigured: () => !!normalizeServerUrl(loadConfig().serverUrl),
       xgenServerUrl: () => normalizeServerUrl(loadConfig().serverUrl),
       xgenToken: () => tokenStore.getAccess(),
       onWillInstall: () => {

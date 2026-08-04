@@ -44,6 +44,7 @@ const SIX_HOURS = 6 * 60 * 60 * 1000;
 
 let autoUpdate = true;
 let updateServer: UpdateServer = 'github';
+let isUpdateConfigured: () => boolean = () => false;
 let getXgenServerUrl: () => string = () => '';
 let getXgenToken: () => Promise<string | null> = async () => null;
 let timer: NodeJS.Timeout | null = null;
@@ -453,6 +454,13 @@ async function runCheck(manual: boolean): Promise<void> {
       }
       return;
     }
+    if (!isUpdateConfigured()) {
+      if (manual) {
+        notify('서버 연결 설정 후 업데이트를 확인할 수 있습니다.');
+        await dialog.showMessageBox({ message: '먼저 서버 연결 설정을 완료해 주세요.' });
+      }
+      return;
+    }
     if (updateServer === 'xgen') return await xgenCheck(manual);
     if (isPackagedMac()) return await macCheck(manual);
     if (canSelfUpdate()) return await winLinuxCheck(manual);
@@ -482,6 +490,7 @@ function notifyUpdateAvailable(version: string, onAccept: () => void): void {
 export interface UpdaterOptions {
   enabled: boolean;
   updateServer?: UpdateServer;
+  isConfigured: () => boolean;
   xgenServerUrl: () => string;
   xgenToken: () => Promise<string | null>;
   onWillInstall?: () => void;
@@ -490,6 +499,7 @@ export interface UpdaterOptions {
 export function initUpdater(options: UpdaterOptions): void {
   autoUpdate = options.enabled;
   updateServer = options.updateServer ?? 'github';
+  isUpdateConfigured = options.isConfigured;
   getXgenServerUrl = options.xgenServerUrl;
   getXgenToken = options.xgenToken;
   if (options.onWillInstall) appWillInstall = options.onWillInstall;

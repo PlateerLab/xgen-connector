@@ -6,7 +6,10 @@ import type { ConnectorConfig } from '../../../main/config';
 
 /** First-run / change-server screen: set the XGEN gateway base URL. */
 export const ServerSetup: React.FC<{
-  initialConfig: Pick<ConnectorConfig, 'serverUrl' | 'allowPrivateCertificate' | 'ssoEnabled' | 'ssoPath'>;
+  initialConfig: Pick<
+    ConnectorConfig,
+    'serverUrl' | 'allowPrivateCertificate' | 'ssoEnabled' | 'ssoPath' | 'updateServer'
+  >;
   onSaved: () => void;
 }> = ({ initialConfig, onSaved }) => {
   const [url, setUrl] = useState(initialConfig.serverUrl);
@@ -15,6 +18,9 @@ export const ServerSetup: React.FC<{
   );
   const [ssoEnabled, setSsoEnabled] = useState(initialConfig.ssoEnabled ?? false);
   const [ssoPath, setSsoPath] = useState(initialConfig.ssoPath ?? '/sso/signin');
+  const [updateServer, setUpdateServer] = useState<'github' | 'xgen'>(
+    initialConfig.updateServer ?? 'github',
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +43,7 @@ export const ServerSetup: React.FC<{
         allowPrivateCertificate,
         ssoEnabled,
         ssoPath: normalizedSsoPath || '/sso/signin',
+        updateServer,
       });
       onSaved();
     } catch (e) {
@@ -94,6 +101,28 @@ export const ServerSetup: React.FC<{
             />
           </label>
         )}
+        <div className="setup-update-server">
+          <span>
+            업데이트 서버
+            <small>
+              {updateServer === 'xgen'
+                ? '설정한 XGEN 서버의 다운로드 센터를 사용합니다.'
+                : 'GitHub Releases에서 업데이트를 확인합니다.'}
+            </small>
+          </span>
+          <div className="seg">
+            {(['github', 'xgen'] as const).map((source) => (
+              <button
+                key={source}
+                type="button"
+                className={updateServer === source ? 'active' : ''}
+                onClick={() => setUpdateServer(source)}
+              >
+                {source === 'github' ? 'GitHub' : 'XGEN'}
+              </button>
+            ))}
+          </div>
+        </div>
         {error && (
           <div className="alert-error" role="alert">
             <span aria-hidden>⚠️</span>
