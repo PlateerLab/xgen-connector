@@ -226,6 +226,9 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     xgen.mcp.getEnabled().then(setEnabled).catch(() => undefined);
     xgen.mcp.listServers().then(setServers).catch(() => undefined);
     xgen.mcp.status().then(setStatus).catch(() => undefined);
+    // 화면을 열 때 다시 붙여 본다 — 런타임을 나중에 설치했는데 예전 실패
+    // 문구가 계속 남아 있으면 안 된다.
+    xgen.mcp.refresh().then(setStatus).catch(() => undefined);
     const offStatus = xgen.mcp.onStatus(setStatus);
     // 기동 중인 서버의 출력을 실시간으로 받아 '멈춘 게 아니다'를 보여준다.
     const offProgress = xgen.mcp.onTestProgress(({ name, lines }) => {
@@ -263,6 +266,8 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     else if (typeof editing === 'number') next[editing] = c;
     await persist(next);
     setEditing(null);
+    // 저장하면 곧바로 붙여 결과(도구 수/오류)를 보여준다.
+    xgen.mcp.refresh().then(setStatus).catch(() => undefined);
   };
 
   /** 붙여넣은 표준 JSON 을 서버 목록에 병합 (같은 이름은 덮어쓰기). */
@@ -351,6 +356,9 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     setRowTest((m) => ({ ...m, [s.name]: { busy: true, startedAt: Date.now() } }));
     const r = await testConfig(s);
     setRowTest((m) => ({ ...m, [s.name]: r }));
+    // 테스트가 되면 실제 연결도 되어야 한다 — 브릿지에 다시 붙여 도구가
+    // 에이전트에게 실제로 광고되게 하고, 낡은 실패 문구를 지운다.
+    if (r.ok) xgen.mcp.refresh().then(setStatus).catch(() => undefined);
   };
 
   return (

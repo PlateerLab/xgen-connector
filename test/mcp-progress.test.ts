@@ -7,6 +7,8 @@ import assert from 'assert'
 import { test } from 'node:test'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { getMcpManager, tailLines, throttle, waitWhileProgressing } from '../src/main/mcp-manager'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -103,5 +105,32 @@ test('여러 서버를 병렬로 붙인다 — 느린 하나가 나머지를 막
   // fixture 하나가 ~1.2초. 순차라면 3.6초 이상 걸린다.
   assert.ok(elapsed < 3000, `순차로 붙고 있다 (${elapsed}ms)`)
   assert.deepEqual(adverts.map((a) => a.name), ['slow1', 'slow2', 'slow3'], '설정 순서를 지켜야 한다')
+  await mgr.closeAll()
+})
+
+test('한 번 실패한 서버도 다시 붙으면 오류가 지워진다', async () => {
+  // 사용자 사례: uv 를 나중에 설치했는데 예전 실패 문구가 계속 떠 있었다.
+  const marker = join(mkdtempSync(join(tmpdir(), 'flaky-')), 'installed')
+  const mgr = getMcpManager()
+  mgr.configure([
+    {
+      name: 'flaky',
+      transport: 'stdio',
+      command: process.execPath,
+      args: [join(here, 'fixtures', 'flaky-mcp-server.mjs')],
+      env: { FLAKY_MARKER: marker },
+    },
+  ])
+
+  const first = await mgr.advertise()
+  assert.equal(first[0].connected, false)
+  assert.ok(first[0].error, '첫 시도는 실패해야 한다')
+
+  writeFileSync(marker, 'ok') // ← 사용자가 런타임을 설치한 시점
+
+  const second = await mgr.advertise()
+  assert.equal(second[0].connected, true, `재시도가 안 됐다: ${second[0].error}`)
+  assert.equal(second[0].error, undefined, '낡은 오류 문구가 남아 있다')
+  assert.equal(second[0].tools.length, 1)
   await mgr.closeAll()
 })

@@ -1369,6 +1369,12 @@ ipcMain.handle(CHANNELS.mcpTestServer, (e, cfg) =>
   }),
 );
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
+ipcMain.handle(CHANNELS.mcpRefresh, async () => {
+  // 설정 화면을 열 때/테스트 성공 후 다시 붙여 본다 — 런타임을 나중에 설치한
+  // 경우 예전 실패 문구가 계속 남아 있으면 안 된다.
+  await getMcpBridge().refreshCatalog();
+  return getMcpBridge().status();
+});
 
 // ── IPC: workspace 동기화 ────────────────────────────────────────
 ipcMain.handle(CHANNELS.syncList, () => ({

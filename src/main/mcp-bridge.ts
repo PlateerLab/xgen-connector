@@ -106,8 +106,16 @@ export class McpBridge {
     this.retry = this.hb = this.settle = this.grace = null;
   }
 
+  /**
+   * 서버들에 다시 붙어 카탈로그·상태를 갱신한다.
+   *
+   * 소켓이 열려 있지 않아도 재광고한다 — 한 번 실패한 서버의 오류 문구가
+   * 소켓 이벤트가 있을 때까지 화면에 그대로 남아 있던 문제(사용자가 uv 를
+   * 나중에 설치한 경우)를 여기서 끊는다. sendHello() 는 열려 있을 때만
+   * 실제로 전송하고, 상태는 항상 emit 한다.
+   */
   async refreshCatalog(): Promise<void> {
-    if (this.ws?.readyState === WebSocket.OPEN) await this.sendHello();
+    await this.sendHello();
   }
 
   private wsUrl(): string {

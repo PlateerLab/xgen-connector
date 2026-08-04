@@ -284,6 +284,8 @@ const api = {
       return () => ipcRenderer.removeListener(CHANNELS.mcpTestProgressEvent, h);
     },
     status: (): Promise<McpBridgeStatusLike> => ipcRenderer.invoke(CHANNELS.mcpStatus),
+    /** 서버들에 다시 붙어 상태를 갱신한다 (설정 화면 진입/테스트 성공 후). */
+    refresh: (): Promise<McpBridgeStatusLike> => ipcRenderer.invoke(CHANNELS.mcpRefresh),
     onStatus: (cb: (s: McpBridgeStatusLike) => void): (() => void) => {
       const h = (_e: unknown, s: McpBridgeStatusLike) => cb(s);
       ipcRenderer.on(CHANNELS.mcpStatusEvent, h);
