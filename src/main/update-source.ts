@@ -15,6 +15,11 @@ export interface XgenInstallerPackage {
   created_at?: string;
 }
 
+/** electron-updater의 NSIS 갱신 실행과 동일한 Windows 설치 인자다. */
+export function windowsNsisUpdateArgs(): string[] {
+  return ['--updated', '/S', '--force-run'];
+}
+
 /** 점으로 구분된 버전을 비교한다. a가 크면 양수, b가 크면 음수다. */
 export function compareVersions(a: string, b: string): number {
   const pa = a.replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);

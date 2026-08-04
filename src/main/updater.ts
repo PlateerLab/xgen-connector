@@ -18,6 +18,7 @@
  */
 import { app, dialog, shell, BrowserWindow, Notification, net } from 'electron';
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { finished } from 'node:stream/promises';
@@ -26,6 +27,7 @@ import electronUpdater, { type AppUpdater } from 'electron-updater';
 import {
   compareVersions,
   selectXgenUpdate,
+  windowsNsisUpdateArgs,
   type UpdateServer,
   type XgenInstallerPackage,
 } from './update-source';
@@ -331,14 +333,44 @@ async function installXgenPackage(pkg: XgenInstallerPackage): Promise<void> {
     notify(`업데이트 준비됨 (v${pkg.version})`);
     const result = await dialog.showMessageBox({
       type: 'info',
-      buttons: ['설치 시작', '나중에'],
+      buttons: [process.platform === 'win32' ? '지금 재시작' : '설치 시작', '나중에'],
       defaultId: 0,
       cancelId: 1,
       title: '업데이트 준비됨',
       message: `XGEN Connector ${pkg.version} 설치 파일을 확인했습니다.`,
-      detail: '설치 프로그램을 연 뒤 화면의 안내에 따라 업데이트를 완료해 주세요.',
+      detail:
+        process.platform === 'win32'
+          ? 'Connector를 종료하고 업데이트를 설치한 뒤 새 버전으로 다시 시작합니다.'
+          : '설치 프로그램을 연 뒤 화면의 안내에 따라 업데이트를 완료해 주세요.',
     });
     if (result.response === 0) {
+      if (process.platform === 'win32') {
+        await new Promise<void>((resolve, reject) => {
+          const installer = spawn(destination, windowsNsisUpdateArgs(), {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+          });
+          installer.once('spawn', () => {
+            installer.unref();
+            resolve();
+          });
+          installer.once('error', reject);
+        });
+        notify('Connector를 종료하고 업데이트를 설치합니다.');
+        appWillInstall();
+        app.quit();
+        // MCP·동기화 자식 프로세스가 종료를 늦춰 설치 파일 잠금이 남는 경우를
+        // 막는다. electron-updater의 GitHub 경로와 같은 안전 종료 방식이다.
+        setTimeout(() => {
+          try {
+            app.exit(0);
+          } catch {
+            /* 이미 종료됨 */
+          }
+        }, 3500);
+        return;
+      }
       const error = await shell.openPath(destination);
       if (error) throw new Error(error);
       notify('설치 프로그램을 열었습니다.');

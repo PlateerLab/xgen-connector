@@ -1,7 +1,11 @@
 // XGEN 다운로드 센터 업데이트 패키지 선택 규칙을 검증한다.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { compareVersions, selectXgenUpdate } from '../src/main/update-source';
+import {
+  compareVersions,
+  selectXgenUpdate,
+  windowsNsisUpdateArgs,
+} from '../src/main/update-source';
 
 test('버전 앞의 v와 점 구분 숫자를 비교한다', () => {
   assert.ok(compareVersions('v1.10.0', '1.9.9') > 0);
@@ -26,4 +30,8 @@ test('플랫폼 표기가 없어도 설치 파일 확장자로 판단하고 이�
   ];
   assert.equal(selectXgenUpdate(packages, 'linux', '1.5.3')?.id, 2);
   assert.equal(selectXgenUpdate(packages, 'linux', '1.6.0'), null);
+});
+
+test('Windows 설치는 실행 중 앱 오류를 피하는 NSIS silent update 인자를 사용한다', () => {
+  assert.deepEqual(windowsNsisUpdateArgs(), ['--updated', '/S', '--force-run']);
 });
