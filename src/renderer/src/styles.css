@@ -1674,6 +1674,10 @@ button {
   justify-content: center;
   width: 28px;
   height: 28px;
+  /* padding 을 명시적으로 0 으로 고정한다 — 전역 버튼 클래스(.danger 등)가
+     같이 걸리면 그쪽 padding 이 남아, box-sizing: border-box 하에서 28px
+     안쪽 내용 영역이 0 이 되고 아이콘이 축소돼 **사라진다** (실제 발생). */
+  padding: 0;
   border: none;
   background: transparent;
   border-radius: 8px;
@@ -1681,11 +1685,21 @@ button {
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
+/* 어떤 경우에도 아이콘이 눌려 사라지지 않게 */
+.ov-icon-btn > svg {
+  flex: none;
+}
 .ov-icon-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
-.ov-icon-btn.danger:hover {
+/* 오버레이 전용 위험 액션(미니 채팅 숨기기) — 전역 .danger 버튼 클래스를
+   재사용하면 그쪽 padding/border/font-weight 가 함께 걸려 아이콘 버튼이
+   깨진다. 여기서만 쓰는 modifier 로 분리한다. */
+.ov-icon-btn.ov-danger {
+  color: #e59aa0;
+}
+.ov-icon-btn.ov-danger:hover {
   background: rgba(224, 49, 49, 0.22);
   color: #ff6b6b;
 }

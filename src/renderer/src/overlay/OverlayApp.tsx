@@ -429,7 +429,7 @@ export function OverlayApp(): React.ReactElement {
           <button className="ov-icon-btn" onClick={() => setLocked(true)} title="잠금">
             <LockIcon open />
           </button>
-          <button className="ov-icon-btn danger" onClick={() => xgen.overlay.hide()} title="미니 채팅 숨기기">
+          <button className="ov-icon-btn ov-danger" onClick={() => xgen.overlay.hide()} title="미니 채팅 숨기기">
             <CloseIcon />
           </button>
         </div>
