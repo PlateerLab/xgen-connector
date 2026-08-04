@@ -165,3 +165,44 @@ test('ReplicaFs.scan throws on an unreadable subdirectory (posix)', async (ctx) 
     chmodSync(join(root, 'locked'), 0o755)
   }
 })
+
+test('대량삭제 경고 수치가 추적 항목 수를 넘지 않는다', async () => {
+  // "16개 파일(전체 10개 중)" — 중첩 디렉터리의 자식을 부모 액션과 자식 액션
+  // 에서 두 번 세던 버그. 밸브 판정은 보수적이라 안전했지만 사용자에게 말이
+  // 안 되는 숫자가 나갔다.
+  const root = mkdtempSync(join(tmpdir(), 'dl-count-'))
+  const fs = new ReplicaFs(root)
+  const files = ['a/b/c/f1.txt', 'a/b/c/f2.txt', 'a/b/f3.txt', 'a/f4.txt', 'top.txt']
+  const dirs = ['a', 'a/b', 'a/b/c']
+  for (const d of dirs) mkdirSync(join(root, d), { recursive: true })
+  for (const f of files) writeFileSync(join(root, f), 'x')
+
+  const entries: SyncIndex['entries'] = {}
+  for (const d of dirs) entries[d] = { lastSyncedSha: '', sha: '', size: 0, mtimeMs: 0, isDir: true }
+  for (const f of files) entries[f] = { lastSyncedSha: sha('x'), sha: sha('x'), size: 1, mtimeMs: 0, isDir: false }
+  const index: SyncIndex = { cursor: 1, entries }
+  const tracked = Object.keys(entries).length
+
+  // 서버가 전부 지웠다고 알린다 (중첩 디렉터리 툼스톤 포함).
+  const t = transport({
+    latest_seq: 2,
+    changes: [...dirs, ...files].map((path) => ({
+      path, is_dir: dirs.includes(path), size: 0, mtime_ns: 0, sha256: '', seq: 2, deleted: true,
+    })),
+  })
+
+  const seen: Array<{ count: number; total: number }> = []
+  await syncOnce(t, fs, index, {
+    ...OPTS,
+    confirmMassDelete: async (count: number, total: number) => {
+      seen.push({ count, total })
+      return false
+    },
+  }).catch(() => undefined)
+
+  assert.equal(seen.length, 1, '전량 삭제인데 밸브가 안 걸렸다')
+  const [{ count, total }] = seen
+  assert.ok(count <= total, `말이 안 되는 수치: ${count}개(전체 ${total}개 중)`)
+  assert.equal(total, tracked)
+  assert.equal(count, tracked, '전량 삭제면 영향 수 = 추적 수')
+})
