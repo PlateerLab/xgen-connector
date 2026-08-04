@@ -20,16 +20,17 @@ import { attachAgent, setMountProvider, mount, type WorkspaceConfig } from '../s
 const okProbe = () => ({ ok: true })
 const failProbe = () => ({ ok: false, hint: '준비물 없음' })
 
-test('macOS 는 미지원이며 사용자에게 보여줄 문구를 준다', () => {
+test('macOS 는 내장 WebDAV 클라이언트로 지원된다', () => {
+  // Apple Developer Program 도 커널 확장도 필요 없는 경로.
   const s = detectMountSupport('darwin', okProbe)
-  assert.equal(s.supported, false)
-  assert.equal(s.kind, 'unsupported')
-  assert.equal(s.reason, '현재 macOS는 파일시스템 기능을 제공하지 않습니다.')
+  assert.equal(s.supported, true)
+  assert.equal(s.kind, 'webdav')
 })
 
-test('macOS 는 준비물이 갖춰져 있어도 지원하지 않는다', () => {
-  // 프로브가 뭐라고 하든 darwin 은 막는다 — 판정이 프로브보다 앞선다.
-  assert.equal(detectMountSupport('darwin', () => ({ ok: true })).supported, false)
+test('구형 macOS 는 사유와 함께 막는다', () => {
+  const s = detectMountSupport('darwin', failProbe)
+  assert.equal(s.supported, false)
+  assert.equal(s.hint, '준비물 없음')
 })
 
 test('Linux 는 FUSE 가 있으면 지원', () => {
@@ -45,10 +46,10 @@ test('Linux 에서 FUSE 준비물이 없으면 사유와 해결 힌트를 준다
   assert.equal(s.hint, '준비물 없음')
 })
 
-test('Windows 는 cfapi 가 되면 지원', () => {
+test('Windows 는 내장 WebClient 로 지원된다', () => {
   const s = detectMountSupport('win32', okProbe)
   assert.equal(s.supported, true)
-  assert.equal(s.kind, 'cfapi')
+  assert.equal(s.kind, 'webdav')
 })
 
 test('구형 Windows 는 사유와 함께 막는다', () => {
@@ -64,7 +65,7 @@ test('모르는 플랫폼도 조용히 실패하지 않고 사유를 말한다',
 })
 
 test('미지원 제공자는 폴더를 하나도 만들지 않는다', () => {
-  const support = detectMountSupport('darwin', okProbe)
+  const support = detectMountSupport('freebsd' as NodeJS.Platform, okProbe)
   const provider = providerFor(support)
   assert.ok(provider instanceof UnsupportedMount)
 
@@ -77,7 +78,7 @@ test('미지원 제공자는 폴더를 하나도 만들지 않는다', () => {
       () => {
         cfg = attachAgent(cfg, { id: 'p1', workflowId: 'wf-1', label: 'A' }, home)
       },
-      /macOS는 파일시스템 기능을 제공하지 않습니다/,
+      /파일시스템 기능을 제공하지 않습니다/,
       '미지원 플랫폼에서 에이전트 추가가 통과했다',
     )
     assert.ok(!existsSync(join(home, 'XGEN-Workspace')), '미지원인데 루트를 만들었다')

@@ -20,7 +20,7 @@
 import type { MountProvider } from './workspace'
 import { PlainDirMount } from './workspace'
 
-export type MountKind = 'fuse' | 'cfapi' | 'unsupported' | 'plain'
+export type MountKind = 'fuse' | 'webdav' | 'unsupported' | 'plain'
 
 export interface MountSupport {
   /** 이 컴퓨터에서 워크스페이스 기능을 쓸 수 있는가. */
@@ -32,7 +32,7 @@ export interface MountSupport {
   hint?: string
 }
 
-const MACOS_REASON = '현재 macOS는 파일시스템 기능을 제공하지 않습니다.'
+const MACOS_MIN_MAJOR = 19 // Darwin 19 = macOS 10.15
 
 /**
  * 이 플랫폼에서 가상 드라이브가 가능한지 판정한다.
@@ -45,7 +45,17 @@ export function detectMountSupport(
   probe: (kind: MountKind) => { ok: boolean; hint?: string } = defaultProbe,
 ): MountSupport {
   if (platform === 'darwin') {
-    return { supported: false, kind: 'unsupported', reason: MACOS_REASON }
+    // WebDAV 는 macOS 내장 클라이언트(mount_webdav)로 붙는다 — Apple
+    // Developer Program 도 커널 확장도 필요 없다.
+    const p = probe('webdav')
+    return p.ok
+      ? { supported: true, kind: 'webdav' }
+      : {
+          supported: false,
+          kind: 'unsupported',
+          reason: '이 macOS 버전에서는 파일시스템 기능을 제공하지 않습니다.',
+          hint: p.hint ?? `macOS 10.15 이상이 필요합니다.`,
+        }
   }
   if (platform === 'linux') {
     const p = probe('fuse')
@@ -59,14 +69,15 @@ export function detectMountSupport(
         }
   }
   if (platform === 'win32') {
-    const p = probe('cfapi')
+    // 내장 WebClient 로 붙는다 (net use). 별도 설치물이 없다.
+    const p = probe('webdav')
     return p.ok
-      ? { supported: true, kind: 'cfapi' }
+      ? { supported: true, kind: 'webdav' }
       : {
           supported: false,
           kind: 'unsupported',
-          reason: '이 Windows 버전에서는 가상 드라이브를 만들 수 없습니다.',
-          hint: p.hint ?? 'Windows 10 버전 1709 이상이 필요합니다.',
+          reason: '이 Windows 에서는 파일시스템 기능을 제공하지 않습니다.',
+          hint: p.hint ?? 'WebClient 서비스가 필요합니다 (Windows 기능 "WebDAV 리디렉터").',
         }
   }
   return {
@@ -118,12 +129,17 @@ function defaultProbe(kind: MountKind): { ok: boolean; hint?: string } {
     }
     return { ok: true }
   }
-  if (kind === 'cfapi') {
-    // Cloud Filter API 는 Windows 10 1709(빌드 16299) 부터.
-    const build = Number(/\d+\.\d+\.(\d+)/.exec(require('os').release())?.[1] ?? 0)
-    return build >= 16299
-      ? { ok: true }
-      : { ok: false, hint: 'Windows 10 버전 1709(빌드 16299) 이상이 필요합니다.' }
+  if (kind === 'webdav') {
+    // Windows WebClient / macOS webdavfs 는 지원 버전이면 항상 있다.
+    // 실제 마운트 가능 여부는 마운트 시점에 드러나므로 여기서는 OS 버전만 본다.
+    const os = require('os') as typeof import('os')
+    if (process.platform === 'darwin') {
+      const major = Number(os.release().split('.')[0] || 0)
+      return major >= MACOS_MIN_MAJOR
+        ? { ok: true }
+        : { ok: false, hint: 'macOS 10.15(카탈리나) 이상이 필요합니다.' }
+    }
+    return { ok: true }
   }
   return { ok: false }
 }
