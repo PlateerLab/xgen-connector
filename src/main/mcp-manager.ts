@@ -44,6 +44,8 @@ export interface AdvertisedTool {
 
 interface ServerState {
   config: McpServerConfig;
+  /** 기동 중 진행 상황을 흘려보낼 곳 (테스트 화면 전용). */
+  onProgress?: (lines: string[]) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any | null;
   tools: McpToolSchema[];
@@ -83,15 +85,57 @@ export class McpStartError extends Error {
   }
 }
 
-/** transport.stderr 를 상한선(기본 64KB)까지만 모아 두고 꼬리를 돌려준다. */
-function collectStderr(transport: { stderr?: NodeJS.ReadableStream | null }, cap = 64 * 1024): () => string {
+/** stderr 수집기 — 꼬리 문자열 + 마지막 출력 시각(살아있음의 증거). */
+interface StderrTap {
+  text: () => string;
+  /** 마지막으로 뭔가 출력한 시각 (Date.now). 출력이 없으면 생성 시각. */
+  lastAt: () => number;
+}
+
+/**
+ * transport.stderr 를 상한선(기본 64KB)까지만 모아 둔다.
+ *
+ * 꼬리 문자열뿐 아니라 **마지막 출력 시각**도 남긴다. 첫 실행 때 uvx/npx 는
+ * 인터프리터·의존성을 수십 MB 내려받느라 오래 걸리는데, 그동안 진행 상황을
+ * stderr 로 계속 뱉는다 — 이 시각이 "멈춘 게 아니라 일하는 중"의 증거다.
+ */
+function collectStderr(
+  transport: { stderr?: NodeJS.ReadableStream | null },
+  onData?: (tail: string[]) => void,
+  cap = 64 * 1024,
+): StderrTap {
   let buf = '';
+  let last = Date.now();
   const stream = transport.stderr;
   stream?.on?.('data', (chunk: Buffer | string) => {
     buf += String(chunk);
     if (buf.length > cap) buf = buf.slice(-cap); // 무한 로그 서버 방어
+    last = Date.now();
+    onData?.(tailLines(buf));
   });
-  return () => buf;
+  return { text: () => buf, lastAt: () => last };
+}
+
+/** 진행 상황을 최대 `everyMs` 간격으로만 흘려보낸다 (다운로드 로그는 빠르다). */
+export function throttle<T>(fn: (v: T) => void, everyMs: number): (v: T) => void {
+  let at = 0;
+  let pending: ReturnType<typeof setTimeout> | null = null;
+  let latest: T;
+  return (v: T) => {
+    latest = v;
+    const now = Date.now();
+    if (now - at >= everyMs) {
+      at = now;
+      fn(latest);
+      return;
+    }
+    if (pending) return;
+    pending = setTimeout(() => {
+      pending = null;
+      at = Date.now();
+      fn(latest);
+    }, everyMs - (now - at));
+  };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,6 +164,53 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   }
 }
 
+/** 진행이 멈춘 것으로 볼 무출력 시간, 그리고 그래도 넘지 않을 상한. */
+export const IDLE_TIMEOUT_MS = 90_000;
+export const MAX_START_MS = 15 * 60_000;
+
+/**
+ * *일하는 중이면 기다리고, 멈췄으면 끊는다.*
+ *
+ * 고정 20초로는 첫 실행이 절대 성공할 수 없었다 — `uvx mcp-atlassian` 은
+ * CPython(24MB)과 lxml·cryptography 등을 처음 한 번 내려받는다. 그렇다고
+ * 상수만 키우면 진짜 멈춘 서버를 몇 분씩 붙들게 된다.
+ *
+ * 그래서 **마지막 출력 시각**을 기준으로 판단한다: 뭔가 찍히고 있으면 계속
+ * 기다리고(상한 `maxMs`), `idleMs` 동안 아무 출력이 없으면 멈춘 것으로 본다.
+ */
+export async function waitWhileProgressing<T>(
+  p: Promise<T>,
+  lastAt: () => number,
+  label: string,
+  idleMs = IDLE_TIMEOUT_MS,
+  maxMs = MAX_START_MS,
+): Promise<T> {
+  const started = Date.now();
+  let timer: ReturnType<typeof setTimeout>;
+  const guard = new Promise<never>((_, rej) => {
+    const tick = () => {
+      const idle = Date.now() - lastAt();
+      const total = Date.now() - started;
+      if (total >= maxMs) {
+        return rej(new Error(`${label}: ${Math.round(maxMs / 60000)}분을 넘겨 중단했습니다`));
+      }
+      if (idle >= idleMs) {
+        return rej(
+          new Error(`${label}: ${Math.round(idleMs / 1000)}초 동안 아무 응답이 없어 중단했습니다`),
+        );
+      }
+      // 남은 유휴 시간만큼만 자고 다시 확인한다 (출력이 오면 그만큼 밀린다).
+      timer = setTimeout(tick, Math.max(250, Math.min(idleMs - idle, maxMs - total)));
+    };
+    timer = setTimeout(tick, Math.min(idleMs, maxMs));
+  });
+  try {
+    return await Promise.race([p, guard]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 export class MCPManager {
   private states = new Map<string, ServerState>();
 
@@ -144,12 +235,14 @@ export class MCPManager {
     const st = this.states.get(name);
     if (!st) throw new Error(`unknown MCP server: ${name}`);
     if (st.client) return;
+    // 오류 문구에 내부 임시 이름(__test__…)이 새어 나가면 안 된다.
+    const label = name.replace(/^__test__/, '');
     if (st.connecting) return st.connecting;
     st.connecting = (async () => {
       const { Client, StdioClientTransport, StreamableHTTPClientTransport } = await loadSdk();
       const cfg = st.config;
       let transport;
-      let readStderr: (() => string) | null = null;
+      let tap: StderrTap | null = null;
       if (cfg.transport === 'stdio') {
         if (!cfg.command) throw new Error('stdio server has no command');
         // args 가 있으면(표준 JSON 가져오기) command 는 실행 파일 그 자체다 —
@@ -182,7 +275,10 @@ export class MCPManager {
           // Electron 콘솔로 흘려보내 사용자에게 안 보인다).
           stderr: 'pipe',
         });
-        readStderr = collectStderr(transport as { stderr?: NodeJS.ReadableStream | null });
+        // 첫 실행은 인터프리터·의존성 내려받기로 오래 걸린다 — 진행 상황을
+        // 화면으로 흘려보내야 사용자가 '멈췄나?' 하지 않는다.
+        const notify = st.onProgress ? throttle(st.onProgress, 300) : undefined;
+        tap = collectStderr(transport as { stderr?: NodeJS.ReadableStream | null }, notify);
       } else {
         if (!cfg.url) throw new Error('http server has no url');
         transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
@@ -193,12 +289,17 @@ export class MCPManager {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let listed: any;
       try {
-        await withTimeout(client.connect(transport), 20000, `connect ${name}`);
-        listed = await withTimeout(client.listTools(), 15000, `listTools ${name}`);
+        if (tap) {
+          // stdio: 출력이 계속 나오면 계속 기다린다 (첫 실행 다운로드).
+          await waitWhileProgressing(client.connect(transport), tap.lastAt, `${label} 연결`);
+        } else {
+          await withTimeout(client.connect(transport), 20000, `${label} 연결`);
+        }
+        listed = await withTimeout(client.listTools(), 30000, `${label} 도구 목록`);
       } catch (e) {
         // 'Connection closed' 만으로는 고칠 수 없다 — 서버가 stderr 에 남긴
         // 진짜 원인을 함께 올린다.
-        const tail = readStderr ? tailLines(readStderr()) : [];
+        const tail = tap ? tailLines(tap.text()) : [];
         if (tail.length) {
           throw new McpStartError(
             `${(e as Error).message} — 서버가 기동하지 못했습니다. 아래 출력을 확인하세요.`,
@@ -239,19 +340,25 @@ export class MCPManager {
     }
   }
 
-  /** Connect every enabled server + return their tool catalogs. */
+  /**
+   * Connect every enabled server + return their tool catalogs.
+   *
+   * **병렬로** 붙는다. 순차로 붙이면 첫 실행이라 의존성을 내려받는 서버 하나가
+   * 나머지 전부를 막는다 (기동 대기가 진행 상황 기반이라 몇 분까지 갈 수 있다).
+   * 결과 순서는 설정 순서를 유지한다.
+   */
   async advertise(): Promise<McpServerAdvert[]> {
-    const out: McpServerAdvert[] = [];
-    for (const [name, st] of this.states) {
-      if (st.config.enabled === false) continue;
-      try {
-        await this.connect(name);
-        out.push({ name, connected: true, tools: st.tools });
-      } catch (e) {
-        out.push({ name, connected: false, error: String((e as Error).message), tools: [] });
-      }
-    }
-    return out;
+    const targets = [...this.states].filter(([, st]) => st.config.enabled !== false);
+    return Promise.all(
+      targets.map(async ([name, st]): Promise<McpServerAdvert> => {
+        try {
+          await this.connect(name);
+          return { name, connected: true, tools: st.tools };
+        } catch (e) {
+          return { name, connected: false, error: String((e as Error).message), tools: [] };
+        }
+      }),
+    );
   }
 
   /** Flat catalog for the bridge `hello` frame (only connected servers' tools). */
@@ -289,9 +396,10 @@ export class MCPManager {
   /** One-shot connect → list → disconnect, for the settings "테스트" button. */
   async test(
     config: McpServerConfig,
+    onProgress?: (lines: string[]) => void,
   ): Promise<{ ok: boolean; tools?: McpToolSchema[]; error?: string; hints?: string[] }> {
     const tmp = `__test__${config.name || 'srv'}`;
-    this.states.set(tmp, { config: { ...config, name: tmp }, client: null, tools: [] });
+    this.states.set(tmp, { config: { ...config, name: tmp }, client: null, tools: [], onProgress });
     try {
       await this.connect(tmp);
       const tools = this.states.get(tmp)?.tools || [];

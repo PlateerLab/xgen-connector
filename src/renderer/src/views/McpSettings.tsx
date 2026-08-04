@@ -37,13 +37,78 @@ const JSON_PLACEHOLDER = `{
 }`;
 
 /** 연결 테스트 결과 — 목록 행과 편집 폼이 **같은 컴포넌트**를 재사용한다. */
-export type TestState = { busy?: boolean; ok?: boolean; msg?: string; hints?: string[] };
+export type TestState = {
+  busy?: boolean;
+  ok?: boolean;
+  msg?: string;
+  hints?: string[];
+  /** 기동 중인 서버가 뱉는 출력 (첫 실행 다운로드 진행 상황 등). */
+  progress?: string[];
+  /** 테스트 시작 시각 — 오래 걸릴 때 경과를 보여준다. */
+  startedAt?: number;
+};
+
+/** '설치: <명령>' 힌트는 그대로 붙여넣을 수 있어야 쓸모가 있다. */
+const INSTALL_PREFIX = '설치: ';
+
+const HintLine: React.FC<{ text: string }> = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+  if (!text.startsWith(INSTALL_PREFIX)) return <li>{text}</li>;
+  const cmd = text.slice(INSTALL_PREFIX.length);
+  return (
+    <li className="mcp-hint-cmd">
+      <span>{text}</span>
+      <button
+        className="link"
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(cmd)
+            .then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            })
+            .catch(() => undefined);
+        }}
+      >
+        {copied ? '복사됨' : '복사'}
+      </button>
+    </li>
+  );
+};
+
+/** 초 단위 경과 — 몇 분짜리 첫 설치에서 '멈춘 건 아니다'를 알려준다. */
+function useElapsed(since?: number): number {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!since) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [since]);
+  return since ? Math.floor((Date.now() - since) / 1000) : 0;
+}
 
 const TestResult: React.FC<{ state: TestState }> = ({ state }) => {
+  const elapsed = useElapsed(state.busy ? state.startedAt : undefined);
   if (state.busy) {
     return (
       <div className="small muted mcp-test-result" role="status">
-        테스트 중…
+        <div>
+          테스트 중…{elapsed >= 3 ? ` (${elapsed}초)` : ''}
+          {elapsed >= 15 && (
+            <span className="mcp-hint-note">
+              {' '}
+              첫 실행이면 실행기가 런타임·의존성을 내려받는 중일 수 있습니다. 끝날 때까지 기다려
+              주세요.
+            </span>
+          )}
+        </div>
+        {!!state.progress?.length && (
+          <ul className="mcp-hints">
+            {state.progress.map((l, i) => (
+              <li key={i}>{l}</li>
+            ))}
+          </ul>
+        )}
       </div>
     );
   }
@@ -54,7 +119,7 @@ const TestResult: React.FC<{ state: TestState }> = ({ state }) => {
       {!!state.hints?.length && (
         <ul className="mcp-hints">
           {state.hints.map((h, i) => (
-            <li key={i}>{h}</li>
+            <HintLine key={i} text={h} />
           ))}
         </ul>
       )}
@@ -161,7 +226,16 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     xgen.mcp.getEnabled().then(setEnabled).catch(() => undefined);
     xgen.mcp.listServers().then(setServers).catch(() => undefined);
     xgen.mcp.status().then(setStatus).catch(() => undefined);
-    return xgen.mcp.onStatus(setStatus);
+    const offStatus = xgen.mcp.onStatus(setStatus);
+    // 기동 중인 서버의 출력을 실시간으로 받아 '멈춘 게 아니다'를 보여준다.
+    const offProgress = xgen.mcp.onTestProgress(({ name, lines }) => {
+      setRowTest((m) => (name && m[name]?.busy ? { ...m, [name]: { ...m[name], progress: lines } } : m));
+      setTest((t) => (t?.busy ? { ...t, progress: lines } : t));
+    });
+    return () => {
+      offStatus();
+      offProgress();
+    };
   }, []);
 
   const toolCount = useMemo(
@@ -268,13 +342,13 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   /** 편집 폼의 테스트 — 저장하지 않은 초안 그대로 시험한다. */
   const runTest = async () => {
-    setTest({ busy: true });
+    setTest({ busy: true, startedAt: Date.now() });
     setTest(await testConfig(configFromDraft(draft)));
   };
 
   /** 목록 행의 테스트 — 저장된 설정 그대로 시험한다. */
   const runRowTest = async (s: McpServerConfig) => {
-    setRowTest((m) => ({ ...m, [s.name]: { busy: true } }));
+    setRowTest((m) => ({ ...m, [s.name]: { busy: true, startedAt: Date.now() } }));
     const r = await testConfig(s);
     setRowTest((m) => ({ ...m, [s.name]: r }));
   };

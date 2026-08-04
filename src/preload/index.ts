@@ -277,6 +277,12 @@ const api = {
       /** 런타임 미설치 등 해결 가능한 실패일 때의 조치 안내. */
       hints?: string[];
     }> => ipcRenderer.invoke(CHANNELS.mcpTestServer, cfg),
+    /** 테스트 중인 서버가 뱉는 출력 (첫 실행 다운로드 진행 상황 등). */
+    onTestProgress: (cb: (p: { name?: string; lines: string[] }) => void): (() => void) => {
+      const h = (_e: unknown, p: { name?: string; lines: string[] }) => cb(p);
+      ipcRenderer.on(CHANNELS.mcpTestProgressEvent, h);
+      return () => ipcRenderer.removeListener(CHANNELS.mcpTestProgressEvent, h);
+    },
     status: (): Promise<McpBridgeStatusLike> => ipcRenderer.invoke(CHANNELS.mcpStatus),
     onStatus: (cb: (s: McpBridgeStatusLike) => void): (() => void) => {
       const h = (_e: unknown, s: McpBridgeStatusLike) => cb(s);

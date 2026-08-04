@@ -1361,7 +1361,13 @@ ipcMain.handle(CHANNELS.mcpSaveServers, (_e, servers) => {
   broadcastConfig(next);
   return next.mcpServers ?? [];
 });
-ipcMain.handle(CHANNELS.mcpTestServer, (_e, cfg) => getMcpManager().test(cfg));
+ipcMain.handle(CHANNELS.mcpTestServer, (e, cfg) =>
+  // 첫 실행은 인터프리터·의존성 내려받기로 몇 분이 걸릴 수 있다 — 그동안의
+  // 서버 출력을 요청한 창으로 그대로 흘려보낸다.
+  getMcpManager().test(cfg, (lines) => {
+    if (!e.sender.isDestroyed()) e.sender.send(CHANNELS.mcpTestProgressEvent, { name: cfg?.name, lines });
+  }),
+);
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
 
 // ── IPC: workspace 동기화 ────────────────────────────────────────

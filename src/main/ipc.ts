@@ -83,6 +83,7 @@ export const CHANNELS = {
   mcpListServers: 'mcp:listServers',
   mcpSaveServers: 'mcp:saveServers',
   mcpTestServer: 'mcp:testServer',
+  mcpTestProgressEvent: 'mcp:testProgress',
   mcpStatus: 'mcp:status',
   mcpStatusEvent: 'mcp:statusEvent',
 
