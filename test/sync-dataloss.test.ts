@@ -123,11 +123,16 @@ test('directory deletion counts affected files, not one action', async () => {
 })
 
 test('partial scan failure aborts the round instead of deleting', async () => {
+  // chmod 로 EACCES 를 만드는 방식은 Windows 에서 통하지 않는다 (관리자/ACL
+  // 의미가 달라 readdir 이 그대로 성공). 대신 LocalFs 계약 수준에서 검증한다:
+  // 스캔이 던지면 엔진은 라운드를 중단해야 하고, 절대 삭제로 해석하면 안 된다.
   const root = mkdtempSync(join(tmpdir(), 'dl4-'))
-  const fs = new ReplicaFs(root)
+  const real = new ReplicaFs(root)
   writeFileSync(join(root, 'top.txt'), 't')
-  mkdirSync(join(root, 'locked'))
-  writeFileSync(join(root, 'locked', 'inner.txt'), 'i')
+  const failing = Object.create(real) as ReplicaFs
+  ;(failing as unknown as { scan: () => Promise<never> }).scan = async () => {
+    throw new Error('scan failed at locked: EACCES')
+  }
   const index: SyncIndex = {
     cursor: 9,
     entries: {
@@ -136,15 +141,26 @@ test('partial scan failure aborts the round instead of deleting', async () => {
       'locked/inner.txt': { lastSyncedSha: sha('i'), sha: sha('i'), size: 1, mtimeMs: 0, isDir: false },
     },
   }
-  chmodSync(join(root, 'locked'), 0o000) // readdir → EACCES
   const t = transport({ latest_seq: 9, changes: [] })
+  await assert.rejects(
+    () => syncOnce(t, failing, index, OPTS),
+    /scan failed/,
+    '부분 스캔 실패가 조용히 삭제로 이어졌다',
+  )
+  assert.deepEqual(t.calls, [], '스캔 실패 라운드에서 원격 삭제가 실행됐다')
+})
+
+test('ReplicaFs.scan throws on an unreadable subdirectory (posix)', async (ctx) => {
+  // 실제 구현 검증 — POSIX 에서만 의미 있는 권한 실험.
+  if (process.platform === 'win32') return ctx.skip('windows: chmod semantics differ')
+  const root = mkdtempSync(join(tmpdir(), 'dl4b-'))
+  const fs = new ReplicaFs(root)
+  writeFileSync(join(root, 'top.txt'), 't')
+  mkdirSync(join(root, 'locked'))
+  writeFileSync(join(root, 'locked', 'inner.txt'), 'i')
+  chmodSync(join(root, 'locked'), 0o000)
   try {
-    await assert.rejects(
-      () => syncOnce(t, fs, index, OPTS),
-      /scan failed/,
-      '부분 스캔 실패가 조용히 삭제로 이어졌다',
-    )
-    assert.deepEqual(t.calls, [], '스캔 실패 라운드에서 원격 삭제가 실행됐다')
+    await assert.rejects(() => fs.scan(), /scan failed/)
   } finally {
     chmodSync(join(root, 'locked'), 0o755)
   }
