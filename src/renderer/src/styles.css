@@ -1339,7 +1339,9 @@ button {
 
 /* ─── Local MCP settings ─── */
 .mcp-modal {
-  width: 560px;
+  /* 설정 항목(명령·환경변수·JSON)이 길어 좁으면 읽기 어렵다 — 넓게. */
+  width: 860px;
+  max-width: 94vw;
 }
 .mcp-list {
   display: flex;

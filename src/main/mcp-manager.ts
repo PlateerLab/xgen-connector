@@ -10,6 +10,7 @@
  * it still boots — MCP just reports unavailable. Ported from geny-connector.
  */
 import type { McpServerConfig } from './config';
+import { augmentedPath, notFoundMessage, resolveExecutable } from './exec-resolve';
 
 export interface McpToolSchema {
   name: string;
@@ -111,10 +112,21 @@ export class MCPManager {
           ? [cfg.command.trim(), ...cfg.args]
           : tokenize(cfg.command);
         if (!command) throw new Error('empty command');
+        // GUI 로 실행된 앱은 로그인 셸 PATH 를 상속하지 않는다 → uvx/npx 를
+        // 못 찾아 'spawn uvx ENOENT'. PATH 를 보강하고 실행 파일을 **절대
+        // 경로로 해석**해 넘긴다 (Windows 는 .cmd/.exe 확장자까지).
+        const pathStr = await augmentedPath();
+        const resolved = resolveExecutable(command, pathStr);
+        if (!resolved) throw new Error(notFoundMessage(command, pathStr));
         transport = new StdioClientTransport({
-          command,
+          command: resolved,
           args,
-          env: { ...(process.env as Record<string, string>), ...(cfg.env || {}) },
+          env: {
+            ...(process.env as Record<string, string>),
+            PATH: pathStr,
+            Path: pathStr, // Windows 는 대소문자 혼용 키를 쓰는 경우가 있다
+            ...(cfg.env || {}),
+          },
         });
       } else {
         if (!cfg.url) throw new Error('http server has no url');

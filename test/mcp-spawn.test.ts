@@ -39,3 +39,31 @@ test('args 없이 한 줄 명령이면 따옴표 인식 분해로 동작한다 (
   assert.ok(desc.includes('/tmp/a b'), `한 줄 명령의 인용 인자 손실: ${desc}`)
   await mgr.closeAll()
 })
+
+test('PATH 에 없는 명령은 ENOENT 대신 안내 오류를 준다', async () => {
+  const mgr = getMcpManager()
+  const res = await mgr.test({
+    name: 'missing',
+    transport: 'stdio',
+    command: 'definitely-not-installed-xyz',
+  })
+  assert.equal(res.ok, false)
+  assert.ok(
+    /실행 파일을 찾을 수 없습니다/.test(res.error ?? ''),
+    `안내 오류가 아니라 raw 오류였다: ${res.error}`,
+  )
+  await mgr.closeAll()
+})
+
+test('PATH 없이 이름만으로도 사용자 설치 경로에서 해석된다', async () => {
+  // node 는 PATH 에 있으므로 절대경로 없이 이름만으로 기동되는지 확인
+  const mgr = getMcpManager()
+  const res = await mgr.test({
+    name: 'byname',
+    transport: 'stdio',
+    command: process.platform === 'win32' ? 'node.exe' : 'node',
+    args: [FIXTURE],
+  })
+  assert.ok(res.ok, `이름만으로 해석 실패: ${res.error ?? ''}`)
+  await mgr.closeAll()
+})
