@@ -26,6 +26,16 @@ type Draft = {
   enabled: boolean;
 };
 
+const JSON_PLACEHOLDER = `{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": { "JIRA_URL": "https://your-company.atlassian.net" }
+    }
+  }
+}`;
+
 const EMPTY_DRAFT: Draft = {
   name: '',
   transport: 'stdio',
@@ -311,26 +321,34 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             </div>
 
             {importOpen && (
-              <div className="mcp-form" style={{ marginTop: 8 }}>
+              <div className="mcp-form">
                 <label className="field">
                   <span>표준 MCP 설정 JSON</span>
-                  <span className="small muted">
-                    Claude Desktop·Cursor 등에서 쓰는 <code>mcpServers</code> 블록을 그대로 붙여넣으세요.
-                    같은 이름은 덮어씁니다.
-                  </span>
                   <textarea
-                    rows={8}
-                    className="mono"
+                    rows={10}
+                    className="mcp-textarea mcp-json"
                     value={importText}
                     onChange={(e) => setImportText(e.target.value)}
-                    placeholder={'{\n  "mcpServers": {\n    "mcp-atlassian": {\n      "command": "uvx",\n      "args": ["mcp-atlassian"],\n      "env": { "JIRA_URL": "https://your.atlassian.net" }\n    }\n  }\n}'}
+                    spellCheck={false}
+                    placeholder={JSON_PLACEHOLDER}
                   />
                 </label>
+                <div className="small muted" style={{ marginTop: -2 }}>
+                  Claude Desktop·Cursor 등에서 쓰는 <code>mcpServers</code> 블록을 그대로 붙여넣으세요.
+                  같은 이름은 덮어씁니다.
+                </div>
                 {importMsg && (
                   <div className={`small ${importMsg.ok ? 'notice-ok' : 'notice-warn'}`}>{importMsg.text}</div>
                 )}
-                <div className="mcp-form-actions">
-                  <button className="link" onClick={() => { setImportOpen(false); setImportText(''); setImportMsg(null); }}>
+                <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+                  <button
+                    className="link"
+                    onClick={() => {
+                      setImportOpen(false);
+                      setImportText('');
+                      setImportMsg(null);
+                    }}
+                  >
                     취소
                   </button>
                   <button className="primary" disabled={!importText.trim()} onClick={() => void importJson()}>

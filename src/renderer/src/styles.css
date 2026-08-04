@@ -2259,11 +2259,12 @@ button {
 .notice-ok {
   color: var(--success);
 }
-textarea.mono {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre;
-  overflow-wrap: normal;
-  overflow-x: auto;
+/* JSON 붙여넣기 — 줄바꿈을 유지하되 가로 스크롤 대신 접어서 보여준다
+   (좁은 모달에서 가로 스크롤바가 뜨면 읽기가 더 나빠진다). */
+.mcp-textarea.mcp-json {
+  min-height: 190px;
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
