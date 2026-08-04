@@ -8,6 +8,7 @@
 import { app } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DEPLOYMENT_DEFAULTS } from './deployment-defaults';
 
 /** A local MCP server the connector hosts + proxies to the user's XGEN agents. */
 export interface McpServerConfig {
@@ -132,6 +133,7 @@ const DEFAULTS: ConnectorConfig = {
   autoUpdate: true,
   updateServer: 'github',
   autoLaunch: false,
+  ...DEPLOYMENT_DEFAULTS,
 };
 
 function configPath(): string {
@@ -145,7 +147,7 @@ export function loadConfig(): ConnectorConfig {
     const raw = JSON.parse(readFileSync(configPath(), 'utf-8'));
     return { ...DEFAULTS, ...raw };
   } catch {
-    return { ...DEFAULTS, serverUrl: process.env.XGEN_SERVER_URL || '' };
+    return { ...DEFAULTS, serverUrl: process.env.XGEN_SERVER_URL || DEFAULTS.serverUrl };
   }
 }
 

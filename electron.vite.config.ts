@@ -2,8 +2,19 @@ import { resolve } from 'path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 
+const deploymentDefaultDefines = Object.fromEntries(
+  [
+    'XGEN_DEFAULT_SERVER_URL',
+    'XGEN_DEFAULT_ALLOW_PRIVATE_CERTIFICATE',
+    'XGEN_DEFAULT_SSO_ENABLED',
+    'XGEN_DEFAULT_SSO_PATH',
+    'XGEN_DEFAULT_UPDATE_SERVER',
+  ].map((name) => [`process.env.${name}`, JSON.stringify(process.env[name] ?? '')]),
+);
+
 export default defineConfig({
   main: {
+    define: deploymentDefaultDefines,
     plugins: [externalizeDepsPlugin()],
     // keytar (native), ws + the MCP SDK (spawns stdio children / ESM) must stay
     // external so they resolve from node_modules at runtime.
