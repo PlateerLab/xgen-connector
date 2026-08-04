@@ -914,10 +914,36 @@ button {
   background: var(--error-bg);
 }
 
-.tools {
+/* 도구 활동 — 한 번에 하나만. 슬롯 높이를 고정해 교체 시 말풍선이 튀지 않는다. */
+.tool-activity {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  align-items: center;
+  min-height: 22px;
+}
+.tool-chip.entering {
+  animation: tool-in 150ms ease-out both;
+}
+.tool-chip.leaving {
+  animation: tool-out 150ms ease-in both;
+}
+@keyframes tool-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes tool-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-chip.entering,
+  .tool-chip.leaving {
+    animation-duration: 1ms;
+  }
+}
+.tool-chip .tstep {
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
 }
 .tool-chip {
   display: inline-flex;

@@ -11,6 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import type { Agent, ChatEvent, ToolEvent, Citation, VoiceConfig } from '../../../core/index';
+import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
 import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon, PanelLeftIcon, MicIcon, SpeakerIcon, SpeakerOffIcon } from '../brand/icons';
@@ -32,6 +33,75 @@ interface Msg {
   streaming?: boolean;
   error?: boolean;
 }
+
+/** 도구 활동 표시 — **한 번에 하나**만 보여주고 다음 것으로 스르륵 교체된다.
+ *
+ * 이전에는 한 턴에서 쓴 도구 칩이 전부 쌓여 화면을 덮었다(스크린샷 30개+).
+ * 지금은 "지금 쓰는 도구" 한 칸만 유지한다:
+ *   · 같은 도구의 연속 이벤트(tool_call→tool_start→tool_result)는 **제자리**
+ *     에서 아이콘만 바뀐다 (불필요한 깜빡임 없음)
+ *   · 다른 도구로 넘어갈 때만 페이드 아웃 → 인
+ *   · 여러 도구가 몰아치면 중간을 건너뛰고 최신으로 점프한다 (슥 지나감)
+ *   · 턴이 끝나면 사라진다 (완료된 답변 위에 낡은 칩을 남기지 않는다)
+ */
+const TOOL_STEP_MS = 260; // 한 도구가 최소로 머무는 시간
+const TOOL_FADE_MS = 150; // 교체 페이드 길이
+
+const ToolActivity: React.FC<{ events: ToolEvent[]; streaming: boolean }> = ({ events, streaming }) => {
+  // 연속 동일 도구 이벤트를 한 단계로 접는다 (마지막 상태만 유지).
+  const steps = useMemo(() => collapseToolSteps(events), [events]);
+
+  const [idx, setIdx] = useState(0);
+  const [shownIdx, setShownIdx] = useState(0);
+  const [leaving, setLeaving] = useState(false);
+  const [gone, setGone] = useState(false);
+
+  // 밀린 단계 전진 — 많이 밀렸으면 최신으로 점프.
+  useEffect(() => {
+    if (!steps.length) return;
+    if (idx > steps.length - 1) { setIdx(steps.length - 1); return; }
+    if (idx === steps.length - 1) return;
+    const t = setTimeout(() => setIdx((i) => nextToolIndex(i, steps.length)), TOOL_STEP_MS);
+    return () => clearTimeout(t);
+  }, [steps.length, idx]);
+
+  // 단계가 바뀌면 페이드 아웃 → 교체 → 페이드 인.
+  useEffect(() => {
+    if (idx === shownIdx) return;
+    setLeaving(true);
+    const t = setTimeout(() => {
+      setShownIdx(idx);
+      setLeaving(false);
+    }, TOOL_FADE_MS);
+    return () => clearTimeout(t);
+  }, [idx, shownIdx]);
+
+  // 턴 종료 → 스르륵 사라짐.
+  useEffect(() => {
+    if (streaming) { setGone(false); return; }
+    if (!steps.length) return;
+    setLeaving(true);
+    const t = setTimeout(() => setGone(true), TOOL_FADE_MS);
+    return () => clearTimeout(t);
+  }, [streaming, steps.length]);
+
+  const cur = steps[Math.min(shownIdx, steps.length - 1)];
+  if (!cur || gone) return null;
+  const icon = cur.eventType === 'tool_error' ? '⚠' : cur.eventType === 'tool_result' ? '✓' : '⚙';
+  return (
+    <div className="tool-activity">
+      <span
+        key={shownIdx}
+        className={`tool-chip ${cur.eventType ?? ''} ${leaving ? 'leaving' : 'entering'}`}
+        title={cur.toolName}
+      >
+        {icon}
+        <span className="tname">{cur.toolName ?? 'tool'}</span>
+        {steps.length > 1 && <span className="tstep">{shownIdx + 1}/{steps.length}</span>}
+      </span>
+    </div>
+  );
+};
 
 /** TTS 용 텍스트 정리 — 코드블록/마크다운 기호/링크를 걷어내 읽을 문장만 남긴다. */
 function cleanForSpeech(text: string): string {
@@ -564,14 +634,7 @@ export const Chat: React.FC<{
               )}
               <div className="msg-col">
                 {m.tools && m.tools.length > 0 && (
-                  <div className="tools">
-                    {m.tools.map((t, j) => (
-                      <span key={j} className={`tool-chip ${t.eventType ?? ''}`} title={t.toolName}>
-                        {t.eventType === 'tool_error' ? '⚠' : t.eventType === 'tool_result' ? '✓' : '⚙'}
-                        <span className="tname">{t.toolName ?? 'tool'}</span>
-                      </span>
-                    ))}
-                  </div>
+                  <ToolActivity events={m.tools} streaming={!!m.streaming} />
                 )}
                 <div className={`bubble ${m.role} ${m.error ? 'error' : ''}`}>
                   {m.text || (m.streaming ? <span className="cursor" /> : '')}
