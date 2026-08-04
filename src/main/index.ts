@@ -48,6 +48,15 @@ import {
   disposeUpdater,
 } from './updater';
 import { CHANNELS } from './ipc';
+// ⚠ 정적 import 여야 한다. 런타임 require('./x') 는 번들러가 해석하지 않아
+// 패키징본에서 'Cannot find module' 로 죽고, UI 는 조용히 아무 일도 하지
+// 않는다 (v1.7.0 에서 에이전트 추가가 먹통이던 원인).
+import {
+  initWorkspaceManager,
+  getWorkspaceManager,
+} from './workspace-manager';
+import { makeWorkspaceApi } from './workspace-api';
+import { attachAgent, detachAgent, moveRoot, rootOf } from './workspace';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
@@ -1015,6 +1024,7 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     // 구 서버의 workflow 를 가리키는 페어링은 새 서버에서 무의미 — 엔진을
     // 내리고 전부 일시정지로 전환한다 (재해머링·오연결 방지, 명시 재개 필요).
     getSyncManager()?.stopAll();
+    void getWorkspaceManager()?.reconcile();
     patch = {
       ...patch,
       syncPairs: (loadConfig().syncPairs ?? []).map((p) => ({
@@ -1238,6 +1248,8 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
 ipcMain.handle(CHANNELS.authLogout, async () => {
   getMcpBridge().stop();
   getSyncManager()?.stopAll(); // 토큰 없이 401 을 반복 해머링하지 않게 (재로그인 시 재가동)
+  // 가상 드라이브는 로그인 상태에서만 존재한다 — 로그아웃하면 걷어낸다.
+  void getWorkspaceManager()?.reconcile();
   if (client) await client.logout();
   await tokenStore.clear();
   // An explicit logout also disables auto-login (else next launch signs right back in).
@@ -1506,6 +1518,74 @@ ipcMain.handle(CHANNELS.mcpTestServer, (e, cfg) =>
   }),
 );
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
+
+// ── 워크스페이스(가상 드라이브) ─────────────────────────────────
+function wireWorkspaceManager(): void {
+  initWorkspaceManager({
+    config: () => loadConfig().workspace,
+    apiFor: (workflowId: string) =>
+      makeWorkspaceApi(
+        {
+          serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+          token: async () => (await tokenStore.getAccess()) ?? '',
+          deviceId: () => ensureDeviceId(),
+          tmpDir: app.getPath('userData'),
+        },
+        workflowId,
+      ),
+    loggedIn: () => !!client?.user,
+    onStatus: (s: unknown) => safeSend(mainWindow, CHANNELS.workspaceStatusEvent, s),
+  });
+  void getWorkspaceManager()?.reconcile();
+}
+
+/** 워크스페이스 설정 변경 → 저장 + 마운트 리컨사일. */
+async function saveWorkspace(next: unknown): Promise<unknown> {
+  const saved = saveConfig({ workspace: next as never });
+  await getWorkspaceManager()?.reconcile();
+  return saved.workspace;
+}
+
+ipcMain.handle(CHANNELS.workspaceStatus, () => {
+  return getWorkspaceManager()?.status() ?? { supported: false, mounted: false, agents: [] };
+});
+ipcMain.handle(CHANNELS.workspaceAttach, async (_e, agent: { workflowId: string; label: string }) => {
+  const cur = loadConfig().workspace ?? { agents: [] };
+  const next = attachAgent(cur, { ...agent, id: randomUUID() });
+  await saveWorkspace(next);
+  return getWorkspaceManager()?.status();
+});
+ipcMain.handle(CHANNELS.workspaceDetach, async (_e, workflowId: string) => {
+  const next = detachAgent(loadConfig().workspace ?? { agents: [] }, workflowId);
+  await saveWorkspace(next);
+  return getWorkspaceManager()?.status();
+});
+ipcMain.handle(CHANNELS.workspaceRoot, () => rootOf(loadConfig().workspace));
+ipcMain.handle(CHANNELS.workspaceSetRoot, async () => {
+  // 구글 드라이브가 드라이브 위치만 바꾸게 하는 것과 같다 — 폴더 하나를 고른다.
+  const win = mainWindow;
+  const r = win
+    ? await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
+    : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+  if (r.canceled || !r.filePaths[0]) return getWorkspaceManager()?.status();
+  // 고른 폴더 **안에** XGEN-Workspace 를 만든다 — 사용자가 문서 폴더를 골랐다고
+  // 그 폴더 자체를 워크스페이스로 삼으면 기존 파일과 섞인다.
+  const target = join(r.filePaths[0], 'XGEN-Workspace');
+  await getWorkspaceManager()?.stop();
+  const moved = moveRoot(loadConfig().workspace ?? { agents: [] }, target);
+  await saveWorkspace(moved.config);
+  return getWorkspaceManager()?.status();
+});
+ipcMain.handle(CHANNELS.workspaceOpen, () => {
+  const p = getWorkspaceManager()?.status()?.path;
+  if (p) void shell.openPath(p);
+  return { ok: !!p };
+});
+
+ipcMain.handle(CHANNELS.diagText, async () => {
+  const { diagText } = await import('./diag-log');
+  return diagText();
+});
 ipcMain.handle(CHANNELS.mcpRefresh, async () => {
   // 설정 화면을 열 때/테스트 성공 후 다시 붙여 본다 — 런타임을 나중에 설치한
   // 경우 예전 실패 문구가 계속 남아 있으면 안 된다.
@@ -1654,6 +1734,7 @@ if (!gotLock) {
     // Workspace 동기화 엔진 — 저장된 페어링을 즉시 가동한다 (토큰이 아직
     // 없으면 changes 가 401 로 실패하고 로그인/restore 후 재가동된다).
     wireSyncManager();
+    wireWorkspaceManager();
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
       createQuickChat();
@@ -1690,5 +1771,7 @@ if (!gotLock) {
     getMcpBridge().stop();
     void getMcpManager().closeAll();
     getSyncManager()?.stopAll(); // 인덱스 플러시 + 워처/WS 정리
+    // ⚠ 마운트를 남긴 채 죽으면 폴더가 스테일 상태로 먹통이 된다.
+    void getWorkspaceManager()?.stop();
   });
 }

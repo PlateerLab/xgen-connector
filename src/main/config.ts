@@ -31,6 +31,8 @@ export interface McpServerConfig {
 }
 
 export interface ConnectorConfig {
+  /** 가상 드라이브 워크스페이스 (커넥터 소유 루트 + 부착 에이전트). */
+  workspace?: WorkspacePersistConfig;
   /** Gateway origin, e.g. "https://xgen.example.com". Empty on first run. */
   serverUrl: string;
   /** 설정된 서버에서 사설 CA 신뢰 실패만 예외로 허용한다. 기본 false. */
@@ -105,6 +107,19 @@ export interface SyncPairPersistConfig {
   localPath: string;
   paused?: boolean;
   pausedReason?: string;
+}
+
+/** XGEN 워크스페이스(가상 드라이브) 영속 형태 — workspace.WorkspaceConfig 미러. */
+export interface WorkspacePersistConfig {
+  root?: string;
+  agents: Array<{
+    id: string;
+    workflowId: string;
+    label: string;
+    folder: string;
+    paused?: boolean;
+    pausedReason?: string;
+  }>;
 }
 
 const DEFAULTS: ConnectorConfig = {

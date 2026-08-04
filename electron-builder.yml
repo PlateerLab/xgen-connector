@@ -22,6 +22,8 @@ files:
 asarUnpack:
   - '**/*.node'
   - '**/node_modules/keytar/**'
+  # FUSE 바인딩(가상 드라이브, Linux) — .node 는 asar 안에서 dlopen 이 안 된다.
+  - '**/node_modules/@cocalc/**'
   # ws + the MCP SDK spawn stdio subprocesses / load from disk — unpack so they
   # resolve outside the asar at runtime.
   - '**/node_modules/ws/**'
@@ -62,6 +64,12 @@ deb:
     - libnss3
     - libsecret-1-0
     - libayatana-appindicator3-1 | libappindicator3-1
+    # XGEN 워크스페이스(가상 드라이브). 근거는 추측이 아니라 바이너리다:
+    #   ldd fuse.node → libfuse.so.2   (애드온이 libfuse2 를 동적 링크)
+    #   /usr/bin/fusermount → setuid root  (비루트 마운트에 필수)
+    # Ubuntu 24.04 에서 libfuse2 는 libfuse2t64 로 개명됐다 — 둘 다 받는다.
+    - libfuse2 | libfuse2t64
+    - fuse3 | fuse
 win:
   target:
     - nsis
@@ -72,6 +80,10 @@ nsis:
     - en_US
     - ko_KR
   unicode: true
+  # 설치 시 WebDAV 파일 크기 상한 해제 + WebClient 자동 시작 (관리자 단계).
+  # 기본 50MiB 상한에 걸리면 탐색기가 조용히 거부해 "파일이 안 열린다"로만
+  # 보인다 — 설치 때 한 번 올려 두는 것이 유일하게 깨끗한 지점이다.
+  include: build/installer.nsh
 mac:
   target:
     - dmg

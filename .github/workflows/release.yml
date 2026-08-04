@@ -53,8 +53,24 @@ jobs:
         with:
           node-version: 20
 
+      # FUSE 바인딩(가상 드라이브)은 libfuse2 헤더가 있어야 컴파일된다.
+      # 없으면 optionalDependency 라 조용히 빠지고, 배포본에서 워크스페이스
+      # 기능이 통째로 사라진다 — 리눅스 러너에서는 반드시 설치한다.
+      - name: Install FUSE build deps (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libfuse-dev fuse3 pkg-config
+
       - name: Install deps
         run: npm install --no-audit --no-fund
+
+      # optional 이라 실패해도 npm 은 통과한다 — 리눅스 배포본에 바인딩이
+      # 실제로 들어갔는지 여기서 못 박는다 (조용한 기능 증발 방지).
+      - name: Verify FUSE binding was built (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          node -e "require('@cocalc/fuse-native'); console.log('fuse binding OK')"
+          ldd node_modules/@cocalc/fuse-native/build/Release/fuse.node | grep -q libfuse.so.2 \
+            || { echo '::error::fuse.node 가 libfuse2 를 링크하지 않았다'; exit 1; }
 
       - name: Typecheck + tests
         run: npm run typecheck && npm test

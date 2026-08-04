@@ -475,15 +475,22 @@ export async function syncOnce(
   // 디렉터리 삭제는 그 아래의 추적 항목 전부를 날린다 — 액션 1개가 아니라
   // **영향 파일 수**로 세야 밸브가 제 역할을 한다 (재귀 삭제 1건이 수백
   // 파일을 지우는데 액션 카운트로는 1이라 밸브를 통과했다).
-  const impact = (a: Action): number => {
-    if (a.kind !== 'deleteLocal' && a.kind !== 'deleteRemote') return 0
-    if (!('isDir' in a) || !a.isDir) return 1
-    const prefix = a.path + '/'
-    return 1 + Object.keys(index.entries).filter((k) => k.startsWith(prefix)).length
+  // 영향 경로를 **집합으로** 모은다. 액션별로 더하면 중첩 디렉터리의 자식이
+  // 부모 액션과 자식 액션에서 두 번 세어져, 추적 항목 수보다 큰 숫자가 나온다
+  // ("16개 파일(전체 10개 중)이 삭제되려 합니다" — 사용자 신고).
+  const impacted = (kind: 'deleteLocal' | 'deleteRemote'): number => {
+    const hit = new Set<string>()
+    for (const a of plan) {
+      if (a.kind !== kind) continue
+      hit.add(a.path)
+      if ('isDir' in a && a.isDir) {
+        const prefix = a.path + '/'
+        for (const k of Object.keys(index.entries)) if (k.startsWith(prefix)) hit.add(k)
+      }
+    }
+    return hit.size
   }
-  const localDeletions = plan.filter((a) => a.kind === 'deleteLocal').reduce((n, a) => n + impact(a), 0)
-  const remoteDeletions = plan.filter((a) => a.kind === 'deleteRemote').reduce((n, a) => n + impact(a), 0)
-  const deletions = Math.max(localDeletions, remoteDeletions)
+  const deletions = Math.max(impacted('deleteLocal'), impacted('deleteRemote'))
   const tracked = Object.keys(index.entries).length
   // 임계값: 큰 트리는 절대수(MASS_DELETE_MIN)·비율(30%) 중 큰 쪽,
   // **작은 트리는 비율(50%) 기준**으로 내려간다. 과거 공식은 작은 트리에서
