@@ -98,12 +98,24 @@ export const App: React.FC = () => {
     );
   }
   if (stage === 'server' || !config?.serverUrl) {
-    return <ServerSetup initialUrl={config?.serverUrl ?? ''} onSaved={handleServerSaved} />;
+    return (
+      <ServerSetup
+        initialConfig={{
+          serverUrl: config?.serverUrl ?? '',
+          allowPrivateCertificate: config?.allowPrivateCertificate ?? false,
+          ssoEnabled: config?.ssoEnabled ?? false,
+          ssoPath: config?.ssoPath ?? '/sso/signin',
+          updateServer: config?.updateServer ?? 'github',
+        }}
+        onSaved={handleServerSaved}
+      />
+    );
   }
   if (stage === 'login') {
     return (
       <Login
         serverUrl={config.serverUrl}
+        ssoEnabled={config.ssoEnabled === true}
         onLoggedIn={handleLoggedIn}
         onChangeServer={() => setStage('server')}
       />

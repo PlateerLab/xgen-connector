@@ -14,8 +14,12 @@ export const Settings: React.FC<{
   onChanged: () => Promise<ConnectorConfig>;
 }> = ({ config, onClose, onChanged }) => {
   const [serverUrl, setServerUrl] = useState(config.serverUrl);
+  const [allowPrivateCertificate, setAllowPrivateCertificate] = useState(config.allowPrivateCertificate ?? false);
+  const [ssoEnabled, setSsoEnabled] = useState(config.ssoEnabled ?? false);
+  const [ssoPath, setSsoPath] = useState(config.ssoPath ?? '/sso/signin');
   const [theme, setTheme] = useState<Theme>(config.theme ?? 'system');
   const [autoUpdate, setAutoUpdate] = useState(config.autoUpdate ?? true);
+  const [updateServer, setUpdateServer] = useState<'github' | 'xgen'>(config.updateServer ?? 'github');
   const [overlay, setOverlay] = useState(config.avatarOverlay ?? false);
   const [subtitles, setSubtitles] = useState(config.subtitles !== false);
   const [charMs, setCharMs] = useState(config.subtitleCharMs ?? 50);
@@ -65,17 +69,32 @@ export const Settings: React.FC<{
   const saveServer = async () => {
     const next = serverUrl.trim().replace(/\/+$/, '');
     if (!next) return;
-    if (next === (config.serverUrl ?? '')) {
+    const nextSsoPath = ssoPath.trim() || '/sso/signin';
+    if (ssoEnabled && (!nextSsoPath.startsWith('/') || nextSsoPath.startsWith('//'))) return;
+    const serverChanged = next !== (config.serverUrl ?? '');
+    const optionsChanged =
+      allowPrivateCertificate !== (config.allowPrivateCertificate ?? false) ||
+      ssoEnabled !== (config.ssoEnabled ?? false) ||
+      nextSsoPath !== (config.ssoPath ?? '/sso/signin');
+    if (!serverChanged && !optionsChanged) {
       setConfirmServer(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
       return;
     }
-    if (!confirmServer) {
+    if (serverChanged && !confirmServer) {
       setConfirmServer(true);
       return;
     }
-    await apply({ serverUrl: next });
+    await apply({
+      serverUrl: next,
+      allowPrivateCertificate,
+      ssoEnabled,
+      ssoPath: nextSsoPath,
+    });
+    setConfirmServer(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
   };
 
   if (showMcp) return <McpSettings onClose={() => setShowMcp(false)} />;
@@ -118,6 +137,28 @@ export const Settings: React.FC<{
             </span>
           )}
         </label>
+
+        <label className="setup-option settings-option">
+          <input
+            type="checkbox"
+            checked={allowPrivateCertificate}
+            onChange={(e) => setAllowPrivateCertificate(e.target.checked)}
+          />
+          <span>
+            사설 인증서 허용
+            <small>설정한 서버의 사설 CA 신뢰 오류만 허용합니다.</small>
+          </span>
+        </label>
+        <label className="setup-option settings-option">
+          <input type="checkbox" checked={ssoEnabled} onChange={(e) => setSsoEnabled(e.target.checked)} />
+          <span>SSO 로그인 사용</span>
+        </label>
+        {ssoEnabled && (
+          <label className="field setup-nested-field settings-sso-path">
+            <span>SSO PATH</span>
+            <input value={ssoPath} onChange={(e) => setSsoPath(e.target.value)} placeholder="/sso/signin" />
+          </label>
+        )}
 
         <div className="field-row">
           <span>테마</span>
@@ -315,6 +356,31 @@ export const Settings: React.FC<{
           >
             {resetDone ? '완료' : '초기화'}
           </button>
+        </div>
+
+        <div className="field-row">
+          <span>
+            업데이트 서버
+            {updateServer === 'xgen' && (
+              <span className="small muted" style={{ marginLeft: 8 }}>
+                설정된 XGEN 서버의 다운로드 센터
+              </span>
+            )}
+          </span>
+          <div className="seg">
+            {(['github', 'xgen'] as const).map((source) => (
+              <button
+                key={source}
+                className={updateServer === source ? 'active' : ''}
+                onClick={() => {
+                  setUpdateServer(source);
+                  void apply({ updateServer: source });
+                }}
+              >
+                {source === 'github' ? 'GitHub' : 'XGEN'}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="field-row">

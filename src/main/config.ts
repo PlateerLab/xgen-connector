@@ -35,9 +35,17 @@ export interface ConnectorConfig {
   workspace?: WorkspacePersistConfig;
   /** Gateway origin, e.g. "https://xgen.example.com". Empty on first run. */
   serverUrl: string;
+  /** 설정된 서버에서 사설 CA 신뢰 실패만 예외로 허용한다. 기본 false. */
+  allowPrivateCertificate?: boolean;
+  /** 로그인 화면에서 SSO 팝업 로그인을 제공한다. 기본 false. */
+  ssoEnabled?: boolean;
+  /** 서버 origin 기준 SSO 진입 상대 경로. 예: "/sso/signin". */
+  ssoPath?: string;
   theme?: 'system' | 'dark' | 'light';
   lang?: 'ko' | 'en';
   autoUpdate?: boolean; // default true
+  /** 업데이트 제공처. XGEN은 설정된 serverUrl의 다운로드 센터를 사용한다. */
+  updateServer?: 'github' | 'xgen';
   autoLaunch?: boolean;
   /** Last selected agent (workflow_id) so the app reopens on it. */
   lastWorkflowId?: string;
@@ -116,9 +124,13 @@ export interface WorkspacePersistConfig {
 
 const DEFAULTS: ConnectorConfig = {
   serverUrl: '',
+  allowPrivateCertificate: false,
+  ssoEnabled: false,
+  ssoPath: '/sso/signin',
   theme: 'system',
   lang: 'ko',
   autoUpdate: true,
+  updateServer: 'github',
   autoLaunch: false,
 };
 

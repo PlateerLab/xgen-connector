@@ -5,6 +5,8 @@ export const CHANNELS = {
   configChanged: 'config:changed',
 
   authLogin: 'auth:login',
+  authSsoLogin: 'auth:ssoLogin',
+  authSsoComplete: 'auth:ssoComplete',
   authRestore: 'auth:restore',
   authAutoLogin: 'auth:autoLogin', // launch: sign in with saved credentials
   authLoginPrefill: 'auth:loginPrefill', // login form: remembered email + autoLogin flag
