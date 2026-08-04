@@ -270,8 +270,13 @@ const api = {
       ipcRenderer.invoke(CHANNELS.mcpSaveServers, servers),
     testServer: (
       cfg: McpServerConfig,
-    ): Promise<{ ok: boolean; tools?: Array<{ name: string; description?: string }>; error?: string }> =>
-      ipcRenderer.invoke(CHANNELS.mcpTestServer, cfg),
+    ): Promise<{
+      ok: boolean;
+      tools?: Array<{ name: string; description?: string }>;
+      error?: string;
+      /** 런타임 미설치 등 해결 가능한 실패일 때의 조치 안내. */
+      hints?: string[];
+    }> => ipcRenderer.invoke(CHANNELS.mcpTestServer, cfg),
     status: (): Promise<McpBridgeStatusLike> => ipcRenderer.invoke(CHANNELS.mcpStatus),
     onStatus: (cb: (s: McpBridgeStatusLike) => void): (() => void) => {
       const h = (_e: unknown, s: McpBridgeStatusLike) => cb(s);

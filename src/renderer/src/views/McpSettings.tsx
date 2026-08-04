@@ -36,6 +36,54 @@ const JSON_PLACEHOLDER = `{
   }
 }`;
 
+/** 연결 테스트 결과 — 목록 행과 편집 폼이 **같은 컴포넌트**를 재사용한다. */
+export type TestState = { busy?: boolean; ok?: boolean; msg?: string; hints?: string[] };
+
+const TestResult: React.FC<{ state: TestState }> = ({ state }) => {
+  if (state.busy) {
+    return (
+      <div className="small muted mcp-test-result" role="status">
+        테스트 중…
+      </div>
+    );
+  }
+  if (!state.msg) return null;
+  return (
+    <div className={`small mcp-test-result ${state.ok ? 'notice-ok' : 'error'}`} role="status">
+      <div>{state.msg}</div>
+      {!!state.hints?.length && (
+        <ul className="mcp-hints">
+          {state.hints.map((h, i) => (
+            <li key={i}>{h}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+/**
+ * 설정 하나를 실제로 띄워 보고 결과를 사람이 읽는 형태로 만든다.
+ * 실패가 "런타임 미설치"면 메인 프로세스가 설치 안내(hints)를 함께 준다.
+ */
+async function testConfig(cfg: McpServerConfig): Promise<TestState> {
+  try {
+    const r = await xgen.mcp.testServer(cfg);
+    if (r.ok) {
+      const names = (r.tools ?? []).map((t) => t.name);
+      return {
+        ok: true,
+        msg:
+          `연결됨 · 도구 ${names.length}개` +
+          (names.length ? `: ${names.slice(0, 8).join(', ')}${names.length > 8 ? ' …' : ''}` : ''),
+      };
+    }
+    return { ok: false, msg: r.error || '연결 실패', hints: r.hints };
+  } catch (e) {
+    return { ok: false, msg: `테스트 실패: ${String((e as Error)?.message ?? e)}` };
+  }
+}
+
 const EMPTY_DRAFT: Draft = {
   name: '',
   transport: 'stdio',
@@ -99,7 +147,10 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [status, setStatus] = useState<McpBridgeStatusLike | null>(null);
   const [editing, setEditing] = useState<number | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-  const [test, setTest] = useState<{ busy?: boolean; ok?: boolean; msg?: string } | null>(null);
+  const [test, setTest] = useState<TestState | null>(null);
+  // 목록 행별 테스트 결과 (서버 이름 기준) — 편집 모드로 들어가지 않아도
+  // 바로 [테스트] 할 수 있어야 한다.
+  const [rowTest, setRowTest] = useState<Record<string, TestState>>({});
   // 표준 MCP 설정 JSON 붙여넣기
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState('');
@@ -215,11 +266,17 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     await persist(next);
   };
 
+  /** 편집 폼의 테스트 — 저장하지 않은 초안 그대로 시험한다. */
   const runTest = async () => {
     setTest({ busy: true });
-    const r = await xgen.mcp.testServer(configFromDraft(draft));
-    if (r.ok) setTest({ ok: true, msg: `연결됨 · 도구 ${r.tools?.length ?? 0}개` + (r.tools?.length ? `: ${r.tools.map((t) => t.name).slice(0, 8).join(', ')}` : '') });
-    else setTest({ ok: false, msg: r.error || '연결 실패' });
+    setTest(await testConfig(configFromDraft(draft)));
+  };
+
+  /** 목록 행의 테스트 — 저장된 설정 그대로 시험한다. */
+  const runRowTest = async (s: McpServerConfig) => {
+    setRowTest((m) => ({ ...m, [s.name]: { busy: true } }));
+    const r = await testConfig(s);
+    setRowTest((m) => ({ ...m, [s.name]: r }));
   };
 
   return (
@@ -284,8 +341,24 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                       ? toDisplayCommand(s.command ?? '', s.args ?? [])
                       : s.url}
                   </div>
+                  {/* 테스트 결과가 있으면 그것을, 없으면 자동 연결 실패 사유를
+                      그대로 보여준다 (툴팁에만 숨겨두면 아무도 못 본다). */}
+                  {rowTest[s.name] ? (
+                    <TestResult state={rowTest[s.name]} />
+                  ) : (
+                    st &&
+                    !st.connected &&
+                    st.error && <TestResult state={{ ok: false, msg: st.error }} />
+                  )}
                 </div>
                 <div className="mcp-item-actions">
+                  <button
+                    className="link"
+                    onClick={() => void runRowTest(s)}
+                    disabled={rowTest[s.name]?.busy}
+                  >
+                    테스트
+                  </button>
                   <button className="link" onClick={() => startEdit(i)}>
                     편집
                   </button>
@@ -414,11 +487,7 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               </>
             )}
 
-            {test && (
-              <div className={`small ${test.ok ? '' : test.busy ? 'muted' : 'error'}`} style={{ margin: '2px 0' }}>
-                {test.busy ? '테스트 중…' : test.msg}
-              </div>
-            )}
+            {test && <TestResult state={test} />}
 
             <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
               <button className="link" onClick={() => setEditing(null)}>

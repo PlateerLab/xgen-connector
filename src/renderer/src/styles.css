@@ -1348,12 +1348,13 @@ button {
   flex-direction: column;
   gap: 6px;
   margin: 6px 0;
-  max-height: 260px;
+  /* 테스트 결과(설치 안내 여러 줄)가 행 안에 펼쳐지므로 여유를 둔다. */
+  max-height: 42vh;
   overflow-y: auto;
 }
 .mcp-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 9px 10px;
   border: 1px solid var(--border);
@@ -1405,6 +1406,23 @@ button {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+}
+/* 연결 테스트 결과 — 목록 행 안(설치 안내 여러 줄)과 편집 폼에서 공용. */
+.mcp-test-result {
+  margin-top: 5px;
+  line-height: 1.5;
+  white-space: normal; /* .mcp-item-cmd 의 nowrap 을 상속하지 않도록 */
+  word-break: break-word;
+}
+.mcp-hints {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  color: var(--muted);
+}
+.mcp-hints li {
+  margin: 2px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 .mcp-form {
   border: 1px solid var(--border);
