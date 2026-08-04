@@ -1,5 +1,5 @@
 /**
- * Auto-update via electron-updater → GitHub Releases (PlateerLab/xgen-connector).
+ * Auto-update via GitHub Releases or the configured XGEN download center.
  *
  * The releases repo is PUBLIC, so every feed URL (latest*.yml + installers) is
  * downloadable anonymously — being an org repo makes no difference. Verified:
@@ -17,9 +17,18 @@
  * check ALWAYS resolves and the UI never gets stuck on "확인 중…".
  */
 import { app, dialog, shell, BrowserWindow, Notification, net } from 'electron';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { createWriteStream, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
+import { finished } from 'node:stream/promises';
+import { basename, join } from 'node:path';
 import electronUpdater, { type AppUpdater } from 'electron-updater';
+import {
+  compareVersions,
+  selectXgenUpdate,
+  type UpdateServer,
+  type XgenInstallerPackage,
+} from './update-source';
 
 // electron-updater is CommonJS: the `autoUpdater` instance lives on the DEFAULT
 // export, NOT as a named export. `import { autoUpdater } from 'electron-updater'`
@@ -34,6 +43,9 @@ const API_LATEST = `https://api.github.com/repos/${REPO}/releases/latest`;
 const SIX_HOURS = 6 * 60 * 60 * 1000;
 
 let autoUpdate = true;
+let updateServer: UpdateServer = 'github';
+let getXgenServerUrl: () => string = () => '';
+let getXgenToken: () => Promise<string | null> = async () => null;
 let timer: NodeJS.Timeout | null = null;
 let updaterRef: AppUpdater | null = null;
 let lastNotifiedVersion: string | null = null;
@@ -58,25 +70,22 @@ function notify(message: string): void {
   }
 }
 
-/** Compare dotted versions: >0 if a>b, <0 if a<b, 0 if equal. */
-function cmpVersion(a: string, b: string): number {
-  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  return 0;
-}
-
 /** Main-process HTTP with a hard timeout, via Electron's net stack. */
-async function netFetch(url: string, timeoutMs = 15000): Promise<Response> {
+async function netFetch(
+  url: string,
+  timeoutMs = 15000,
+  headers: Record<string, string> = {},
+): Promise<Response> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await net.fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'xgen-connector', Accept: 'application/vnd.github+json' },
+      headers: {
+        'User-Agent': 'xgen-connector',
+        Accept: 'application/vnd.github+json',
+        ...headers,
+      },
     });
   } finally {
     clearTimeout(t);
@@ -223,7 +232,7 @@ async function macCheck(manual: boolean): Promise<void> {
     if (manual) await dialog.showMessageBox({ type: 'error', message: '업데이트 확인에 실패했습니다.', detail });
     return;
   }
-  if (!latest || cmpVersion(latest, app.getVersion()) <= 0) {
+  if (!latest || compareVersions(latest, app.getVersion()) <= 0) {
     notify(`최신 버전입니다 (v${app.getVersion()})`);
     if (manual) await dialog.showMessageBox({ type: 'info', message: '최신 버전입니다.', detail: `현재 v${app.getVersion()}` });
     return;
@@ -243,6 +252,154 @@ async function macCheck(manual: boolean): Promise<void> {
   } else if (lastNotifiedVersion !== latest) {
     lastNotifiedVersion = latest;
     notifyUpdateAvailable(latest, () => void macAssistedUpdate(latest, false));
+  }
+}
+
+// ── XGEN download-center assisted update ────────────────────────
+interface XgenInstallerListResponse {
+  success?: boolean;
+  data?: XgenInstallerPackage[];
+}
+
+async function xgenRequest(path: string, token: string, timeoutMs = 15000): Promise<Response> {
+  const base = getXgenServerUrl().trim().replace(/\/+$/, '');
+  if (!base) throw new Error('XGEN 서버 URL이 설정되지 않았습니다.');
+  return netFetch(`${base}${path}`, timeoutMs, {
+    Accept: 'application/json',
+    Authorization: `Bearer ${token}`,
+  });
+}
+
+async function downloadXgenPackage(pkg: XgenInstallerPackage, token: string): Promise<string> {
+  const expectedHash = (pkg.file_hash ?? '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(expectedHash)) {
+    throw new Error('설치 파일의 SHA-256 정보가 없습니다.');
+  }
+  const id = encodeURIComponent(String(pkg.id));
+  const res = await xgenRequest(`/api/support/v1/installers/download/${id}`, token, 180000);
+  if (!res.ok) throw new Error(`XGEN 다운로드 센터 ${res.status}`);
+  if (!res.body) throw new Error('설치 파일 응답이 비어 있습니다.');
+
+  const safeName = basename(pkg.original_name || `xgen-connector-${pkg.version || 'update'}`);
+  const updateDir = join(app.getPath('temp'), 'xgen-connector-updates', id);
+  mkdirSync(updateDir, { recursive: true });
+  const destination = join(updateDir, safeName);
+  const output = createWriteStream(destination);
+  const hash = createHash('sha256');
+  const total = Number(res.headers.get('content-length') || pkg.file_size || 0);
+  let downloaded = 0;
+  let lastPercent = -1;
+  try {
+    for await (const value of res.body as unknown as AsyncIterable<Uint8Array>) {
+      const chunk = Buffer.from(value);
+      hash.update(chunk);
+      downloaded += chunk.length;
+      if (total > 0) {
+        const percent = Math.min(100, Math.floor((downloaded / total) * 100));
+        if (percent >= lastPercent + 5) {
+          lastPercent = percent;
+          notify(`업데이트 내려받는 중… ${percent}%`);
+        }
+      }
+      if (!output.write(chunk)) await once(output, 'drain');
+    }
+    output.end();
+    await finished(output);
+    if (hash.digest('hex') !== expectedHash) {
+      throw new Error('설치 파일의 SHA-256 검증에 실패했습니다.');
+    }
+    return destination;
+  } catch (error) {
+    output.destroy();
+    try {
+      rmSync(destination, { force: true });
+    } catch {
+      // 부분 다운로드 정리는 best-effort다.
+    }
+    throw error;
+  }
+}
+
+async function installXgenPackage(pkg: XgenInstallerPackage): Promise<void> {
+  let destination = '';
+  try {
+    const token = await getXgenToken();
+    if (!token) throw new Error('로그인 토큰이 없습니다. 다시 로그인해 주세요.');
+    notify(`새 버전 v${pkg.version} 내려받는 중…`);
+    destination = await downloadXgenPackage(pkg, token);
+    notify(`업데이트 준비됨 (v${pkg.version})`);
+    const result = await dialog.showMessageBox({
+      type: 'info',
+      buttons: ['설치 시작', '나중에'],
+      defaultId: 0,
+      cancelId: 1,
+      title: '업데이트 준비됨',
+      message: `XGEN Connector ${pkg.version} 설치 파일을 확인했습니다.`,
+      detail: '설치 프로그램을 연 뒤 화면의 안내에 따라 업데이트를 완료해 주세요.',
+    });
+    if (result.response === 0) {
+      const error = await shell.openPath(destination);
+      if (error) throw new Error(error);
+      notify('설치 프로그램을 열었습니다.');
+    }
+  } catch (error) {
+    if (destination) {
+      try {
+        rmSync(destination, { force: true });
+      } catch {
+        // 임시 파일 정리는 best-effort다.
+      }
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    log('xgen download failed', detail);
+    notify('업데이트 다운로드 실패');
+    await dialog.showMessageBox({ type: 'error', message: '업데이트 다운로드에 실패했습니다.', detail });
+  }
+}
+
+async function xgenCheck(manual: boolean): Promise<void> {
+  if (manual) notify('업데이트 확인 중…');
+  const token = await getXgenToken();
+  if (!token) {
+    if (manual) {
+      notify('로그인 후 XGEN 업데이트를 확인할 수 있습니다.');
+      await dialog.showMessageBox({
+        type: 'info',
+        message: 'XGEN 업데이트는 로그인 후 확인할 수 있습니다.',
+      });
+    }
+    return;
+  }
+
+  const res = await xgenRequest('/api/support/v1/installers/list?product=connector', token);
+  if (!res.ok) throw new Error(`XGEN 다운로드 센터 ${res.status}`);
+  const body = (await res.json()) as XgenInstallerListResponse;
+  const pkg = selectXgenUpdate(Array.isArray(body.data) ? body.data : [], process.platform, app.getVersion());
+  if (!pkg) {
+    notify(`최신 버전입니다 (v${app.getVersion()})`);
+    if (manual) {
+      await dialog.showMessageBox({ type: 'info', message: '최신 버전입니다.', detail: `현재 v${app.getVersion()}` });
+    }
+    return;
+  }
+
+  const version = pkg.version ?? '';
+  if (manual) {
+    const result = await dialog.showMessageBox({
+      type: 'info',
+      buttons: ['지금 업데이트', '나중에'],
+      defaultId: 0,
+      cancelId: 1,
+      message: `새 버전 v${version} 이(가) 있습니다.`,
+      detail: pkg.release_notes || `현재 v${app.getVersion()}. 설치 파일을 내려받습니다.`,
+    });
+    if (result.response === 0) await installXgenPackage(pkg);
+    else notify(`새 버전 v${version} 이(가) 있습니다.`);
+  } else if (autoUpdate) {
+    await installXgenPackage(pkg);
+  } else if (lastNotifiedVersion !== version) {
+    lastNotifiedVersion = version;
+    notifyUpdateAvailable(version, () => void installXgenPackage(pkg));
   }
 }
 
@@ -289,13 +446,16 @@ async function runCheck(manual: boolean): Promise<void> {
   if (busy) return;
   busy = true;
   try {
+    if (!app.isPackaged) {
+      if (manual) {
+        notify('개발 모드에서는 업데이트를 확인할 수 없습니다.');
+        await dialog.showMessageBox({ message: '개발 모드에서는 업데이트를 확인하지 않습니다.' });
+      }
+      return;
+    }
+    if (updateServer === 'xgen') return await xgenCheck(manual);
     if (isPackagedMac()) return await macCheck(manual);
     if (canSelfUpdate()) return await winLinuxCheck(manual);
-    // Dev build.
-    if (manual) {
-      notify('개발 모드에서는 업데이트를 확인할 수 없습니다.');
-      await dialog.showMessageBox({ message: '개발 모드에서는 업데이트를 확인하지 않습니다.' });
-    }
   } catch (e) {
     // Safety net — a manual check must NEVER end without feedback.
     const detail = e instanceof Error ? e.message : String(e);
@@ -319,9 +479,20 @@ function notifyUpdateAvailable(version: string, onAccept: () => void): void {
   }
 }
 
-export function initUpdater(enabled: boolean, onWillInstall?: () => void): void {
-  autoUpdate = enabled;
-  if (onWillInstall) appWillInstall = onWillInstall;
+export interface UpdaterOptions {
+  enabled: boolean;
+  updateServer?: UpdateServer;
+  xgenServerUrl: () => string;
+  xgenToken: () => Promise<string | null>;
+  onWillInstall?: () => void;
+}
+
+export function initUpdater(options: UpdaterOptions): void {
+  autoUpdate = options.enabled;
+  updateServer = options.updateServer ?? 'github';
+  getXgenServerUrl = options.xgenServerUrl;
+  getXgenToken = options.xgenToken;
+  if (options.onWillInstall) appWillInstall = options.onWillInstall;
   if (!app.isPackaged) return; // dev builds never check
   setTimeout(() => void runCheck(false), 8000);
   timer = setInterval(() => void runCheck(false), SIX_HOURS);
@@ -330,6 +501,17 @@ export function initUpdater(enabled: boolean, onWillInstall?: () => void): void 
 export function setAutoUpdate(enabled: boolean): void {
   autoUpdate = enabled;
   if (enabled) void runCheck(false);
+}
+
+export function setUpdateServer(source: UpdateServer): void {
+  updateServer = source;
+  lastNotifiedVersion = null;
+  if (app.isPackaged) void runCheck(false);
+}
+
+/** XGEN 소스의 시작 시점 검사를 로그인 토큰 저장 뒤 다시 시도한다. */
+export function checkForUpdatesAfterLogin(): void {
+  if (app.isPackaged && updateServer === 'xgen') void runCheck(false);
 }
 
 export function getAutoUpdate(): boolean {

@@ -11,7 +11,7 @@
     "url": "https://github.com/PlateerLab/xgen-connector.git"
   },
   "scripts": {
-    "test": "tsx --test test/client.test.ts test/connection-security.test.ts test/exec-resolve.test.ts test/harness.test.ts test/mcp-import.test.ts test/mcp-progress.test.ts test/mcp-spawn.test.ts test/sse.test.ts test/sync-convergence.test.ts test/sync-dataloss.test.ts test/sync-platform.test.ts test/tool-activity.test.ts",
+    "test": "tsx --test test/client.test.ts test/connection-security.test.ts test/exec-resolve.test.ts test/harness.test.ts test/mcp-import.test.ts test/mcp-progress.test.ts test/mcp-spawn.test.ts test/sse.test.ts test/sync-convergence.test.ts test/sync-dataloss.test.ts test/sync-platform.test.ts test/tool-activity.test.ts test/update-source.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"test/**/*.ts\"",

@@ -19,6 +19,7 @@ export const Settings: React.FC<{
   const [ssoPath, setSsoPath] = useState(config.ssoPath ?? '/sso/signin');
   const [theme, setTheme] = useState<Theme>(config.theme ?? 'system');
   const [autoUpdate, setAutoUpdate] = useState(config.autoUpdate ?? true);
+  const [updateServer, setUpdateServer] = useState<'github' | 'xgen'>(config.updateServer ?? 'github');
   const [overlay, setOverlay] = useState(config.avatarOverlay ?? false);
   const [subtitles, setSubtitles] = useState(config.subtitles !== false);
   const [charMs, setCharMs] = useState(config.subtitleCharMs ?? 50);
@@ -355,6 +356,31 @@ export const Settings: React.FC<{
           >
             {resetDone ? '완료' : '초기화'}
           </button>
+        </div>
+
+        <div className="field-row">
+          <span>
+            업데이트 서버
+            {updateServer === 'xgen' && (
+              <span className="small muted" style={{ marginLeft: 8 }}>
+                설정된 XGEN 서버의 다운로드 센터
+              </span>
+            )}
+          </span>
+          <div className="seg">
+            {(['github', 'xgen'] as const).map((source) => (
+              <button
+                key={source}
+                className={updateServer === source ? 'active' : ''}
+                onClick={() => {
+                  setUpdateServer(source);
+                  void apply({ updateServer: source });
+                }}
+              >
+                {source === 'github' ? 'GitHub' : 'XGEN'}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="field-row">

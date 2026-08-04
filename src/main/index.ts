@@ -38,7 +38,15 @@ import {
   type SyncPairPersistConfig,
 } from './config';
 import { tokenStore, credentialStore, storageStatus } from './keychain';
-import { initUpdater, setAutoUpdate, getAutoUpdate, checkNow, disposeUpdater } from './updater';
+import {
+  initUpdater,
+  setAutoUpdate,
+  setUpdateServer,
+  getAutoUpdate,
+  checkNow,
+  checkForUpdatesAfterLogin,
+  disposeUpdater,
+} from './updater';
 import { CHANNELS } from './ipc';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager } from './mcp-manager';
@@ -1030,6 +1038,7 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     await session.defaultSession.closeAllConnections();
   }
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
+  if (patch.updateServer !== undefined) setUpdateServer(patch.updateServer);
   if (patch.theme) nativeTheme.themeSource = patch.theme;
   if (patch.linuxClickThrough !== undefined) {
     // 즉시 재적용: 클릭 통과가 켜진 오버레이는 마우스 이벤트를 못 받아
@@ -1052,6 +1061,7 @@ async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   syncMcp();
   getSyncManager()?.configure(loadConfig().syncPairs ?? []); // 로그인 → 페어링 재가동
   safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
+  checkForUpdatesAfterLogin();
   return persisted;
 }
 
@@ -1624,8 +1634,14 @@ if (!gotLock) {
     });
     // The install callback flips appQuitting so quitAndInstall isn't blocked by
     // the close-to-tray guard.
-    initUpdater(cfg.autoUpdate ?? true, () => {
-      appQuitting = true;
+    initUpdater({
+      enabled: cfg.autoUpdate ?? true,
+      updateServer: cfg.updateServer ?? 'github',
+      xgenServerUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+      xgenToken: () => tokenStore.getAccess(),
+      onWillInstall: () => {
+        appQuitting = true;
+      },
     });
     const trayOk = createTray();
     // `--hidden` (autostart) → start in the tray without showing the window.

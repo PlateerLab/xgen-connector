@@ -42,6 +42,8 @@ export interface ConnectorConfig {
   theme?: 'system' | 'dark' | 'light';
   lang?: 'ko' | 'en';
   autoUpdate?: boolean; // default true
+  /** 업데이트 제공처. XGEN은 설정된 serverUrl의 다운로드 센터를 사용한다. */
+  updateServer?: 'github' | 'xgen';
   autoLaunch?: boolean;
   /** Last selected agent (workflow_id) so the app reopens on it. */
   lastWorkflowId?: string;
@@ -113,6 +115,7 @@ const DEFAULTS: ConnectorConfig = {
   theme: 'system',
   lang: 'ko',
   autoUpdate: true,
+  updateServer: 'github',
   autoLaunch: false,
 };
 
