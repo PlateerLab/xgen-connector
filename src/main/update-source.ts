@@ -15,9 +15,14 @@ export interface XgenInstallerPackage {
   created_at?: string;
 }
 
-/** electron-updater의 NSIS 갱신 실행과 동일한 Windows 설치 인자다. */
+/** 진행 UI를 표시하면서 업데이트 모드와 설치 후 재실행을 유지한다. */
 export function windowsNsisUpdateArgs(): string[] {
-  return ['--updated', '/S', '--force-run'];
+  return ['--updated', '--force-run'];
+}
+
+/** Connector 종료 안전망 이후 NSIS를 여는 고정 Windows launcher 명령이다. */
+export function windowsNsisLauncherCommand(): string {
+  return `ping 127.0.0.1 -n 5 > nul & start "" "%XGEN_UPDATE_INSTALLER%" ${windowsNsisUpdateArgs().join(' ')}`;
 }
 
 /** 점으로 구분된 버전을 비교한다. a가 크면 양수, b가 크면 음수다. */

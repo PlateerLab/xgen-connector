@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   compareVersions,
   selectXgenUpdate,
+  windowsNsisLauncherCommand,
   windowsNsisUpdateArgs,
 } from '../src/main/update-source';
 
@@ -32,6 +33,10 @@ test('플랫폼 표기가 없어도 설치 파일 확장자로 판단하고 이�
   assert.equal(selectXgenUpdate(packages, 'linux', '1.6.0'), null);
 });
 
-test('Windows 설치는 실행 중 앱 오류를 피하는 NSIS silent update 인자를 사용한다', () => {
-  assert.deepEqual(windowsNsisUpdateArgs(), ['--updated', '/S', '--force-run']);
+test('Windows 설치는 진행 UI를 표시하는 NSIS update 인자를 사용한다', () => {
+  assert.deepEqual(windowsNsisUpdateArgs(), ['--updated', '--force-run']);
+  assert.equal(
+    windowsNsisLauncherCommand(),
+    'ping 127.0.0.1 -n 5 > nul & start "" "%XGEN_UPDATE_INSTALLER%" --updated --force-run',
+  );
 });

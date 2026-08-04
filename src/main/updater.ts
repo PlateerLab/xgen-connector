@@ -27,7 +27,7 @@ import electronUpdater, { type AppUpdater } from 'electron-updater';
 import {
   compareVersions,
   selectXgenUpdate,
-  windowsNsisUpdateArgs,
+  windowsNsisLauncherCommand,
   type UpdateServer,
   type XgenInstallerPackage,
 } from './update-source';
@@ -340,24 +340,29 @@ async function installXgenPackage(pkg: XgenInstallerPackage): Promise<void> {
       message: `XGEN Connector ${pkg.version} 설치 파일을 확인했습니다.`,
       detail:
         process.platform === 'win32'
-          ? 'Connector를 종료하고 업데이트를 설치한 뒤 새 버전으로 다시 시작합니다.'
+          ? 'Connector 종료 후 설치 진행 창을 표시하고 새 버전으로 다시 시작합니다.'
           : '설치 프로그램을 연 뒤 화면의 안내에 따라 업데이트를 완료해 주세요.',
     });
     if (result.response === 0) {
       if (process.platform === 'win32') {
         await new Promise<void>((resolve, reject) => {
-          const installer = spawn(destination, windowsNsisUpdateArgs(), {
+          // NSIS를 바로 열면 현재 Connector의 파일 잠금 검사와 경합한다.
+          // 숨겨진 cmd launcher가 안전 종료 제한(3.5초)보다 늦게 실행해,
+          // 앱이 완전히 사라진 뒤 대화형 NSIS 프로그레스 창을 표시한다.
+          const command = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
+          const launcher = spawn(command, ['/d', '/s', '/c', windowsNsisLauncherCommand()], {
             detached: true,
             stdio: 'ignore',
             windowsHide: true,
+            env: { ...process.env, XGEN_UPDATE_INSTALLER: destination },
           });
-          installer.once('spawn', () => {
-            installer.unref();
+          launcher.once('spawn', () => {
+            launcher.unref();
             resolve();
           });
-          installer.once('error', reject);
+          launcher.once('error', reject);
         });
-        notify('Connector를 종료하고 업데이트를 설치합니다.');
+        notify('Connector 종료 후 설치 진행 창을 표시합니다.');
         appWillInstall();
         app.quit();
         // MCP·동기화 자식 프로세스가 종료를 늦춰 설치 파일 잠금이 남는 경우를
