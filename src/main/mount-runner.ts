@@ -3,7 +3,7 @@
  *
  * 서버는 공통이고 여기서 하는 일은 OS 에게 마운트를 시키는 것뿐이다:
  *
- *     macOS    mount_webdav -S -i <url> <mountpoint>
+ *     macOS    mount_webdav [-S [-v name]] <url> <mountpoint>
  *     Windows  net use <drive> <url> /persistent:no
  *     Linux    (FUSE — 별도 제공자)
  *
@@ -66,32 +66,60 @@ export async function run(
 /**
  * macOS: `mount_webdav`.
  *
- * 옵션 근거:
- *   `-S` 인증 대화상자를 띄우지 않는다 (우리는 비밀 경로를 쓰므로 인증이
- *        없고, 대화상자가 뜨면 마운트가 사용자 응답을 기다리며 멈춘다).
- *   `-i` 필요 시 대화형 — `-S` 와 함께 쓰면 실패를 즉시 돌려준다.
+ * ⚠ 실기에서 확인된 것: `-S` 와 `-i` 를 **함께 주면 usage 오류**다. 둘이
+ * 모순이기 때문이다 (`-S` = 모든 대화상자 억제, `-i` = 대화형). 처음에 둘 다
+ * 넘겼다가 다음을 받았다:
  *
- * 마운트포인트는 **미리 존재해야** 하고 비어 있어야 한다.
+ *     usage: mount_webdav [-i] [-s] [-S] [-o options] [-v <volume name>]
+ *                         <WebDAV_URL> node
+ *
+ * macOS 버전마다 받는 플래그가 미묘하게 다르므로, **후보를 사다리로 시도하고
+ * 각 시도를 진단 로그에 남긴다** — 한 번의 사용자 테스트로 어떤 조합이 통하는지
+ * 확정된다. 성공한 조합은 로그에 남아 다음 릴리스에서 첫 번째로 올릴 수 있다.
+ *
+ * 마운트 지점은 **미리 존재해야** 하고 비어 있어야 한다.
  */
+const MACOS_ATTEMPTS: Array<{ label: string; args: (url: string, mnt: string) => string[] }> = [
+  // 대화상자 억제 + Finder 볼륨 이름
+  { label: '-S -v', args: (u, m) => ['-S', '-v', 'XGEN Workspace', u, m] },
+  // 억제만
+  { label: '-S', args: (u, m) => ['-S', u, m] },
+  // 플래그 없이 (가장 보수적)
+  { label: 'bare', args: (u, m) => [u, m] },
+]
+
 export async function mountMacos(url: string, mountpoint: string): Promise<MountResult> {
-  await unmountMacos(mountpoint) // 스테일 정리 (아래 설명)
+  await unmountMacos(mountpoint) // 스테일 정리
   try {
     mkdirSync(mountpoint, { recursive: true })
   } catch (e) {
     return { ok: false, error: `마운트 지점을 만들지 못했습니다: ${(e as Error).message}` }
   }
-  const r = await run('/sbin/mount_webdav', ['-S', '-i', url, mountpoint])
-  if (r.code === 0) {
-    diag('mount', `macOS 마운트 성공: ${mountpoint}`)
-    return { ok: true, path: mountpoint }
+
+  const failures: string[] = []
+  for (const attempt of MACOS_ATTEMPTS) {
+    diag('mount', `macOS 시도: ${attempt.label}`)
+    const r = await run('/sbin/mount_webdav', attempt.args(url, mountpoint))
+    if (r.code === 0) {
+      diag('mount', `macOS 마운트 성공 (${attempt.label}) → ${mountpoint}`)
+      return { ok: true, path: mountpoint }
+    }
+    const err = (r.stderr || r.stdout).trim().split('\n')[0] || `code ${r.code}`
+    failures.push(`${attempt.label}: ${err}`)
+    // usage 오류가 아니라 실제 마운트 실패(권한/네트워크)면 다음 조합도 같은
+    // 이유로 실패한다 — 사다리를 계속 타는 건 로그만 지저분해진다.
+    if (!/usage:/i.test(err)) {
+      diag('mount', `사다리 중단 (usage 오류 아님): ${err}`)
+      break
+    }
   }
-  const err = (r.stderr || r.stdout).trim()
+
   return {
     ok: false,
-    error: err || `mount_webdav 가 코드 ${r.code} 로 실패했습니다`,
+    error: failures[failures.length - 1] ?? 'mount_webdav 가 실패했습니다',
     hint:
       'Finder 에서 "이동 > 서버에 연결"로 같은 주소가 열리는지 확인해 보세요. ' +
-      '계속 실패하면 진단 로그를 보내 주세요.',
+      '진단 로그에 시도한 조합이 전부 남아 있습니다.',
   }
 }
 
