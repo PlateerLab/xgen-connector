@@ -985,6 +985,7 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     // 구 서버의 workflow 를 가리키는 페어링은 새 서버에서 무의미 — 엔진을
     // 내리고 전부 일시정지로 전환한다 (재해머링·오연결 방지, 명시 재개 필요).
     getSyncManager()?.stopAll();
+    void require('./workspace-manager').getWorkspaceManager()?.reconcile();
     patch = {
       ...patch,
       syncPairs: (loadConfig().syncPairs ?? []).map((p) => ({
@@ -1101,6 +1102,8 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
 ipcMain.handle(CHANNELS.authLogout, async () => {
   getMcpBridge().stop();
   getSyncManager()?.stopAll(); // 토큰 없이 401 을 반복 해머링하지 않게 (재로그인 시 재가동)
+  // 가상 드라이브는 로그인 상태에서만 존재한다 — 로그아웃하면 걷어낸다.
+  void require('./workspace-manager').getWorkspaceManager()?.reconcile();
   if (client) await client.logout();
   await tokenStore.clear();
   // An explicit logout also disables auto-login (else next launch signs right back in).
@@ -1370,6 +1373,63 @@ ipcMain.handle(CHANNELS.mcpTestServer, (e, cfg) =>
 );
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
 
+// ── 워크스페이스(가상 드라이브) ─────────────────────────────────
+function wireWorkspaceManager(): void {
+  const { initWorkspaceManager, getWorkspaceManager: getWm } = require('./workspace-manager');
+  const { makeWorkspaceApi } = require('./workspace-api');
+  initWorkspaceManager({
+    config: () => loadConfig().workspace,
+    apiFor: (workflowId: string) =>
+      makeWorkspaceApi(
+        {
+          serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+          token: () => tokenStore.getAccess(),
+          deviceId: () => ensureDeviceId(),
+          tmpDir: app.getPath('userData'),
+        },
+        workflowId,
+      ),
+    loggedIn: () => !!client?.user,
+    onStatus: (s: unknown) => safeSend(mainWindow, CHANNELS.workspaceStatusEvent, s),
+  });
+  void getWm()?.reconcile();
+}
+
+/** 워크스페이스 설정 변경 → 저장 + 마운트 리컨사일. */
+async function saveWorkspace(next: unknown): Promise<unknown> {
+  const saved = saveConfig({ workspace: next as never });
+  const { getWorkspaceManager: getWm } = require('./workspace-manager');
+  await getWm()?.reconcile();
+  return saved.workspace;
+}
+
+ipcMain.handle(CHANNELS.workspaceStatus, () => {
+  const { getWorkspaceManager: getWm } = require('./workspace-manager');
+  return getWm()?.status() ?? { supported: false, mounted: false, agents: [] };
+});
+ipcMain.handle(CHANNELS.workspaceAttach, async (_e, agent: { workflowId: string; label: string }) => {
+  const { attachAgent } = require('./workspace');
+  const { randomUUID } = require('crypto');
+  const cur = loadConfig().workspace ?? { agents: [] };
+  const next = attachAgent(cur, { ...agent, id: randomUUID() });
+  await saveWorkspace(next);
+  const { getWorkspaceManager: getWm } = require('./workspace-manager');
+  return getWm()?.status();
+});
+ipcMain.handle(CHANNELS.workspaceDetach, async (_e, workflowId: string) => {
+  const { detachAgent } = require('./workspace');
+  const next = detachAgent(loadConfig().workspace ?? { agents: [] }, workflowId);
+  await saveWorkspace(next);
+  const { getWorkspaceManager: getWm } = require('./workspace-manager');
+  return getWm()?.status();
+});
+ipcMain.handle(CHANNELS.workspaceOpen, () => {
+  const { getWorkspaceManager: getWm } = require('./workspace-manager');
+  const p = getWm()?.status()?.path;
+  if (p) void shell.openPath(p);
+  return { ok: !!p };
+});
+
 // ── IPC: 가상 드라이브 검증 ──────────────────────────────────────
 ipcMain.handle(CHANNELS.workspaceProbeRun, async () => {
   const { runMountProbe } = await import('./workspace-probe');
@@ -1528,6 +1588,7 @@ if (!gotLock) {
     // Workspace 동기화 엔진 — 저장된 페어링을 즉시 가동한다 (토큰이 아직
     // 없으면 changes 가 401 로 실패하고 로그인/restore 후 재가동된다).
     wireSyncManager();
+    wireWorkspaceManager();
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
       createQuickChat();
@@ -1564,5 +1625,7 @@ if (!gotLock) {
     getMcpBridge().stop();
     void getMcpManager().closeAll();
     getSyncManager()?.stopAll(); // 인덱스 플러시 + 워처/WS 정리
+    // ⚠ 마운트를 남긴 채 죽으면 폴더가 스테일 상태로 먹통이 된다.
+    void require('./workspace-manager').getWorkspaceManager()?.stop();
   });
 }

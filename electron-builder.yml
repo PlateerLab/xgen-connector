@@ -80,6 +80,10 @@ nsis:
     - en_US
     - ko_KR
   unicode: true
+  # 설치 시 WebDAV 파일 크기 상한 해제 + WebClient 자동 시작 (관리자 단계).
+  # 기본 50MiB 상한에 걸리면 탐색기가 조용히 거부해 "파일이 안 열린다"로만
+  # 보인다 — 설치 때 한 번 올려 두는 것이 유일하게 깨끗한 지점이다.
+  include: build/installer.nsh
 mac:
   target:
     - dmg

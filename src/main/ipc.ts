@@ -90,6 +90,11 @@ export const CHANNELS = {
   workspaceProbeStop: 'workspace:probeStop',
   workspaceProbeStatus: 'workspace:probeStatus',
   diagText: 'diag:text',
+  workspaceStatus: 'workspace:status',
+  workspaceStatusEvent: 'workspace:statusEvent',
+  workspaceAttach: 'workspace:attach',
+  workspaceDetach: 'workspace:detach',
+  workspaceOpen: 'workspace:open',
   mcpStatus: 'mcp:status',
   mcpStatusEvent: 'mcp:statusEvent',
 

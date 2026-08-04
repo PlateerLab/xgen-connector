@@ -27,6 +27,17 @@ export interface SyncPairStatusLike {
   pendingMassDelete: { count: number; total: number } | null;
 }
 
+/** 가상 드라이브 상태 (main workspace-manager.WorkspaceStatus 미러). */
+export interface WorkspaceStatusLike {
+  supported: boolean;
+  reason?: string;
+  hint?: string;
+  mounted: boolean;
+  path?: string;
+  error?: string;
+  agents: Array<{ workflowId: string; label: string; folder: string }>;
+}
+
 /** Local-MCP bridge status pushed to the settings UI. */
 export interface McpBridgeStatusLike {
   enabled: boolean;
@@ -248,6 +259,19 @@ const api = {
     probeStatus: (): Promise<{ mounted: boolean; path?: string }> =>
       ipcRenderer.invoke(CHANNELS.workspaceProbeStatus),
     diagText: (): Promise<string> => ipcRenderer.invoke(CHANNELS.diagText),
+
+    /** 실제 워크스페이스(가상 드라이브) — 에이전트 부착/해제 + 상태. */
+    status: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceStatus),
+    attach: (agent: { workflowId: string; label: string }): Promise<WorkspaceStatusLike> =>
+      ipcRenderer.invoke(CHANNELS.workspaceAttach, agent),
+    detach: (workflowId: string): Promise<WorkspaceStatusLike> =>
+      ipcRenderer.invoke(CHANNELS.workspaceDetach, workflowId),
+    open: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(CHANNELS.workspaceOpen),
+    onStatus: (cb: (s: WorkspaceStatusLike) => void): (() => void) => {
+      const h = (_e: unknown, s: WorkspaceStatusLike) => cb(s);
+      ipcRenderer.on(CHANNELS.workspaceStatusEvent, h);
+      return () => ipcRenderer.removeListener(CHANNELS.workspaceStatusEvent, h);
+    },
   },
 
   /** Local MCP — host MCP servers here and bridge their tools to your agents. */

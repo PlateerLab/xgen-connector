@@ -47,6 +47,10 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     log?: string;
   } | null>(null);
   const [copied, setCopied] = useState(false);
+  // 실제 워크스페이스(가상 드라이브) — 부착된 에이전트 + 마운트 상태.
+  const [ws, setWs] = useState<import('../../../preload/index').WorkspaceStatusLike | null>(null);
+  const [wsAgent, setWsAgent] = useState('');
+  const [wsBusy, setWsBusy] = useState(false);
   const [selAgent, setSelAgent] = useState('');
   const [selFolder, setSelFolder] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
@@ -104,6 +108,32 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
   };
 
+  useEffect(() => {
+    xgen.workspace.status().then(setWs).catch(() => undefined);
+    return xgen.workspace.onStatus(setWs);
+  }, []);
+
+  const attachWs = async () => {
+    const agent = agents.find((a) => a.id === wsAgent);
+    if (!agent) return;
+    setWsBusy(true);
+    try {
+      setWs(await xgen.workspace.attach({ workflowId: agent.id, label: agent.name }));
+      setWsAgent('');
+    } finally {
+      setWsBusy(false);
+    }
+  };
+
+  const detachWs = async (workflowId: string) => {
+    setWsBusy(true);
+    try {
+      setWs(await xgen.workspace.detach(workflowId));
+    } finally {
+      setWsBusy(false);
+    }
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
@@ -126,7 +156,71 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             가정만 먼저 찍는다 — 실패하면 진단 로그를 그대로 보낼 수 있다. */}
         <div className="mcp-form" style={{ marginBottom: 12 }}>
           <div className="row" style={{ justifyContent: 'space-between' }}>
-            <span style={{ fontWeight: 600 }}>가상 드라이브 (시험 기능)</span>
+            <span style={{ fontWeight: 600 }}>
+              XGEN 워크스페이스
+              {ws?.mounted && <span className="small notice-ok" style={{ marginLeft: 8 }}>마운트됨</span>}
+            </span>
+            {ws?.mounted && (
+              <button className="link" onClick={() => void xgen.workspace.open()}>
+                폴더 열기
+              </button>
+            )}
+          </div>
+          {ws && !ws.supported ? (
+            <div className="small error" style={{ marginTop: 4 }}>
+              {ws.reason}
+              {ws.hint && <div style={{ marginTop: 2 }}>{ws.hint}</div>}
+            </div>
+          ) : (
+            <>
+              <div className="small muted" style={{ marginTop: 4 }}>
+                홈 폴더의 <code>XGEN-Workspace</code> 안에 에이전트가 폴더로 나타납니다.
+                앱이 켜져 있을 때만 존재합니다.
+              </div>
+              {ws?.error && <div className="small error" style={{ marginTop: 4 }}>{ws.error}</div>}
+              {(ws?.agents.length ?? 0) > 0 && (
+                <div className="mcp-list" style={{ maxHeight: 160 }}>
+                  {ws!.agents.map((a) => (
+                    <div key={a.workflowId} className="mcp-item">
+                      <div className="mcp-item-body">
+                        <div className="mcp-item-name">{a.label}</div>
+                        <div className="mcp-item-cmd">XGEN-Workspace/{a.folder}</div>
+                      </div>
+                      <div className="mcp-item-actions">
+                        <button className="link" disabled={wsBusy} onClick={() => void detachWs(a.workflowId)}>
+                          제거
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="row" style={{ marginTop: 6, gap: 6 }}>
+                <select
+                  className="grow"
+                  value={wsAgent}
+                  onChange={(e) => setWsAgent(e.target.value)}
+                >
+                  <option value="">워크스페이스에 추가할 에이전트…</option>
+                  {agents
+                    .filter((a) => !ws?.agents.some((x) => x.workflowId === a.id))
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                </select>
+                <button className="primary" disabled={!wsAgent || wsBusy} onClick={() => void attachWs()}>
+                  추가
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="mcp-form" style={{ marginBottom: 12 }}>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <span style={{ fontWeight: 600 }}>마운트 진단 (시험)</span>
             <div className="row" style={{ gap: 6 }}>
               <button
                 className="secondary"
