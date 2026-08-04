@@ -235,6 +235,21 @@ const api = {
     quit: (): void => ipcRenderer.send(CHANNELS.appQuit),
   },
 
+  /** 가상 드라이브(WebDAV 마운트) 검증 — 이 컴퓨터에서 실제로 붙는지. */
+  workspace: {
+    probeRun: (): Promise<{
+      ok: boolean;
+      path?: string;
+      error?: string;
+      hint?: string;
+      log: string;
+    }> => ipcRenderer.invoke(CHANNELS.workspaceProbeRun),
+    probeStop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(CHANNELS.workspaceProbeStop),
+    probeStatus: (): Promise<{ mounted: boolean; path?: string }> =>
+      ipcRenderer.invoke(CHANNELS.workspaceProbeStatus),
+    diagText: (): Promise<string> => ipcRenderer.invoke(CHANNELS.diagText),
+  },
+
   /** Local MCP — host MCP servers here and bridge their tools to your agents. */
   /** Workspace 동기화 — 에이전트(workflow) ↔ 로컬 폴더 Drive형 동기화. */
   sync: {

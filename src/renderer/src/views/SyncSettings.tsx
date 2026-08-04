@@ -37,6 +37,16 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const [pairs, setPairs] = useState<SyncPairPersistConfig[]>([]);
   const [statuses, setStatuses] = useState<SyncPairStatusLike[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
+  // 가상 드라이브 검증 — 이 컴퓨터에서 WebDAV 마운트가 실제로 되는지.
+  const [probe, setProbe] = useState<{
+    busy?: boolean;
+    ok?: boolean;
+    path?: string;
+    error?: string;
+    hint?: string;
+    log?: string;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
   const [selAgent, setSelAgent] = useState('');
   const [selFolder, setSelFolder] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
@@ -109,6 +119,76 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           충돌 시 서버 버전이 유지되고 로컬 사본은 «(충돌-기기 시각)» 이름으로 보존됩니다.
           node_modules / .venv / build 등 대형 라이브러리 폴더와 500MiB 초과 파일은 제외됩니다.
         </p>
+
+        {/* ── 가상 드라이브 검증 ──────────────────────────────────
+            전체 기능(에이전트 부착·파일 서빙)은 "OS 내장 WebDAV 클라이언트가
+            인증 없이 실제로 붙는가"라는 검증되지 않은 가정 위에 있다. 그
+            가정만 먼저 찍는다 — 실패하면 진단 로그를 그대로 보낼 수 있다. */}
+        <div className="mcp-form" style={{ marginBottom: 12 }}>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <span style={{ fontWeight: 600 }}>가상 드라이브 (시험 기능)</span>
+            <div className="row" style={{ gap: 6 }}>
+              <button
+                className="secondary"
+                disabled={probe?.busy}
+                onClick={() => {
+                  setProbe({ busy: true });
+                  void xgen.workspace
+                    .probeRun()
+                    .then((r) => setProbe({ ...r }))
+                    .catch((e: unknown) =>
+                      setProbe({ ok: false, error: String((e as Error)?.message ?? e) }),
+                    );
+                }}
+              >
+                {probe?.busy ? '마운트 중…' : '마운트 시험'}
+              </button>
+              {probe?.ok && (
+                <button
+                  className="link"
+                  onClick={() => {
+                    void xgen.workspace.probeStop().then(() => setProbe(null));
+                  }}
+                >
+                  해제
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="small muted" style={{ marginTop: 4 }}>
+            홈 폴더에 <code>XGEN-Workspace</code> 를 마운트해 봅니다. 샘플 파일이 보이면
+            성공입니다 — 앱을 끄거나 [해제]하면 사라집니다.
+          </div>
+          {probe && !probe.busy && (
+            <div className={`small mcp-test-result ${probe.ok ? 'notice-ok' : 'error'}`}>
+              <div>
+                {probe.ok
+                  ? `마운트됨 → ${probe.path}`
+                  : `마운트 실패: ${probe.error ?? '알 수 없는 오류'}`}
+              </div>
+              {probe.hint && <div style={{ marginTop: 2 }}>{probe.hint}</div>}
+            </div>
+          )}
+          {probe?.log && (
+            <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
+              <button
+                className="link"
+                onClick={() => {
+                  void xgen.workspace
+                    .diagText()
+                    .then((t) => navigator.clipboard.writeText(t))
+                    .then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    })
+                    .catch(() => undefined);
+                }}
+              >
+                {copied ? '복사됨' : '진단 로그 복사'}
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* 페어링 생성 */}
         <div className="field">

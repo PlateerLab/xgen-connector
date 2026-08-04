@@ -85,6 +85,11 @@ export const CHANNELS = {
   mcpTestServer: 'mcp:testServer',
   mcpTestProgressEvent: 'mcp:testProgress',
   mcpRefresh: 'mcp:refresh',
+  // 가상 드라이브 검증 (WebDAV 마운트가 이 컴퓨터에서 실제로 되는지)
+  workspaceProbeRun: 'workspace:probeRun',
+  workspaceProbeStop: 'workspace:probeStop',
+  workspaceProbeStatus: 'workspace:probeStatus',
+  diagText: 'diag:text',
   mcpStatus: 'mcp:status',
   mcpStatusEvent: 'mcp:statusEvent',
 

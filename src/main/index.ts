@@ -1369,6 +1369,25 @@ ipcMain.handle(CHANNELS.mcpTestServer, (e, cfg) =>
   }),
 );
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
+
+// ── IPC: 가상 드라이브 검증 ──────────────────────────────────────
+ipcMain.handle(CHANNELS.workspaceProbeRun, async () => {
+  const { runMountProbe } = await import('./workspace-probe');
+  return runMountProbe();
+});
+ipcMain.handle(CHANNELS.workspaceProbeStop, async () => {
+  const { stopMountProbe } = await import('./workspace-probe');
+  await stopMountProbe();
+  return { ok: true };
+});
+ipcMain.handle(CHANNELS.workspaceProbeStatus, async () => {
+  const { probeActive } = await import('./workspace-probe');
+  return probeActive();
+});
+ipcMain.handle(CHANNELS.diagText, async () => {
+  const { diagText } = await import('./diag-log');
+  return diagText();
+});
 ipcMain.handle(CHANNELS.mcpRefresh, async () => {
   // 설정 화면을 열 때/테스트 성공 후 다시 붙여 본다 — 런타임을 나중에 설치한
   // 경우 예전 실패 문구가 계속 남아 있으면 안 된다.
