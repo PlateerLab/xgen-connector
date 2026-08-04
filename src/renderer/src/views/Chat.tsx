@@ -44,19 +44,26 @@ interface Msg {
  *   · 여러 도구가 몰아치면 중간을 건너뛰고 최신으로 점프한다 (슥 지나감)
  *   · 턴이 끝나면 사라진다 (완료된 답변 위에 낡은 칩을 남기지 않는다)
  */
-const TOOL_STEP_MS = 260; // 한 도구가 최소로 머무는 시간
-const TOOL_FADE_MS = 150; // 교체 페이드 길이
+const TOOL_STEP_MS = 320; // 한 도구가 최소로 머무는 시간
+const TOOL_FADE_MS = 220; // 교체 크로스페이드 길이
+
+interface ToolSlot {
+  key: number;
+  ev: ToolEvent;
+}
 
 const ToolActivity: React.FC<{ events: ToolEvent[]; streaming: boolean }> = ({ events, streaming }) => {
   // 연속 동일 도구 이벤트를 한 단계로 접는다 (마지막 상태만 유지).
   const steps = useMemo(() => collapseToolSteps(events), [events]);
 
   const [idx, setIdx] = useState(0);
-  const [shownIdx, setShownIdx] = useState(0);
-  const [leaving, setLeaving] = useState(false);
-  const [gone, setGone] = useState(false);
+  // 크로스페이드: 나가는 칩과 들어오는 칩을 **동시에** 겹쳐 둔다. 한 요소의
+  // 클래스만 바꿔 out→in 을 순차로 돌리면 중간에 빈 구간이 생겨 전환이
+  // 끊겨 보인다 (첫 구현의 문제).
+  const [cur, setCur] = useState<ToolSlot | null>(null);
+  const [out, setOut] = useState<ToolSlot | null>(null);
 
-  // 밀린 단계 전진 — 많이 밀렸으면 최신으로 점프.
+  // 밀린 단계 전진 — 많이 밀렸으면 최신으로 점프 (여러 도구를 빠르게 쓰면 슥 지나감).
   useEffect(() => {
     if (!steps.length) return;
     if (idx > steps.length - 1) { setIdx(steps.length - 1); return; }
@@ -65,40 +72,50 @@ const ToolActivity: React.FC<{ events: ToolEvent[]; streaming: boolean }> = ({ e
     return () => clearTimeout(t);
   }, [steps.length, idx]);
 
-  // 단계가 바뀌면 페이드 아웃 → 교체 → 페이드 인.
+  // 표시 대상 갱신 — 같은 단계의 상태 변화(⚙→✓)는 제자리, 단계가 바뀌면 크로스페이드.
   useEffect(() => {
-    if (idx === shownIdx) return;
-    setLeaving(true);
-    const t = setTimeout(() => {
-      setShownIdx(idx);
-      setLeaving(false);
-    }, TOOL_FADE_MS);
+    const target = steps[Math.min(idx, steps.length - 1)];
+    if (!target) return;
+    setCur((prev) => {
+      if (prev && prev.key === idx) {
+        return prev.ev === target ? prev : { key: idx, ev: target }; // 제자리 갱신
+      }
+      if (prev) setOut(prev); // 이전 칩은 나가는 레이어로
+      return { key: idx, ev: target };
+    });
+  }, [idx, steps]);
+
+  // 나가는 레이어 정리 (애니메이션이 끝난 뒤 언마운트).
+  useEffect(() => {
+    if (!out) return;
+    const t = setTimeout(() => setOut(null), TOOL_FADE_MS);
     return () => clearTimeout(t);
-  }, [idx, shownIdx]);
+  }, [out]);
 
   // 턴 종료 → 스르륵 사라짐.
   useEffect(() => {
-    if (streaming) { setGone(false); return; }
-    if (!steps.length) return;
-    setLeaving(true);
-    const t = setTimeout(() => setGone(true), TOOL_FADE_MS);
-    return () => clearTimeout(t);
-  }, [streaming, steps.length]);
+    if (streaming || !cur) return;
+    setOut(cur);
+    setCur(null);
+  }, [streaming, cur]);
 
-  const cur = steps[Math.min(shownIdx, steps.length - 1)];
-  if (!cur || gone) return null;
-  const icon = cur.eventType === 'tool_error' ? '⚠' : cur.eventType === 'tool_result' ? '✓' : '⚙';
+  if (!cur && !out) return null;
+  const chip = (slot: ToolSlot, leaving: boolean) => (
+    <span
+      key={`${slot.key}-${leaving ? 'out' : 'in'}`}
+      className={`tool-chip ${slot.ev.eventType ?? ''} ${leaving ? 'leaving' : 'entering'}`}
+      title={slot.ev.toolName}
+    >
+      <span className="tname">{slot.ev.toolName ?? 'tool'}</span>
+      {!leaving && steps.length > 1 && (
+        <span className="tstep">{Math.min(slot.key + 1, steps.length)}/{steps.length}</span>
+      )}
+    </span>
+  );
   return (
     <div className="tool-activity">
-      <span
-        key={shownIdx}
-        className={`tool-chip ${cur.eventType ?? ''} ${leaving ? 'leaving' : 'entering'}`}
-        title={cur.toolName}
-      >
-        {icon}
-        <span className="tname">{cur.toolName ?? 'tool'}</span>
-        {steps.length > 1 && <span className="tstep">{shownIdx + 1}/{steps.length}</span>}
-      </span>
+      {out && chip(out, true)}
+      {cur && chip(cur, false)}
     </div>
   );
 };

@@ -914,25 +914,33 @@ button {
   background: var(--error-bg);
 }
 
-/* 도구 활동 — 한 번에 하나만. 슬롯 높이를 고정해 교체 시 말풍선이 튀지 않는다. */
+/* 도구 활동 — 한 번에 하나만. 나가는 칩과 들어오는 칩을 같은 자리에 겹쳐
+   크로스페이드한다 (슬롯 높이 고정으로 말풍선이 튀지 않는다). */
 .tool-activity {
+  position: relative;
   display: flex;
   align-items: center;
-  min-height: 22px;
+  min-height: 24px;
+}
+.tool-activity .tool-chip.leaving {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
 }
 .tool-chip.entering {
-  animation: tool-in 150ms ease-out both;
+  animation: tool-in 220ms cubic-bezier(0.22, 0.68, 0.35, 1) both;
 }
 .tool-chip.leaving {
-  animation: tool-out 150ms ease-in both;
+  animation: tool-out 220ms cubic-bezier(0.4, 0, 0.7, 0.3) both;
 }
 @keyframes tool-in {
-  from { opacity: 0; transform: translateY(3px); }
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
   to { opacity: 1; transform: none; }
 }
 @keyframes tool-out {
   from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 0; transform: translateY(-6px) scale(0.96); }
 }
 @media (prefers-reduced-motion: reduce) {
   .tool-chip.entering,
