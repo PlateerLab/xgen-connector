@@ -7,6 +7,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { xgen } from '../bridge';
 import type { McpServerConfig } from '../../../main/config';
 import type { McpBridgeStatusLike } from '../../../preload/index';
+import {
+  McpImportError,
+  parseMcpConfig,
+  toDisplayCommand,
+  toMcpConfigJson,
+  type ImportedServer,
+} from './mcp-import';
 
 type Transport = 'stdio' | 'http';
 type Draft = {
@@ -51,7 +58,9 @@ function draftFromConfig(c: McpServerConfig): Draft {
   return {
     name: c.name,
     transport: c.transport,
-    command: c.command ?? '',
+    // 가져오기로 들어온 args 는 편집 폼에서 한 줄 명령으로 보여준다
+    // (저장 시 이 문자열이 진실이 되고 args 는 버려진다 — 왕복 일관).
+    command: toDisplayCommand(c.command ?? '', c.args ?? []),
     url: c.url ?? '',
     envText: kvToText(c.env, '='),
     headersText: kvToText(c.headers, ': '),
@@ -61,6 +70,8 @@ function draftFromConfig(c: McpServerConfig): Draft {
 function configFromDraft(d: Draft): McpServerConfig {
   const c: McpServerConfig = { name: d.name.trim(), transport: d.transport, enabled: d.enabled };
   if (d.transport === 'stdio') {
+    // 폼에서 명령을 직접 편집하면 그 문자열이 진실이 된다 — 가져오기로 들어온
+    // args 배열은 버린다 (둘이 어긋나면 실행 인자가 예상과 달라진다).
     c.command = d.command.trim();
     const env = textToKv(d.envText, '=');
     if (env) c.env = env;
@@ -79,6 +90,11 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [editing, setEditing] = useState<number | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [test, setTest] = useState<{ busy?: boolean; ok?: boolean; msg?: string } | null>(null);
+  // 표준 MCP 설정 JSON 붙여넣기
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importMsg, setImportMsg] = useState<{ ok?: boolean; text: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     xgen.mcp.getEnabled().then(setEnabled).catch(() => undefined);
@@ -112,6 +128,71 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     else if (typeof editing === 'number') next[editing] = c;
     await persist(next);
     setEditing(null);
+  };
+
+  /** 붙여넣은 표준 JSON 을 서버 목록에 병합 (같은 이름은 덮어쓰기). */
+  const importJson = async () => {
+    setImportMsg(null);
+    let parsed;
+    try {
+      parsed = parseMcpConfig(importText);
+    } catch (e) {
+      setImportMsg({
+        ok: false,
+        text: e instanceof McpImportError ? e.message : `가져오기 실패: ${String(e)}`,
+      });
+      return;
+    }
+    const next = [...servers];
+    const added: string[] = [];
+    const replaced: string[] = [];
+    for (const s of parsed.servers) {
+      const cfg: McpServerConfig = {
+        name: s.name,
+        transport: s.transport,
+        enabled: s.enabled !== false,
+        ...(s.transport === 'stdio'
+          ? { command: s.command, args: s.args, env: s.env }
+          : { url: s.url, headers: s.headers }),
+      };
+      const at = next.findIndex((x) => x.name === s.name);
+      if (at >= 0) {
+        next[at] = cfg;
+        replaced.push(s.name);
+      } else {
+        next.push(cfg);
+        added.push(s.name);
+      }
+    }
+    await persist(next);
+    const parts = [
+      added.length ? `추가 ${added.length}개 (${added.join(', ')})` : '',
+      replaced.length ? `덮어씀 ${replaced.length}개 (${replaced.join(', ')})` : '',
+      ...parsed.warnings,
+    ].filter(Boolean);
+    setImportMsg({ ok: true, text: parts.join(' · ') });
+    setImportText('');
+  };
+
+  /** 현재 목록을 표준 JSON 으로 복사 (다른 도구에 붙여넣기). */
+  const copyJson = async () => {
+    const payload: ImportedServer[] = servers.map((s) => ({
+      name: s.name,
+      transport: s.transport,
+      command: s.command,
+      args: s.args,
+      env: s.env,
+      url: s.url,
+      headers: s.headers,
+      enabled: s.enabled,
+    }));
+    try {
+      await navigator.clipboard.writeText(toMcpConfigJson(payload));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* 클립보드 권한 없음 — 조용히 무시 */
+    }
   };
 
   const remove = async (i: number) => {
@@ -188,7 +269,11 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     )}
                     {st?.connected && <span className="small muted">도구 {st.tools.length}</span>}
                   </div>
-                  <div className="mcp-item-cmd">{s.transport === 'stdio' ? s.command : s.url}</div>
+                  <div className="mcp-item-cmd">
+                    {s.transport === 'stdio'
+                      ? toDisplayCommand(s.command ?? '', s.args ?? [])
+                      : s.url}
+                  </div>
                 </div>
                 <div className="mcp-item-actions">
                   <button className="link" onClick={() => startEdit(i)}>
@@ -204,9 +289,57 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         </div>
 
         {editing === null ? (
-          <button className="secondary" style={{ marginTop: 8 }} onClick={() => startEdit('new')}>
-            + MCP 서버 추가
-          </button>
+          <>
+            <div className="row" style={{ marginTop: 8, gap: 6 }}>
+              <button className="secondary" onClick={() => startEdit('new')}>
+                + MCP 서버 추가
+              </button>
+              <button
+                className="secondary"
+                onClick={() => {
+                  setImportOpen((v) => !v);
+                  setImportMsg(null);
+                }}
+              >
+                {importOpen ? 'JSON 붙여넣기 닫기' : 'JSON 붙여넣기'}
+              </button>
+              {servers.length > 0 && (
+                <button className="secondary" onClick={() => void copyJson()} title="현재 설정을 표준 JSON 으로 복사">
+                  {copied ? '복사됨' : 'JSON 복사'}
+                </button>
+              )}
+            </div>
+
+            {importOpen && (
+              <div className="mcp-form" style={{ marginTop: 8 }}>
+                <label className="field">
+                  <span>표준 MCP 설정 JSON</span>
+                  <span className="small muted">
+                    Claude Desktop·Cursor 등에서 쓰는 <code>mcpServers</code> 블록을 그대로 붙여넣으세요.
+                    같은 이름은 덮어씁니다.
+                  </span>
+                  <textarea
+                    rows={8}
+                    className="mono"
+                    value={importText}
+                    onChange={(e) => setImportText(e.target.value)}
+                    placeholder={'{\n  "mcpServers": {\n    "mcp-atlassian": {\n      "command": "uvx",\n      "args": ["mcp-atlassian"],\n      "env": { "JIRA_URL": "https://your.atlassian.net" }\n    }\n  }\n}'}
+                  />
+                </label>
+                {importMsg && (
+                  <div className={`small ${importMsg.ok ? 'notice-ok' : 'notice-warn'}`}>{importMsg.text}</div>
+                )}
+                <div className="mcp-form-actions">
+                  <button className="link" onClick={() => { setImportOpen(false); setImportText(''); setImportMsg(null); }}>
+                    취소
+                  </button>
+                  <button className="primary" disabled={!importText.trim()} onClick={() => void importJson()}>
+                    가져오기
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         ) : (
           <div className="mcp-form">
             <label className="field">

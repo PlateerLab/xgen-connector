@@ -2232,3 +2232,16 @@ button {
   padding: 4px 10px;
   font-size: 12px;
 }
+
+/* MCP 표준 JSON 붙여넣기 — 성공 알림 + 모노스페이스 입력 */
+.notice-ok {
+  color: var(--success);
+}
+textarea.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}

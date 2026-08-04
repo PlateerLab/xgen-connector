@@ -14,8 +14,12 @@ export interface McpServerConfig {
   /** Unique, stable id used to namespace the server's tools. */
   name: string;
   transport: 'stdio' | 'http';
-  /** stdio: full command line, e.g. `npx -y @modelcontextprotocol/server-filesystem /path`. */
+  /** stdio: 실행 명령. `args` 가 없으면 따옴표 인식 분해로 argv 를 만든다
+   *  (사람이 한 줄로 적는 경로), `args` 가 있으면 이 값은 **실행 파일**이다. */
   command?: string;
+  /** stdio: 표준 MCP 설정(JSON)에서 가져온 argv. 문자열로 합쳤다 다시 쪼개면
+   *  공백·따옴표가 든 인자가 깨지므로 분리 보존한다. */
+  args?: string[];
   /** stdio: extra environment merged over the connector's env (e.g. API tokens). */
   env?: Record<string, string>;
   /** http: the MCP endpoint URL (Streamable HTTP). */

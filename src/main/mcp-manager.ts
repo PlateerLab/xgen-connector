@@ -105,7 +105,11 @@ export class MCPManager {
       let transport;
       if (cfg.transport === 'stdio') {
         if (!cfg.command) throw new Error('stdio server has no command');
-        const [command, ...args] = tokenize(cfg.command);
+        // args 가 있으면(표준 JSON 가져오기) command 는 실행 파일 그 자체다 —
+        // 재분해하지 않아야 공백/따옴표가 든 인자가 그대로 전달된다.
+        const [command, ...args] = cfg.args?.length
+          ? [cfg.command.trim(), ...cfg.args]
+          : tokenize(cfg.command);
         if (!command) throw new Error('empty command');
         transport = new StdioClientTransport({
           command,
