@@ -34,6 +34,10 @@ export interface ChangesResponse {
   latest_seq: number
   changes: RemoteChange[]
   max_file_bytes?: number
+  /** 서버가 인덱스에서 제외하는 gitignore 스타일 패턴. 서버 스냅샷에 없는
+   *  이유가 '삭제'가 아니라 '무시'일 수 있으므로, 부트스트랩 권위 삭제에서
+   *  제외한다 (목록 드리프트로 사용자 파일이 지워지던 사고의 2차 방어선). */
+  sync_ignores?: string[]
   /** Server signal: this cursor predates pruned tombstones / an index
    *  rebuild — deltas would silently miss deletions; re-bootstrap. */
   stale_cursor?: boolean
@@ -218,13 +222,51 @@ export async function syncOnce(
     }
   }
 
+  // 서버 ignore 규칙 매처 — 서버가 인덱스에서 빼는 경로는 '스냅샷에 없음'이
+  // 곧 '삭제됨'을 뜻하지 않는다. gitignore 의 실용 부분집합만 해석한다:
+  //   'name/'      → 어느 깊이든 그 이름의 디렉터리 아래 전부
+  //   '*.ext'      → 파일명 매칭 (모든 깊이)
+  //   'a/**'       → 접두 매칭
+  //   그 외 리터럴 → 경로 세그먼트 일치
+  const ignorePatterns = remote.sync_ignores ?? []
+  const serverIgnored = (p: string): boolean => {
+    if (!ignorePatterns.length) return false
+    const segs = p.split('/')
+    const name = segs[segs.length - 1]
+    for (const raw of ignorePatterns) {
+      const pat = raw.trim()
+      if (!pat) continue
+      if (pat.endsWith('/**')) {
+        const base = pat.slice(0, -3).replace(/\/$/, '')
+        if (p === base || p.startsWith(base + '/')) return true
+        if (segs.includes(base)) return true
+        continue
+      }
+      if (pat.endsWith('/')) {
+        if (segs.slice(0, -1).includes(pat.slice(0, -1))) return true
+        if (segs.includes(pat.slice(0, -1))) return true
+        continue
+      }
+      if (pat.includes('*')) {
+        const rx = new RegExp('^' + pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$')
+        if (rx.test(name) || rx.test(p)) return true
+        continue
+      }
+      if (segs.includes(pat)) return true
+    }
+    return false
+  }
+
   const local = await fs.scan()
 
   // Fail-closed replica check: an EMPTY scan while the index tracks a
   // real tree means the folder is unavailable (unmounted share, renamed
   // root, transient FS error) — treating it as "user deleted everything"
   // would wipe the server workspace. Abort the round instead.
-  if (local.size === 0 && Object.keys(index.entries).length > 5) {
+  if (local.size === 0 && Object.keys(index.entries).length > 0) {
+    // 임계값 0: 추적 항목이 하나라도 있는데 스캔이 비면 폴더 불가용으로 본다.
+    // (과거 임계 5 는 소형 워크스페이스를 무방비로 남겼다 — 5개 이하의
+    //  에이전트 산출물이 통째로 원격 삭제될 수 있었다.)
     throw new Error('replica folder unavailable (empty scan over a tracked tree) — sync round aborted')
   }
 
@@ -340,7 +382,7 @@ export async function syncOnce(
       // server state — a tracked path absent from it was deleted while
       // our cursor was invalid (pruned tombstones). Apply the deletion
       // (the mass-delete valve below still guards the blast radius).
-      if (isBootstrap && idx !== undefined && rc === undefined) {
+      if (isBootstrap && idx !== undefined && rc === undefined && !serverIgnored(p)) {
         if (localExists) {
           plan.push({ kind: 'deleteLocal', path: p, isDir: st!.isDir, expected: st })
         } else {
@@ -430,15 +472,29 @@ export async function syncOnce(
   // AND a broken/emptied replica propagating up (deleteRemote — the
   // hub-destroying direction). min(tracked, …) makes a full wipe of a
   // small workspace trip it too.
-  const localDeletions = plan.filter((a) => a.kind === 'deleteLocal').length
-  const remoteDeletions = plan.filter((a) => a.kind === 'deleteRemote').length
+  // 디렉터리 삭제는 그 아래의 추적 항목 전부를 날린다 — 액션 1개가 아니라
+  // **영향 파일 수**로 세야 밸브가 제 역할을 한다 (재귀 삭제 1건이 수백
+  // 파일을 지우는데 액션 카운트로는 1이라 밸브를 통과했다).
+  const impact = (a: Action): number => {
+    if (a.kind !== 'deleteLocal' && a.kind !== 'deleteRemote') return 0
+    if (!('isDir' in a) || !a.isDir) return 1
+    const prefix = a.path + '/'
+    return 1 + Object.keys(index.entries).filter((k) => k.startsWith(prefix)).length
+  }
+  const localDeletions = plan.filter((a) => a.kind === 'deleteLocal').reduce((n, a) => n + impact(a), 0)
+  const remoteDeletions = plan.filter((a) => a.kind === 'deleteRemote').reduce((n, a) => n + impact(a), 0)
   const deletions = Math.max(localDeletions, remoteDeletions)
   const tracked = Object.keys(index.entries).length
-  const threshold = Math.min(
-    Math.max(tracked, 1),
-    Math.max(MASS_DELETE_MIN, Math.ceil(tracked * MASS_DELETE_RATIO)),
-  )
-  if (tracked > 20 && deletions >= threshold) {
+  // 임계값: 큰 트리는 절대수(MASS_DELETE_MIN)·비율(30%) 중 큰 쪽,
+  // **작은 트리는 비율(50%) 기준**으로 내려간다. 과거 공식은 작은 트리에서
+  // threshold=tracked 라 100% 삭제만 걸렀고, tracked>20 게이트까지 있어
+  // 20개 이하 워크스페이스는 밸브가 아예 돌지 않았다 (무경고 전량 삭제).
+  // 최소 3개 바닥값으로 1~2개 정상 삭제는 방해하지 않는다.
+  const threshold =
+    tracked <= MASS_DELETE_MIN
+      ? Math.max(3, Math.ceil(tracked * 0.5))
+      : Math.max(MASS_DELETE_MIN, Math.ceil(tracked * MASS_DELETE_RATIO))
+  if (deletions > 0 && deletions >= threshold) {
     const ok = opts.confirmMassDelete
       ? await opts.confirmMassDelete(deletions, tracked)
       : false

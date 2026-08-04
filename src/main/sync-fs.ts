@@ -145,8 +145,15 @@ export class ReplicaFs implements LocalFs {
       let entries
       try {
         entries = await readdir(dirAbs, { withFileTypes: true })
-      } catch {
-        return
+      } catch (e) {
+        // 루트가 사라졌으면(마운트 해제·이름변경) 빈 스캔으로 두고 엔진의
+        // fail-closed 가드가 라운드를 중단하게 한다. 그 외(EMFILE/EACCES/
+        // 안티바이러스 잠금)의 **부분 실패는 조용히 넘기면 안 된다** — 그
+        // 하위 트리가 통째로 '로컬에서 삭제됨'으로 해석돼 서버 파일이
+        // 파괴된다. 라운드를 실패시키고 다음 라운드에 재시도한다.
+        const code = (e as NodeJS.ErrnoException)?.code
+        if (dirAbs === this.root && (code === 'ENOENT' || code === 'ENOTDIR')) return
+        throw new Error(`scan failed at ${relPrefix || '.'}: ${code ?? e}`)
       }
       for (const ent of entries) {
         // NFC-normalize names so macOS NFD spellings match server NFC paths
