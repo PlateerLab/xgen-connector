@@ -201,7 +201,7 @@ test('없는 경로는 스테일 정리 대상이 아니다', async () => {
   assert.equal(called, false)
 })
 
-test('사전 점검이 원인을 특정한다 (바인딩은 "fuse failed" 한 줄만 준다)', (ctx) => {
+test('사전 점검이 원인을 특정한다 (바인딩은 "fuse failed" 한 줄만 준다)', async (ctx) => {
   // FUSE 는 리눅스 전용 — 다른 OS 에서는 "fusermount 없음"이 먼저 걸린다.
   if (process.platform !== 'linux') return ctx.skip('linux 전용')
   const { mkdtempSync, writeFileSync } = require('fs') as typeof import('fs')
@@ -211,18 +211,18 @@ test('사전 점검이 원인을 특정한다 (바인딩은 "fuse failed" 한 �
   // 마운트 지점에 파일이 남아 있으면 FUSE 가 붙지 못한다 — 그 사실을 말해야 한다.
   const dir = mkdtempSync(join(tmpdir(), 'pf-'))
   writeFileSync(join(dir, 'leftover.txt'), 'x')
-  const r = preflight(dir)
+  const r = await preflight(dir)
   assert.ok(r, '남은 파일을 감지하지 못했다')
   assert.match(r!.error, /파일이 남아 있어/)
   assert.ok(r!.hint && r!.hint.length > 0, '해결 방법이 없다')
 })
 
-test('빈 마운트 지점은 사전 점검을 통과한다 (이 리눅스 기준)', (ctx) => {
+test('빈 마운트 지점은 사전 점검을 통과한다 (이 리눅스 기준)', async (ctx) => {
   if (process.platform !== 'linux') return ctx.skip('linux 전용')
   const { mkdtempSync } = require('fs') as typeof import('fs')
   const { tmpdir } = require('os') as typeof import('os')
   const { join } = require('path') as typeof import('path')
-  const r = preflight(mkdtempSync(join(tmpdir(), 'pf-ok-')))
+  const r = await preflight(mkdtempSync(join(tmpdir(), 'pf-ok-')))
   // 이 개발/CI 머신은 fuse3 + setuid fusermount 가 있다. 없으면 그 사유가
   // 정확히 나와야 한다 (그것도 정상 동작이다).
   if (r) {
@@ -231,7 +231,7 @@ test('빈 마운트 지점은 사전 점검을 통과한다 (이 리눅스 기�
   }
 })
 
-test('빈 잔재 폴더는 스스로 치우고, 내용 있는 것만 사용자에게 알린다', (ctx) => {
+test('빈 잔재 폴더는 스스로 치우고, 내용 있는 것만 사용자에게 알린다', async (ctx) => {
   if (process.platform !== 'linux') return ctx.skip('linux 전용')
   const { mkdtempSync, mkdirSync, writeFileSync, existsSync } = require('fs') as typeof import('fs')
   const { tmpdir } = require('os') as typeof import('os')
@@ -240,13 +240,13 @@ test('빈 잔재 폴더는 스스로 치우고, 내용 있는 것만 사용자�
   const dir = mkdtempSync(join(tmpdir(), 'pf-clean-'))
   // 예전 버전이 만들던 빈 에이전트 폴더 — 우리 잔재이므로 우리가 치운다
   mkdirSync(join(dir, 'XGeny_copy'))
-  assert.equal(preflight(dir), null, '빈 잔재를 치우지 못해 마운트가 막혔다')
+  assert.equal(await preflight(dir), null, '빈 잔재를 치우지 못해 마운트가 막혔다')
   assert.ok(!existsSync(join(dir, 'XGeny_copy')), '빈 잔재가 남아 있다')
 
   // 내용이 있으면 사용자 파일일 수 있다 — 절대 지우지 않고 알린다
   mkdirSync(join(dir, '내 폴더'))
   writeFileSync(join(dir, '내 폴더', 'data.txt'), 'user data')
-  const r = preflight(dir)
+  const r = await preflight(dir)
   assert.ok(r, '내용 있는 폴더를 감지하지 못했다')
   assert.match(r!.hint ?? '', /내 폴더/)
   assert.ok(existsSync(join(dir, '내 폴더', 'data.txt')), '사용자 파일을 지웠다')
