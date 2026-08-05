@@ -34,6 +34,7 @@ import { XgenClient, type ChatEvent, type TtsSpeakOptions } from '../core/index'
 import {
   loadConfig,
   saveConfig,
+  resetConfig,
   normalizeServerUrl,
   type ConnectorConfig,
   type SyncPairPersistConfig,
@@ -850,6 +851,22 @@ function resetPositions(): void {
   // quick-chat re-centers on its next summon now that quickChatBar is cleared.
 }
 
+/** 로컬 설정과 로그인 정보를 지운 뒤 배포 기본값으로 다시 시작한다. */
+async function resetStoredSettings(): Promise<void> {
+  getMcpBridge().stop();
+  getSyncManager()?.stopAll();
+  void client?.logout().catch(() => undefined);
+  client = null;
+  await Promise.allSettled([
+    tokenStore.clear(),
+    credentialStore.clear(),
+    getWorkspaceManager()?.stop() ?? Promise.resolve(),
+  ]);
+  applyAutoLaunch(false);
+  resetConfig();
+  relaunchSelf();
+}
+
 // ── System tray (작업 표시줄) ─────────────────────────────────────
 /** 트레이 생성 — 실패를 허용한다 (리눅스에서 appindicator 부재 시 throw).
  *  @returns 트레이가 실제로 생겼는지. false 면 호출자는 --hidden 시작을
@@ -1460,6 +1477,14 @@ ipcMain.handle(CHANNELS.autostartSet, (_e, enabled: boolean) => {
   return effective;
 });
 ipcMain.on(CHANNELS.resetPositions, () => resetPositions());
+ipcMain.on(CHANNELS.resetSettings, () => {
+  void resetStoredSettings().catch((err) => {
+    dialog.showErrorBox(
+      '설정 초기화 실패',
+      err instanceof Error ? err.message : String(err),
+    );
+  });
+});
 ipcMain.on(CHANNELS.appRestart, () => {
   saveOverlayGeometry(true); // persist any pending move/resize before relaunching
   relaunchSelf();

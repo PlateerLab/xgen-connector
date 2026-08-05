@@ -6,7 +6,7 @@
  * (see keychain.ts). `XGEN_SERVER_URL` env pre-seeds the base URL on first run.
  */
 import { app } from 'electron';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEPLOYMENT_DEFAULTS } from './deployment-defaults';
 
@@ -158,6 +158,11 @@ export function saveConfig(patch: Partial<ConnectorConfig>): ConnectorConfig {
   const next = { ...loadConfig(), ...patch };
   writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf-8');
   return next;
+}
+
+/** 저장된 로컬 설정을 제거해 다음 실행에서 배포 기본값부터 다시 시작한다. */
+export function resetConfig(): void {
+  rmSync(configPath(), { force: true });
 }
 
 /** Server-URL 정규화 (geny-connector 동형):

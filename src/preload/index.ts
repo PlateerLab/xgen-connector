@@ -247,6 +247,7 @@ const api = {
     setAutostart: (enabled: boolean): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.autostartSet, enabled),
     resetPositions: (): void => ipcRenderer.send(CHANNELS.resetPositions),
+    resetSettings: (): void => ipcRenderer.send(CHANNELS.resetSettings),
     restart: (): void => ipcRenderer.send(CHANNELS.appRestart),
     quit: (): void => ipcRenderer.send(CHANNELS.appQuit),
   },

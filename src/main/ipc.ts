@@ -71,6 +71,7 @@ export const CHANNELS = {
   autostartGet: 'app:autostartGet',
   autostartSet: 'app:autostartSet',
   resetPositions: 'app:resetPositions',
+  resetSettings: 'app:resetSettings',
   appRestart: 'app:restart',
   appQuit: 'app:quit',
 
