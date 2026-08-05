@@ -43,6 +43,15 @@ export interface WorkspaceStatus {
   agents: Array<{ workflowId: string; label: string; folder: string }>
 }
 
+/**
+ * ⚠ **이 프로세스는 자기 마운트를 절대 동기 IO 로 만지면 안 된다.**
+ *
+ * FUSE 콜백이 이 이벤트 루프에 올라온다. 루프를 막는 동기 호출이 마운트를
+ * 향하면 콜백이 응답하지 못하고 **서로를 기다리는 데드락**이 된다 (실기:
+ * shell.openPath 로 "폴더 열기"를 누르는 순간 앱이 응답 없음).
+ *
+ * 그래서 마운트 경로를 다루는 일은 전부 자식 프로세스나 비동기로 한다.
+ */
 export class WorkspaceManager {
   private backend = new WorkspaceDavBackend()
   private handle: DavServerHandle | null = null

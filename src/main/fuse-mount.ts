@@ -425,13 +425,19 @@ export async function mountFuse(
           unmount: () =>
             new Promise<void>((done) => {
               fuse.unmount(() => {
-                try {
-                  if (existsSync(mountpoint) && readdirSync(mountpoint).length === 0) {
-                    rmdirSync(mountpoint)
-                  }
-                } catch {
-                  /* 정리 실패는 무해 */
-                }
+                // ⚠ 여기서 마운트 경로를 **동기로** 만지지 않는다. 언마운트
+                // 콜백 시점에 커널이 아직 정리 중이면 그 호출이 우리 루프를
+                // 막고, 곧 데드락이 된다. 정리는 비동기로 미룬다.
+                setTimeout(() => {
+                  void (async () => {
+                    try {
+                      const { readdir, rmdir } = await import('fs/promises')
+                      if ((await readdir(mountpoint)).length === 0) await rmdir(mountpoint)
+                    } catch {
+                      /* 정리 실패는 무해 */
+                    }
+                  })()
+                }, 0)
                 diag('fuse', '언마운트 완료')
                 done()
               })

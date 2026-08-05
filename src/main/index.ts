@@ -1520,6 +1520,28 @@ ipcMain.handle(CHANNELS.mcpTestServer, (e, cfg) =>
 );
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
 
+/**
+ * 파일 관리자로 경로 열기 — **shell.openPath 를 쓰면 안 된다.**
+ *
+ * 우리 마운트는 이 프로세스의 이벤트 루프가 서빙한다. `shell.openPath` 는
+ * 경로를 **동기적으로 확인**하므로, 그 대상이 우리 마운트면 루프가 막히고
+ * FUSE 콜백이 응답하지 못해 **서로를 기다리는 데드락**이 된다 (실기: "폴더
+ * 열기"를 누르는 순간 앱이 응답 없음).
+ *
+ * 자식 프로세스로 분리하면 우리 루프는 계속 돌고 마운트도 계속 응답한다.
+ */
+function openInFileManager(target: string): void {
+  const cmd =
+    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+  try {
+    const child = spawn(cmd, [target], { detached: true, stdio: 'ignore' });
+    child.on('error', (e) => console.log(`[workspace] 폴더 열기 실패: ${e.message}`));
+    child.unref();
+  } catch (e) {
+    console.log(`[workspace] 폴더 열기 실패: ${(e as Error).message}`);
+  }
+}
+
 // ── 워크스페이스(가상 드라이브) ─────────────────────────────────
 function wireWorkspaceManager(): void {
   initWorkspaceManager({
@@ -1579,7 +1601,7 @@ ipcMain.handle(CHANNELS.workspaceSetRoot, async () => {
 });
 ipcMain.handle(CHANNELS.workspaceOpen, () => {
   const p = getWorkspaceManager()?.status()?.path;
-  if (p) void shell.openPath(p);
+  if (p) openInFileManager(p);
   return { ok: !!p };
 });
 
