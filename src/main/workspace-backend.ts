@@ -167,6 +167,18 @@ export class WorkspaceDavBackend implements WebdavBackend {
     this.trees.delete(space.key)
   }
 
+  /**
+   * 서버가 "이 저장소가 바뀌었다"고 알려왔을 때 캐시를 버린다.
+   *
+   * 이게 없으면 드라이브는 TTL(4초)이 지나고 **누군가 폴더를 다시 열어야만**
+   * 새 파일을 본다. 웹에서 올린 파일이 탐색기에 안 나타나는 것처럼 보인다.
+   *
+   * @param key 사용자 스토리지는 빈 문자열, 에이전트는 폴더명.
+   */
+  invalidateSpace(key: string): void {
+    this.trees.delete(key)
+  }
+
   private node(name: string, e: Entry): DavNode {
     return { name, isDir: e.isDir, size: e.size, mtime: e.mtime, etag: e.sha || undefined }
   }
