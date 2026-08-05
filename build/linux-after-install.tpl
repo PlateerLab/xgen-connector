@@ -23,8 +23,14 @@ fi
 # helper at 0755 and the app dies at launch with SIGTRAP
 # ("SUID sandbox helper ... is not configured correctly"). The SUID helper
 # path works on every kernel/AppArmor combination, so use it unconditionally.
-chown root:root '/opt/${sanitizedProductName}/chrome-sandbox' || true
-chmod 4755 '/opt/${sanitizedProductName}/chrome-sandbox' || true
+# 결과를 **설치 로그에 남긴다.** 조용히 실패하면 나중에 앱이 SIGTRAP 으로
+# 죽었을 때 원인 추적이 처음부터 다시 시작된다.
+SANDBOX='/opt/${sanitizedProductName}/chrome-sandbox'
+if chown root:root "$SANDBOX" 2>/dev/null && chmod 4755 "$SANDBOX" 2>/dev/null; then
+    echo "xgen-connector: chrome-sandbox SUID-root 설정 완료 (샌드박스 사용)"
+else
+    echo "xgen-connector: chrome-sandbox SUID 설정 실패 — 앱이 --no-sandbox 로 자동 전환됩니다" >&2
+fi
 
 if hash update-mime-database 2>/dev/null; then
     update-mime-database /usr/share/mime || true
