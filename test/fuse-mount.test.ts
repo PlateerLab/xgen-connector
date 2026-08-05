@@ -213,7 +213,7 @@ test('사전 점검이 원인을 특정한다 (바인딩은 "fuse failed" 한 �
   writeFileSync(join(dir, 'leftover.txt'), 'x')
   const r = preflight(dir)
   assert.ok(r, '남은 파일을 감지하지 못했다')
-  assert.match(r!.error, /파일이 남아 있습니다/)
+  assert.match(r!.error, /파일이 남아 있어/)
   assert.ok(r!.hint && r!.hint.length > 0, '해결 방법이 없다')
 })
 
@@ -229,4 +229,25 @@ test('빈 마운트 지점은 사전 점검을 통과한다 (이 리눅스 기�
     assert.match(r.error, /fusermount|\/dev\/fuse/)
     assert.ok(r.hint, `사유는 있는데 해결 방법이 없다: ${r.error}`)
   }
+})
+
+test('빈 잔재 폴더는 스스로 치우고, 내용 있는 것만 사용자에게 알린다', (ctx) => {
+  if (process.platform !== 'linux') return ctx.skip('linux 전용')
+  const { mkdtempSync, mkdirSync, writeFileSync, existsSync } = require('fs') as typeof import('fs')
+  const { tmpdir } = require('os') as typeof import('os')
+  const { join } = require('path') as typeof import('path')
+
+  const dir = mkdtempSync(join(tmpdir(), 'pf-clean-'))
+  // 예전 버전이 만들던 빈 에이전트 폴더 — 우리 잔재이므로 우리가 치운다
+  mkdirSync(join(dir, 'XGeny_copy'))
+  assert.equal(preflight(dir), null, '빈 잔재를 치우지 못해 마운트가 막혔다')
+  assert.ok(!existsSync(join(dir, 'XGeny_copy')), '빈 잔재가 남아 있다')
+
+  // 내용이 있으면 사용자 파일일 수 있다 — 절대 지우지 않고 알린다
+  mkdirSync(join(dir, '내 폴더'))
+  writeFileSync(join(dir, '내 폴더', 'data.txt'), 'user data')
+  const r = preflight(dir)
+  assert.ok(r, '내용 있는 폴더를 감지하지 못했다')
+  assert.match(r!.hint ?? '', /내 폴더/)
+  assert.ok(existsSync(join(dir, '내 폴더', 'data.txt')), '사용자 파일을 지웠다')
 })

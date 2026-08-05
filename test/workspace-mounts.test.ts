@@ -15,7 +15,7 @@ import {
   providerFor,
   UnsupportedMount,
 } from '../src/main/workspace-mounts'
-import { attachAgent, setMountProvider, mount, type WorkspaceConfig } from '../src/main/workspace'
+import { materialize, setMountProvider, mount } from '../src/main/workspace'
 
 const okProbe = () => ({ ok: true })
 const failProbe = () => ({ ok: false, hint: '준비물 없음' })
@@ -64,7 +64,7 @@ test('모르는 플랫폼도 조용히 실패하지 않고 사유를 말한다',
   assert.ok(s.reason?.includes('freebsd'))
 })
 
-test('미지원 제공자는 폴더를 하나도 만들지 않는다', () => {
+test('미지원 제공자는 마운트 지점조차 만들지 않는다', () => {
   const support = detectMountSupport('freebsd' as NodeJS.Platform, okProbe)
   const provider = providerFor(support)
   assert.ok(provider instanceof UnsupportedMount)
@@ -72,14 +72,11 @@ test('미지원 제공자는 폴더를 하나도 만들지 않는다', () => {
   const original = mount()
   setMountProvider(provider)
   try {
-    const home = mkdtempSync(join(tmpdir(), 'ws-mac-'))
-    let cfg: WorkspaceConfig = { agents: [] }
+    const home = mkdtempSync(join(tmpdir(), 'ws-unsup-'))
     assert.throws(
-      () => {
-        cfg = attachAgent(cfg, { id: 'p1', workflowId: 'wf-1', label: 'A' }, home)
-      },
+      () => materialize({ agents: [] }, home),
       /파일시스템 기능을 제공하지 않습니다/,
-      '미지원 플랫폼에서 에이전트 추가가 통과했다',
+      '미지원 플랫폼에서 마운트 지점을 만들었다',
     )
     assert.ok(!existsSync(join(home, 'XGEN-Workspace')), '미지원인데 루트를 만들었다')
   } finally {
@@ -90,8 +87,7 @@ test('미지원 제공자는 폴더를 하나도 만들지 않는다', () => {
 test('미지원 제공자의 정리 요청은 조용히 지나간다', () => {
   const provider = new UnsupportedMount('nope')
   // 만든 적이 없으니 지울 것도 없다 — 여기서 던지면 로그아웃/종료가 깨진다.
-  assert.doesNotThrow(() => provider.removeAgentDir())
-  assert.doesNotThrow(() => provider.dispose())
+  assert.doesNotThrow(() => provider.dispose('/x'))
 })
 
 test('지원 플랫폼은 실제로 동작하는 제공자를 받는다', () => {

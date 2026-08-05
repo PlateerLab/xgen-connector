@@ -26,6 +26,7 @@
  */
 
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmdirSync, statSync } from 'fs'
+import { join } from 'path'
 import { diag } from './diag-log'
 import type { WebdavBackend } from './webdav-server'
 
@@ -338,12 +339,29 @@ export function preflight(mountpoint: string): { error: string; hint?: string } 
       hint: '컨테이너/스냅 환경이면 FUSE 가 막혀 있을 수 있습니다. 일반 데스크톱 세션에서 실행해 보세요.',
     }
   }
+  // 마운트 지점은 비어 있어야 한다. 다만 **빈 디렉터리는 우리가 치운다** —
+  // 예전 버전이 에이전트 폴더를 실제로 만들던 시절의 잔재이고(구조적으로
+  // 고쳤다), 사용자에게 수동 정리를 시킬 일이 아니다. 내용이 있는 항목만
+  // 남으면 그때 사용자에게 알린다 (사용자 파일일 수 있으므로 절대 안 지운다).
   try {
+    for (const name of readdirSync(mountpoint)) {
+      const child = join(mountpoint, name)
+      try {
+        if (statSync(child).isDirectory() && readdirSync(child).length === 0) {
+          rmdirSync(child)
+          diag('fuse', `빈 잔재 폴더 정리: ${name}`)
+        }
+      } catch {
+        /* 못 지우면 아래에서 사용자에게 알린다 */
+      }
+    }
     const left = readdirSync(mountpoint)
     if (left.length > 0) {
       return {
-        error: `마운트 지점에 파일이 남아 있습니다 (${left.length}개): ${mountpoint}`,
-        hint: '이전 설치의 잔재일 수 있습니다. 내용을 확인한 뒤 폴더를 비우고 다시 시도하세요.',
+        error: `마운트 지점에 파일이 남아 있어 연결할 수 없습니다 (${left.length}개)`,
+        hint: `${mountpoint} 의 내용을 다른 곳으로 옮긴 뒤 다시 시도하세요 (남은 항목: ${left
+          .slice(0, 5)
+          .join(', ')}${left.length > 5 ? ' …' : ''}).`,
       }
     }
   } catch (e) {

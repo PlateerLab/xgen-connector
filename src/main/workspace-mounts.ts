@@ -158,16 +158,9 @@ export class UnsupportedMount implements MountProvider {
     this.fail()
   }
 
-  ensureAgentDir(): string {
-    this.fail()
-  }
-
-  removeAgentDir(): void {
-    // 정리 요청은 조용히 무시한다 — 애초에 만든 적이 없으므로 지울 것도 없다.
-  }
-
-  dispose(): void {
-    /* no-op */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  dispose(_root: string): void {
+    /* 만든 적이 없으니 지울 것도 없다 — 던지면 로그아웃/종료가 깨진다. */
   }
 }
 
