@@ -86,7 +86,8 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                     끄면 폴더가 사라집니다. 파일의 원본은 서버에 그대로 있습니다.
                   </div>
                 </div>
-                <label className="row" style={{ gap: 6, cursor: 'pointer' }}>
+                {/* 앱의 다른 on/off 와 같은 토글 (VoiceSettings·McpSettings 동일 컴포넌트) */}
+                <label className="switch">
                   <input
                     type="checkbox"
                     checked={ws?.enabled !== false}
@@ -95,7 +96,7 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                       void act('enabled', () => xgen.workspace.setEnabled(e.target.checked))
                     }
                   />
-                  <span className="small">{ws?.enabled === false ? '꺼짐' : '켜짐'}</span>
+                  <span className="track" />
                 </label>
               </div>
             </div>
@@ -115,6 +116,29 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                       폴더 열기
                     </button>
                   )}
+                  {/*
+                    붙어 있으면 [동기화](서버 상태 다시 읽기), 안 붙어 있으면
+                    [다시 연결](걷고 재마운트). 실패했을 때 사용자가 스스로
+                    되살릴 수단이 없으면 앱을 껐다 켜는 수밖에 없다.
+                  */}
+                  {ws?.enabled !== false &&
+                    (ws?.mounted ? (
+                      <button
+                        className="link"
+                        disabled={!!busy}
+                        onClick={() => void act('refresh', () => xgen.workspace.refresh())}
+                      >
+                        {busy === 'refresh' ? '동기화 중…' : '동기화'}
+                      </button>
+                    ) : (
+                      <button
+                        className="link"
+                        disabled={!!busy}
+                        onClick={() => void act('remount', () => xgen.workspace.remount())}
+                      >
+                        {busy === 'remount' ? '연결 중…' : '다시 연결'}
+                      </button>
+                    ))}
                   <button
                     className="link"
                     disabled={!!busy}

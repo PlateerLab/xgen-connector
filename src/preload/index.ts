@@ -273,6 +273,10 @@ const api = {
     setRoot: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceSetRoot),
     setEnabled: (enabled: boolean): Promise<WorkspaceStatusLike> =>
       ipcRenderer.invoke(CHANNELS.workspaceSetEnabled, enabled),
+    /** 실패한 마운트를 걷고 다시 붙인다. */
+    remount: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceRemount),
+    /** 서버 상태를 지금 다시 읽는다 (캐시 폐기 + 보류 업로드 재시도). */
+    refresh: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceRefresh),
     onStatus: (cb: (s: WorkspaceStatusLike) => void): (() => void) => {
       const h = (_e: unknown, s: WorkspaceStatusLike) => cb(s);
       ipcRenderer.on(CHANNELS.workspaceStatusEvent, h);

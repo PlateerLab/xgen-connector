@@ -1659,6 +1659,14 @@ ipcMain.handle(CHANNELS.workspaceSetEnabled, async (_e, enabled: boolean) => {
   await saveWorkspace({ ...cur, enabled: !!enabled });
   return getWorkspaceManager()?.status();
 });
+ipcMain.handle(CHANNELS.workspaceRemount, async () => {
+  await getWorkspaceManager()?.remount();
+  return getWorkspaceManager()?.status();
+});
+ipcMain.handle(CHANNELS.workspaceRefresh, async () => {
+  await getWorkspaceManager()?.refreshNow();
+  return getWorkspaceManager()?.status();
+});
 ipcMain.handle(CHANNELS.workspaceOpen, () => {
   const p = getWorkspaceManager()?.status()?.path;
   if (p) openInFileManager(p);
