@@ -28,7 +28,24 @@ export interface WorkspaceManagerDeps {
   loggedIn: () => boolean
   /** 로그인한 사용자의 클라우드 스토리지 API (루트). 없으면 에이전트만. */
   userApi?: () => WorkspaceApi | null
+  /** 현재 로그인한 사용자의 owner key (`user:<id>`). 없으면 null. */
+  userOwner?: () => string | null
+  /**
+   * 저장소 하나에 대한 **접속 표시(presence)**. 서버에 "이 PC 가 이 저장소에
+   * 붙어 있다"를 알리고, 변경 알림을 받는다.
+   *
+   * 이게 없으면 두 가지가 조용히 빠진다:
+   *   1. 웹의 "PC N대 동기화 중" 칩이 영영 안 뜬다 (기기 등록이 hello 로만 된다)
+   *   2. 서버 변경을 못 받아, 웹에서 올린 파일이 드라이브에 늦게/안 나타난다
+   */
+  presenceFor?: (owner: string, onChanged: () => void) => WorkspacePresence
   onStatus?: (s: WorkspaceStatus) => void
+}
+
+/** 저장소 하나에 대한 서버 접속 표시. */
+export interface WorkspacePresence {
+  start(): Promise<void>
+  stop(): void
 }
 
 export interface WorkspaceStatus {
@@ -82,12 +99,29 @@ export class WorkspaceManager {
   private lastHint: string | undefined
   /** 클라우드 스토리지가 꺼져 있을 때의 사유 (오류가 아니다). */
   private storageOff: string | undefined
+  /** owner → 접속 표시. 마운트되어 있는 동안만 살아 있다. */
+  private presence = new Map<string, WorkspacePresence>()
   private busy: Promise<void> | null = null
 
   constructor(private deps: WorkspaceManagerDeps) {}
 
   status(): WorkspaceStatus {
     const cfg = this.deps.config()
+    // 불변식: **연결되지 않았다면 반드시 이유가 있어야 한다.**
+    // 이유 없이 안 붙어 있으면 사용자는 (마운트가 아닌) 빈 폴더에 파일을 넣고
+    // 그 파일은 아무 데도 가지 않는다. 원인을 못 밝히더라도 "모른다"고는
+    // 말해야 한다 — 침묵이 가장 나쁘다.
+    const attached = (cfg?.agents ?? []).length > 0
+    const wants = attached || !!this.deps.userApi?.()
+    if (
+      wants &&
+      this.mountedPath === null &&
+      this.support.supported &&
+      !this.lastError &&
+      !this.storageOff
+    ) {
+      this.lastError = '드라이브를 연결하지 못했습니다 (원인 미상 — 진단 로그를 확인하세요)'
+    }
     return {
       supported: this.support.supported,
       reason: this.support.reason,
@@ -113,9 +147,16 @@ export class WorkspaceManager {
   async reconcile(): Promise<void> {
     // 마운트/언마운트가 겹치면 스테일 마운트가 남는다 — 항상 한 줄로 세운다.
     const prev = this.busy ?? Promise.resolve()
-    this.busy = prev.then(() => this.reconcileInner()).catch((e) => {
-      diag('workspace', `리컨사일 실패: ${(e as Error).message}`)
-    })
+    this.busy = prev
+      .then(() => this.reconcileInner())
+      .catch((e) => {
+        // 진단 로그에만 남기면 화면에는 **아무 이유 없이 연결 안 됨**으로
+        // 보인다. 사용자는 폴더가 있으니 파일을 넣고, 그 파일은 아무 데도
+        // 가지 않는다 — 실제로 그렇게 잃어버렸다. 반드시 화면까지 올린다.
+        this.lastError = `연결하지 못했습니다: ${(e as Error).message}`
+        diag('workspace', `리컨사일 실패: ${(e as Error).message}`)
+        this.emit()
+      })
     return this.busy
   }
 
@@ -198,11 +239,48 @@ export class WorkspaceManager {
     this.backend.setAgents(wired)
 
     if (this.mountedPath) {
+      this.syncPresence(userApi, agents)
       this.emit() // 이미 붙어 있다 — 목록만 갱신되면 된다
       return
     }
     await this.setup()
+    if (this.mountedPath) this.syncPresence(userApi, agents)
     this.emit()
+  }
+
+  /**
+   * 지금 드라이브가 서빙하는 저장소들에 접속 표시를 맞춘다.
+   *
+   * 마운트되어 있는 동안만 유지한다 — 드라이브가 없는데 "이 PC 가 붙어 있다"고
+   * 알리면 웹에서 연결된 것처럼 보이는데 실제로는 아무것도 동기화되지 않는다.
+   */
+  private syncPresence(
+    userApi: WorkspaceApi | null,
+    agents: Array<{ workflowId: string; folder: string }>,
+  ): void {
+    if (!this.deps.presenceFor) return
+    const want = new Map<string, string>() // owner → 캐시 키
+    const userOwner = userApi ? (this.deps.userOwner?.() ?? null) : null
+    if (userOwner) want.set(userOwner, '')
+    for (const a of agents) want.set(a.workflowId, a.folder)
+
+    for (const [owner, p] of [...this.presence]) {
+      if (!want.has(owner)) {
+        p.stop()
+        this.presence.delete(owner)
+      }
+    }
+    for (const [owner, key] of want) {
+      if (this.presence.has(owner)) continue
+      const p = this.deps.presenceFor(owner, () => this.backend.invalidateSpace(key))
+      this.presence.set(owner, p)
+      void p.start().catch((e) => diag('workspace', `접속 표시 실패 ${owner}: ${(e as Error).message}`))
+    }
+  }
+
+  private stopPresence(): void {
+    for (const p of this.presence.values()) p.stop()
+    this.presence.clear()
   }
 
   private async setup(): Promise<void> {
@@ -249,6 +327,9 @@ export class WorkspaceManager {
   }
 
   private async teardown(): Promise<void> {
+    // 드라이브가 걷히면 접속 표시도 같이 내린다 — 안 그러면 웹에는 연결된
+    // 것처럼 남아 있는데 실제로는 아무것도 동기화되지 않는다.
+    this.stopPresence()
     const path = this.mountedPath
     this.mountedPath = null
     if (this.fuse) {

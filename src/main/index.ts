@@ -58,6 +58,8 @@ import {
   getWorkspaceManager,
 } from './workspace-manager';
 import { makeWorkspaceApi } from './workspace-api';
+import { WorkspaceWsClient } from './sync-transport';
+import { hostname } from 'os';
 import { attachAgent, detachAgent, moveRoot, rootOf } from './workspace';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager } from './mcp-manager';
@@ -1585,6 +1587,25 @@ function wireWorkspaceManager(): void {
         `user:${uid}`,
       );
     },
+    userOwner: () => {
+      const uid = client?.user?.userId;
+      return uid ? `user:${uid}` : null;
+    },
+    // 드라이브가 붙어 있는 동안 서버에 "이 PC 가 이 저장소에 있다"를 알린다.
+    // 이 배선이 없으면 웹의 "PC N대 동기화 중" 칩이 영영 안 뜨고, 웹에서 올린
+    // 파일이 드라이브에 늦게 나타난다 (변경 푸시를 못 받아 TTL 만료까지 대기).
+    presenceFor: (owner: string, onChanged: () => void) =>
+      new WorkspaceWsClient(
+        {
+          baseUrl: normalizeServerUrl(loadConfig().serverUrl).replace(/\/$/, ''),
+          token: async () => (await tokenStore.getAccess()) ?? '',
+          workflowId: owner,
+          deviceId: ensureDeviceId(),
+        },
+        hostname(),
+        () => onChanged(),
+        () => undefined,
+      ),
     onStatus: (s: unknown) => safeSend(mainWindow, CHANNELS.workspaceStatusEvent, s),
   });
   void getWorkspaceManager()?.reconcile();

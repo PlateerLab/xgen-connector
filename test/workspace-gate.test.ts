@@ -130,3 +130,109 @@ test('preload 상태 미러가 main 의 필드를 하나도 빠뜨리지 않는�
   const missing = [...main].filter((f) => !mirror.has(f))
   assert.deepEqual(missing, [], `preload 미러에 빠진 필드: ${missing.join(', ')}`)
 })
+
+// ── 접속 표시(presence) ────────────────────────────────────────────
+//
+// 사용자 신고: 커넥터로 드라이브를 붙이고 파일을 넣어도 웹에 "연결된 PC"가
+// 안 뜨고 파일도 안 보였다. 원인 절반은 서버(WS 가 사용자 스코프를 몰랐다),
+// 절반은 여기 — **가상 드라이브가 WS 를 아예 열지 않았다**. 기기 등록은
+// WS hello 로만 되므로 칩이 영영 안 뜬다.
+
+class FakePresence {
+  started = false
+  stopped = false
+  constructor(readonly owner: string, readonly onChanged: () => void) {}
+  async start(): Promise<void> {
+    this.started = true
+  }
+  stop(): void {
+    this.stopped = true
+  }
+}
+
+function withPresence(userApi: WorkspaceApi | null, agents: string[] = []) {
+  const made: FakePresence[] = []
+  const deps: WorkspaceManagerDeps = {
+    config: () => ({
+      root: '/tmp/xgen-presence-test',
+      agents: agents.map((id) => ({ workflowId: id, label: id, folder: id })),
+    }) as never,
+    apiFor: () => api(),
+    loggedIn: () => true,
+    userApi: () => userApi,
+    userOwner: () => 'user:7',
+    presenceFor: (owner, onChanged) => {
+      const p = new FakePresence(owner, onChanged)
+      made.push(p)
+      return p
+    },
+  }
+  return { m: new WorkspaceManager(deps), made }
+}
+
+type Sync = (u: WorkspaceApi | null, a: Array<{ workflowId: string; folder: string }>) => void
+const syncOf = (m: WorkspaceManager): Sync =>
+  (m as unknown as { syncPresence: Sync }).syncPresence.bind(m)
+
+test('마운트된 저장소마다 접속 표시를 연다 (사용자 + 에이전트)', async () => {
+  const { m, made } = withPresence(api(), ['wf-1'])
+  syncOf(m)(api(), [{ workflowId: 'wf-1', folder: 'XGeny' }])
+  const owners = made.map((p) => p.owner).sort()
+  assert.deepEqual(owners, ['user:7', 'wf-1'], `열린 저장소: ${owners}`)
+  assert.ok(made.every((p) => p.started), '시작되지 않은 접속 표시가 있다')
+})
+
+test('변경 알림이 오면 해당 저장소 캐시만 버린다', () => {
+  const { m, made } = withPresence(api(), ['wf-1'])
+  syncOf(m)(api(), [{ workflowId: 'wf-1', folder: 'XGeny' }])
+  const dropped: string[] = []
+  const backend = (m as unknown as { backend: { invalidateSpace: (k: string) => void } }).backend
+  backend.invalidateSpace = (k: string) => dropped.push(k)
+  made.find((p) => p.owner === 'user:7')!.onChanged()
+  made.find((p) => p.owner === 'wf-1')!.onChanged()
+  // 사용자 스토리지는 빈 키, 에이전트는 폴더명
+  assert.deepEqual(dropped.sort(), ['', 'XGeny'])
+})
+
+test('에이전트를 떼면 그 접속 표시만 닫힌다', () => {
+  const { m, made } = withPresence(api(), ['wf-1'])
+  syncOf(m)(api(), [{ workflowId: 'wf-1', folder: 'XGeny' }])
+  syncOf(m)(api(), [])
+  const wf = made.find((p) => p.owner === 'wf-1')!
+  const user = made.find((p) => p.owner === 'user:7')!
+  assert.equal(wf.stopped, true, '뗀 에이전트의 접속 표시가 남아 있다')
+  assert.equal(user.stopped, false, '사용자 스토리지 접속 표시까지 닫혔다')
+})
+
+test('같은 저장소로 두 번 열지 않는다 (PC 가 두 대로 보인다)', () => {
+  const { m, made } = withPresence(api(), ['wf-1'])
+  const agents = [{ workflowId: 'wf-1', folder: 'XGeny' }]
+  syncOf(m)(api(), agents)
+  syncOf(m)(api(), agents)
+  assert.equal(made.length, 2, `중복 등록: ${made.map((p) => p.owner)}`)
+})
+
+test('클라우드 스토리지가 꺼져 있으면 사용자 접속 표시도 열지 않는다', () => {
+  const { m, made } = withPresence(null, ['wf-1'])
+  syncOf(m)(null, [{ workflowId: 'wf-1', folder: 'XGeny' }])
+  assert.deepEqual(made.map((p) => p.owner), ['wf-1'])
+})
+
+// ── "연결 안 됨인데 이유도 없음" 은 존재해선 안 된다 ────────────────
+//
+// 이 상태가 실제 사고였다: 마운트가 안 붙었는데 화면에 아무 설명이 없어서
+// 사용자는 (마운트가 아닌) 빈 폴더에 파일을 넣었고, 그 파일은 아무 데도 가지
+// 않았다.
+
+test('연결되지 않았으면 반드시 이유가 있다', () => {
+  const m = manager(api(), ['wf-1'])
+  const s = m.status()
+  assert.equal(s.mounted, false)
+  assert.ok(s.error || s.storageOff || !s.supported, '이유 없이 연결 안 됨 상태다')
+})
+
+test('쓰려는 저장소가 하나도 없으면 이유를 만들지 않는다', () => {
+  const m = manager(null, [])
+  const s = m.status()
+  assert.equal(s.error, undefined, '붙일 게 없는데 오류를 지어냈다')
+})
