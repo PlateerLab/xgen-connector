@@ -8,7 +8,7 @@ import type { ConnectorConfig } from '../../../main/config';
 export const ServerSetup: React.FC<{
   initialConfig: Pick<
     ConnectorConfig,
-    'serverUrl' | 'allowPrivateCertificate' | 'ssoEnabled' | 'ssoPath' | 'ssoDebug' | 'updateServer'
+    'serverUrl' | 'allowPrivateCertificate' | 'ssoEnabled' | 'ssoPath' | 'updateServer'
   >;
   onSaved: () => void;
 }> = ({ initialConfig, onSaved }) => {
@@ -18,7 +18,6 @@ export const ServerSetup: React.FC<{
   );
   const [ssoEnabled, setSsoEnabled] = useState(initialConfig.ssoEnabled ?? false);
   const [ssoPath, setSsoPath] = useState(initialConfig.ssoPath ?? '/sso/signin');
-  const [ssoDebug, setSsoDebug] = useState(initialConfig.ssoDebug ?? false);
   const [updateServer, setUpdateServer] = useState<'github' | 'xgen'>(
     initialConfig.updateServer ?? 'github',
   );
@@ -44,7 +43,6 @@ export const ServerSetup: React.FC<{
         allowPrivateCertificate,
         ssoEnabled,
         ssoPath: normalizedSsoPath || '/sso/signin',
-        ssoDebug,
         updateServer,
       });
       onSaved();
@@ -96,29 +94,16 @@ export const ServerSetup: React.FC<{
           <span>SSO 로그인 사용</span>
         </label>
         {ssoEnabled && (
-          <>
-            <label className="field setup-nested-field">
-              <span>SSO PATH</span>
-              <input
-                type="text"
-                placeholder="/sso/signin"
-                value={ssoPath}
-                onChange={(e) => setSsoPath(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && void save()}
-              />
-            </label>
-            <label className="setup-option setup-nested-field">
-              <input
-                type="checkbox"
-                checked={ssoDebug}
-                onChange={(e) => setSsoDebug(e.target.checked)}
-              />
-              <span>
-                SSO 팝업 디버깅
-                <small>팝업과 함께 개발자 도구를 엽니다. 로그인 정보 노출에 주의하세요.</small>
-              </span>
-            </label>
-          </>
+          <label className="field setup-nested-field">
+            <span>SSO PATH</span>
+            <input
+              type="text"
+              placeholder="/sso/signin"
+              value={ssoPath}
+              onChange={(e) => setSsoPath(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void save()}
+            />
+          </label>
         )}
         <div className="setup-update-server">
           <span>

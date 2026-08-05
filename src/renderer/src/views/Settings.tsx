@@ -17,7 +17,6 @@ export const Settings: React.FC<{
   const [allowPrivateCertificate, setAllowPrivateCertificate] = useState(config.allowPrivateCertificate ?? false);
   const [ssoEnabled, setSsoEnabled] = useState(config.ssoEnabled ?? false);
   const [ssoPath, setSsoPath] = useState(config.ssoPath ?? '/sso/signin');
-  const [ssoDebug, setSsoDebug] = useState(config.ssoDebug ?? false);
   const [theme, setTheme] = useState<Theme>(config.theme ?? 'system');
   const [autoUpdate, setAutoUpdate] = useState(config.autoUpdate ?? true);
   const [updateServer, setUpdateServer] = useState<'github' | 'xgen'>(config.updateServer ?? 'github');
@@ -77,8 +76,7 @@ export const Settings: React.FC<{
     const optionsChanged =
       allowPrivateCertificate !== (config.allowPrivateCertificate ?? false) ||
       ssoEnabled !== (config.ssoEnabled ?? false) ||
-      nextSsoPath !== (config.ssoPath ?? '/sso/signin') ||
-      ssoDebug !== (config.ssoDebug ?? false);
+      nextSsoPath !== (config.ssoPath ?? '/sso/signin');
     if (!serverChanged && !optionsChanged) {
       setConfirmServer(false);
       setSaved(true);
@@ -94,7 +92,6 @@ export const Settings: React.FC<{
       allowPrivateCertificate,
       ssoEnabled,
       ssoPath: nextSsoPath,
-      ssoDebug,
     });
     setConfirmServer(false);
     setSaved(true);
@@ -162,27 +159,14 @@ export const Settings: React.FC<{
           <span>SSO 로그인 사용</span>
         </label>
         {ssoEnabled && (
-          <>
-            <label className="field setup-nested-field settings-sso-path">
-              <span>SSO PATH</span>
-              <input
-                value={ssoPath}
-                onChange={(e) => setSsoPath(e.target.value)}
-                placeholder="/sso/signin"
-              />
-            </label>
-            <label className="setup-option settings-option setup-nested-field">
-              <input
-                type="checkbox"
-                checked={ssoDebug}
-                onChange={(e) => setSsoDebug(e.target.checked)}
-              />
-              <span>
-                SSO 팝업 디버깅
-                <small>로그인 팝업과 함께 개발자 도구를 엽니다. 토큰 노출에 주의하세요.</small>
-              </span>
-            </label>
-          </>
+          <label className="field setup-nested-field settings-sso-path">
+            <span>SSO PATH</span>
+            <input
+              value={ssoPath}
+              onChange={(e) => setSsoPath(e.target.value)}
+              placeholder="/sso/signin"
+            />
+          </label>
         )}
 
         <div className="field-row">
