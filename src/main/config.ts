@@ -42,6 +42,8 @@ export interface ConnectorConfig {
   ssoEnabled?: boolean;
   /** 서버 origin 기준 SSO 진입 상대 경로. 예: "/sso/signin". */
   ssoPath?: string;
+  /** SSO 팝업에서 분리된 Chromium DevTools를 자동으로 연다. 기본 false. */
+  ssoDebug?: boolean;
   theme?: 'system' | 'dark' | 'light';
   lang?: 'ko' | 'en';
   autoUpdate?: boolean; // default true
@@ -128,6 +130,7 @@ const DEFAULTS: ConnectorConfig = {
   allowPrivateCertificate: false,
   ssoEnabled: false,
   ssoPath: '/sso/signin',
+  ssoDebug: false,
   theme: 'system',
   lang: 'ko',
   autoUpdate: true,

@@ -105,6 +105,7 @@ export const App: React.FC = () => {
           allowPrivateCertificate: config?.allowPrivateCertificate ?? false,
           ssoEnabled: config?.ssoEnabled ?? false,
           ssoPath: config?.ssoPath ?? '/sso/signin',
+          ssoDebug: config?.ssoDebug ?? false,
           updateServer: config?.updateServer ?? 'github',
         }}
         onSaved={handleServerSaved}

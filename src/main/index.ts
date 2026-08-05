@@ -67,6 +67,7 @@ import {
   parseSsoLoginResponse,
   shouldAllowPrivateCertificate,
 } from './connection-security';
+import { createSsoWindowOptions } from './sso-window-options';
 
 const IS_LINUX = process.platform === 'linux';
 
@@ -1092,6 +1093,7 @@ ipcMain.handle(CHANNELS.authSsoLogin, async () => {
   const cfg = loadConfig();
   if (!cfg.ssoEnabled) throw new Error('SSO 로그인이 활성화되지 않았습니다.');
   const url = buildSsoUrl(normalizeServerUrl(cfg.serverUrl), cfg.ssoPath ?? '/sso/signin', SSO_CALLBACK);
+  const ssoDebug = cfg.ssoDebug === true;
   if (ssoWindow && !ssoWindow.isDestroyed()) {
     ssoWindow.show();
     ssoWindow.focus();
@@ -1099,25 +1101,12 @@ ipcMain.handle(CHANNELS.authSsoLogin, async () => {
   }
 
   return new Promise<{ user: NonNullable<XgenClient['user']>; tokenPersisted: boolean }>((resolve, reject) => {
-    const win = new BrowserWindow({
-      width: 560,
-      height: 720,
-      minWidth: 440,
-      minHeight: 560,
-      parent: mainWindow ?? undefined,
-      modal: false,
-      show: false,
-      title: 'XGEN SSO 로그인',
-      autoHideMenuBar: true,
-      webPreferences: {
-        preload: join(__dirname, '../preload/sso.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
-    });
+    const win = new BrowserWindow(
+      createSsoWindowOptions(join(__dirname, '../preload/sso.js'), ssoDebug, mainWindow ?? undefined),
+    );
     ssoWindow = win;
     pendingSso = { resolve, reject };
+    if (ssoDebug) win.webContents.openDevTools({ mode: 'detach', activate: true });
     win.once('ready-to-show', () => win.show());
     win.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
       try {
