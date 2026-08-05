@@ -23,6 +23,7 @@ import {
   protocol,
   net,
   session,
+  clipboard,
 } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -1582,6 +1583,14 @@ ipcMain.handle(CHANNELS.workspaceOpen, () => {
   return { ok: !!p };
 });
 
+ipcMain.handle(CHANNELS.diagCopy, async () => {
+  // ⚠ 렌더러의 navigator.clipboard 는 Electron 에서 조용히 실패할 수 있다
+  // (보안 컨텍스트/권한). main 의 clipboard 모듈은 항상 동작한다.
+  const { diagText, diagHeader } = await import('./diag-log');
+  const text = `${diagHeader({ app: app.getVersion() })}\n\n${diagText()}`;
+  clipboard.writeText(text);
+  return { ok: true, chars: text.length };
+});
 ipcMain.handle(CHANNELS.diagText, async () => {
   const { diagText } = await import('./diag-log');
   return diagText();

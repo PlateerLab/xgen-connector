@@ -38,6 +38,8 @@ export interface WorkspaceStatus {
   /** 마운트된 경로 또는 드라이브 문자. */
   path?: string
   error?: string
+  /** 오류를 사용자가 직접 풀 수 있는 방법 (설치 명령 등). */
+  errorHint?: string
   agents: Array<{ workflowId: string; label: string; folder: string }>
 }
 
@@ -58,6 +60,7 @@ export class WorkspaceManager {
     return this.supportCache
   }
   private lastError: string | undefined
+  private lastHint: string | undefined
   private busy: Promise<void> | null = null
 
   constructor(private deps: WorkspaceManagerDeps) {}
@@ -71,6 +74,7 @@ export class WorkspaceManager {
       mounted: this.mountedPath !== null,
       path: this.mountedPath ?? undefined,
       error: this.lastError,
+      errorHint: this.lastHint,
       agents: (cfg?.agents ?? []).map((a) => ({
         workflowId: a.workflowId,
         label: a.label,
@@ -138,6 +142,7 @@ export class WorkspaceManager {
     const cfg = this.deps.config()
     const root = rootOf(cfg)
     this.lastError = undefined
+    this.lastHint = undefined
 
     // Linux: FUSE 로 직접 붙는다. WebDAV 서버를 띄우지 않는다 — 같은 백엔드를
     // 커널이 바로 호출하므로 루프백 HTTP 를 한 겹 더 거칠 이유가 없다.
@@ -145,10 +150,11 @@ export class WorkspaceManager {
       const r = await mountFuse(this.backend, root)
       if (!r.ok) {
         this.lastError = r.error
-        if (r.hint) this.lastError += ` (${r.hint})`
-        diag('workspace', `FUSE 마운트 실패: ${r.error ?? ''}`)
+        this.lastHint = r.hint
+        diag('workspace', `FUSE 마운트 실패: ${r.error ?? ''} / ${r.hint ?? ''}`)
         return
       }
+      this.lastHint = undefined
       this.fuse = r.handle ?? null
       this.mountedPath = root
       diag('workspace', `워크스페이스 마운트(FUSE) → ${root}`)

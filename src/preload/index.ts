@@ -35,6 +35,7 @@ export interface WorkspaceStatusLike {
   mounted: boolean;
   path?: string;
   error?: string;
+  errorHint?: string;
   agents: Array<{ workflowId: string; label: string; folder: string }>;
 }
 
@@ -251,6 +252,8 @@ const api = {
   /** 가상 드라이브(WebDAV 마운트) 검증 — 이 컴퓨터에서 실제로 붙는지. */
   workspace: {
     diagText: (): Promise<string> => ipcRenderer.invoke(CHANNELS.diagText),
+    /** 진단 로그를 **main 의 clipboard 로** 복사 (렌더러 clipboard 는 막힐 수 있다). */
+    diagCopy: (): Promise<{ ok: boolean; chars: number }> => ipcRenderer.invoke(CHANNELS.diagCopy),
 
     /** 실제 워크스페이스(가상 드라이브) — 에이전트 부착/해제 + 상태. */
     status: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceStatus),

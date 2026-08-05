@@ -102,7 +102,14 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 </div>
               </div>
               <div className="mcp-item-cmd" style={{ marginTop: 4 }}>{root || '—'}</div>
-              {ws?.error && <div className="small error" style={{ marginTop: 4 }}>{ws.error}</div>}
+              {ws?.error && (
+                <div className="small error" style={{ marginTop: 4 }}>
+                  <div>{ws.error}</div>
+                  {ws.errorHint && (
+                    <div className="mcp-item-cmd" style={{ marginTop: 2 }}>{ws.errorHint}</div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* 에이전트 */}
@@ -191,14 +198,18 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           <button
             className="link"
             onClick={() => {
+              // 실패를 삼키지 않는다 — 복사가 안 되면 사용자가 알아야 한다.
+              setError('');
               void xgen.workspace
-                .diagText()
-                .then((t) => navigator.clipboard.writeText(t))
-                .then(() => {
+                .diagCopy()
+                .then((r) => {
                   setCopied(true);
                   setTimeout(() => setCopied(false), 1500);
+                  if (!r.chars) setError('진단 로그가 비어 있습니다.');
                 })
-                .catch(() => undefined);
+                .catch((e) =>
+                  setError(`진단 로그를 복사하지 못했습니다: ${e?.message ?? e}`),
+                );
             }}
           >
             {copied ? '복사됨' : '진단 로그 복사'}

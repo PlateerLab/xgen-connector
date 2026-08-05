@@ -7,7 +7,7 @@
  */
 import assert from 'assert'
 import { test } from 'node:test'
-import { buildOps, clearStale } from '../src/main/fuse-mount'
+import { buildOps, clearStale, preflight } from '../src/main/fuse-mount'
 import type { DavNode, WebdavBackend } from '../src/main/webdav-server'
 
 const ERRNO = { ENOENT: -2, EIO: -5, EISDIR: -21 }
@@ -199,4 +199,32 @@ test('없는 경로는 스테일 정리 대상이 아니다', async () => {
     return { code: 0, stderr: '' }
   })
   assert.equal(called, false)
+})
+
+test('사전 점검이 원인을 특정한다 (바인딩은 "fuse failed" 한 줄만 준다)', () => {
+  const { mkdtempSync, writeFileSync } = require('fs') as typeof import('fs')
+  const { tmpdir } = require('os') as typeof import('os')
+  const { join } = require('path') as typeof import('path')
+
+  // 마운트 지점에 파일이 남아 있으면 FUSE 가 붙지 못한다 — 그 사실을 말해야 한다.
+  const dir = mkdtempSync(join(tmpdir(), 'pf-'))
+  writeFileSync(join(dir, 'leftover.txt'), 'x')
+  const r = preflight(dir)
+  assert.ok(r, '남은 파일을 감지하지 못했다')
+  assert.match(r!.error, /파일이 남아 있습니다/)
+  assert.ok(r!.hint && r!.hint.length > 0, '해결 방법이 없다')
+})
+
+test('빈 마운트 지점은 사전 점검을 통과한다 (이 리눅스 기준)', (ctx) => {
+  if (process.platform !== 'linux') return ctx.skip('linux 전용')
+  const { mkdtempSync } = require('fs') as typeof import('fs')
+  const { tmpdir } = require('os') as typeof import('os')
+  const { join } = require('path') as typeof import('path')
+  const r = preflight(mkdtempSync(join(tmpdir(), 'pf-ok-')))
+  // 이 개발/CI 머신은 fuse3 + setuid fusermount 가 있다. 없으면 그 사유가
+  // 정확히 나와야 한다 (그것도 정상 동작이다).
+  if (r) {
+    assert.match(r.error, /fusermount|\/dev\/fuse/)
+    assert.ok(r.hint, `사유는 있는데 해결 방법이 없다: ${r.error}`)
+  }
 })

@@ -88,6 +88,7 @@ export const CHANNELS = {
   mcpTestProgressEvent: 'mcp:testProgress',
   mcpRefresh: 'mcp:refresh',
   diagText: 'diag:text',
+  diagCopy: 'diag:copy',
   workspaceStatus: 'workspace:status',
   workspaceStatusEvent: 'workspace:statusEvent',
   workspaceAttach: 'workspace:attach',

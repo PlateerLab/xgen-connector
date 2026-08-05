@@ -25,7 +25,7 @@
  * release/flush 에서 한 번만 올린다 (네트워크 파일시스템의 표준 방식).
  */
 
-import { existsSync, mkdirSync, readdirSync, rmdirSync } from 'fs'
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmdirSync, statSync } from 'fs'
 import { diag } from './diag-log'
 import type { WebdavBackend } from './webdav-server'
 
@@ -300,6 +300,58 @@ export function buildOps(backend: WebdavBackend, errno: Record<string, number>):
   }
 }
 
+/**
+ * 마운트 전 점검 — 바인딩이 "fuse failed" 한 줄만 주므로 여기서 원인을 짚는다.
+ *
+ * 실기에서 확인한 필수 조건: setuid-root `fusermount` (비루트 마운트),
+ * 비어 있는 마운트 지점, `/dev/fuse` 접근 권한.
+ */
+export function preflight(mountpoint: string): { error: string; hint?: string } | null {
+  const helper = ['/usr/bin/fusermount3', '/usr/bin/fusermount', '/bin/fusermount3', '/bin/fusermount']
+    .map((p) => {
+      try {
+        return { p, st: statSync(p) }
+      } catch {
+        return null
+      }
+    })
+    .find(Boolean)
+  if (!helper) {
+    return {
+      error: 'FUSE 도우미(fusermount)가 없습니다.',
+      hint: 'sudo apt install fuse3   (설치 후 앱을 다시 시작하세요)',
+    }
+  }
+  // 비루트 마운트는 setuid-root 헬퍼가 있어야 한다.
+  const mode = helper.st.mode
+  if ((mode & 0o4000) === 0 || helper.st.uid !== 0) {
+    return {
+      error: `${helper.p} 에 setuid 권한이 없어 마운트할 수 없습니다.`,
+      hint: `sudo chmod u+s ${helper.p}`,
+    }
+  }
+  try {
+    accessSync('/dev/fuse', constants.R_OK | constants.W_OK)
+  } catch {
+    return {
+      error: '/dev/fuse 에 접근할 수 없습니다.',
+      hint: '컨테이너/스냅 환경이면 FUSE 가 막혀 있을 수 있습니다. 일반 데스크톱 세션에서 실행해 보세요.',
+    }
+  }
+  try {
+    const left = readdirSync(mountpoint)
+    if (left.length > 0) {
+      return {
+        error: `마운트 지점에 파일이 남아 있습니다 (${left.length}개): ${mountpoint}`,
+        hint: '이전 설치의 잔재일 수 있습니다. 내용을 확인한 뒤 폴더를 비우고 다시 시도하세요.',
+      }
+    }
+  } catch (e) {
+    return { error: `마운트 지점을 읽을 수 없습니다: ${(e as Error).message}` }
+  }
+  return null
+}
+
 /** 백엔드를 mountpoint 에 FUSE 로 붙인다. */
 export async function mountFuse(
   backend: WebdavBackend,
@@ -321,6 +373,14 @@ export async function mountFuse(
     return { ok: false, error: `마운트 지점을 만들지 못했습니다: ${(e as Error).message}` }
   }
 
+  // 바인딩의 실패 메시지는 "fuse failed" 한 줄이라 원인을 알 수 없다.
+  // 미리 짚어서 **무엇이 막혔는지** 말한다.
+  const pre = preflight(mountpoint)
+  if (pre) {
+    diag('fuse', `사전 점검 실패: ${pre.error}`)
+    return { ok: false, ...pre }
+  }
+
   const ops = buildOps(backend, Fuse as unknown as Record<string, number>)
   const fuse = new Fuse(mountpoint, ops, { force: true, mkdir: true, displayFolder: 'XGEN Workspace' })
 
@@ -328,12 +388,14 @@ export async function mountFuse(
     fuse.mount((err: Error | null) => {
       if (err) {
         diag('fuse', `마운트 실패: ${err.message}`)
+        // 바인딩은 대개 "fuse failed" 한 줄만 준다 — 사전 점검을 통과했는데도
+        // 실패했다는 사실 자체가 정보다.
         resolve({
           ok: false,
-          error: err.message,
-          hint: /fusermount|permission/i.test(err.message)
-            ? 'FUSE 도우미가 필요합니다 (sudo apt install fuse3).'
-            : undefined,
+          error: `마운트 실패: ${err.message}`,
+          hint:
+            '사전 점검(fusermount setuid / /dev/fuse / 빈 폴더)은 통과했습니다. ' +
+            '진단 로그를 보내 주세요.',
         })
         return
       }
