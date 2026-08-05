@@ -55,3 +55,67 @@ test('워크스페이스 매니저에 데드락 계약이 문서로 남아 있�
   const s = src('workspace-manager.ts')
   assert.match(s, /동기 IO/, '데드락 계약 설명이 사라졌다')
 })
+
+/**
+ * 마운트 지점을 **다루는 함수 전체**가 동기 fs 를 쓰면 안 된다.
+ *
+ * 처음엔 언마운트 블록만 검사했는데, `clearStale`/`preflight` 가 마운트 지점에
+ * `readdirSync` 를 쓰고 있었다. 그 상태로 [다시 연결] 을 누르자 **앱이 통째로
+ * 멈췄다** ("XGEN Connector 앱이 응답하지 않습니다") — 반쯤 살아 있는 마운트를
+ * 동기로 읽는 순간 FUSE 콜백과 서로를 기다린 것이다.
+ *
+ * 계약을 문서에만 적어 두면 또 밟는다. 실제로 두 번 밟았다.
+ */
+/** 주석/독스트링 제거 — 설명문에 적힌 금지 이름을 위반으로 세면 안 된다. */
+function stripComments(code: string): string {
+  return code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+}
+
+const MOUNT_TOUCHING = ['clearStale', 'preflight', 'rescueStrays', 'listSafely', 'mountFuse']
+const SYNC_FS = [
+  'readdirSync',
+  'statSync',
+  'rmdirSync',
+  'readFileSync',
+  'writeFileSync',
+  'renameSync',
+  'mkdirSync',
+  'existsSync', // 살아 있는 마운트의 stat 은 우리 getattr 콜백으로 되돌아온다
+]
+
+test('마운트 지점을 다루는 함수는 동기 fs 를 쓰지 않는다', () => {
+  const s = src('fuse-mount.ts')
+  for (const fn of MOUNT_TOUCHING) {
+    const start = s.search(new RegExp(`(export )?(async )?function ${fn}\\b`))
+    assert.ok(start >= 0, `${fn} 을 찾지 못했다 (이름이 바뀌었나?)`)
+    // 다음 최상위 선언 전까지를 함수 본문으로 본다.
+    const rest = s.slice(start + 10)
+    const end = rest.search(/\n(export )?(async )?function |\nexport (const|interface|class) /)
+    // 주석은 계약을 **설명**하려고 금지 함수 이름을 적는다 — 코드만 본다.
+    const body = stripComments(end >= 0 ? rest.slice(0, end) : rest)
+    for (const bad of SYNC_FS) {
+      assert.ok(
+        !body.includes(bad),
+        `${fn} 이 ${bad} 를 쓴다 — 반쯤 죽은 마운트에서 앱이 멈춘다`,
+      )
+    }
+  }
+})
+
+test('마운트 지점 읽기에는 반드시 타임아웃이 있다', () => {
+  // 비동기라도 영원히 매달리면 그것도 멈춤이다 (사용자에겐 똑같이 보인다).
+  const s = src('fuse-mount.ts')
+  const fn = s.slice(s.indexOf('async function listSafely'), s.indexOf('async function runCmd'))
+  assert.match(fn, /timeoutMs/, '타임아웃 인자가 없다')
+  assert.match(fn, /Promise\.race/, '타임아웃을 실제로 걸지 않는다')
+})
+
+test('워크스페이스 매니저는 마운트 생사를 자식 프로세스로 확인한다', () => {
+  const s = src('workspace-manager.ts')
+  const raw = s.slice(s.indexOf('private async mountAlive'), s.indexOf('private async mountAlive') + 700)
+  const fn = stripComments(raw)
+  assert.match(fn, /execFile/, '자식 프로세스를 쓰지 않는다 — 같은 루프에서 확인하면 데드락')
+  for (const bad of SYNC_FS) {
+    assert.ok(!fn.includes(bad), `mountAlive 가 ${bad} 를 쓴다`)
+  }
+})

@@ -72,15 +72,11 @@ function loadFuse(injected?: FuseModule): FuseModule | null {
  * 판정: 디렉터리를 읽어 보고 ENOTCONN/EIO 가 나면 스테일이다.
  */
 export async function clearStale(mountpoint: string, exec: typeof runCmd = runCmd): Promise<void> {
-  if (!existsSync(mountpoint)) return
-  try {
-    readdirSync(mountpoint)
-    return // 정상 (또는 아예 마운트가 아님)
-  } catch (e) {
-    diag('fuse', `스테일 마운트 감지 ${mountpoint}: ${(e as Error).message}`)
-  }
-  for (const bin of ['/usr/bin/fusermount3', '/usr/bin/fusermount', '/bin/fusermount']) {
-    if (!existsSync(bin)) continue
+  const probe = await listSafely(mountpoint)
+  // 정상이거나 아예 없으면 할 일이 없다. ENOENT 는 "마운트 지점이 없다" 다.
+  if (probe.ok || /ENOENT|no such file/i.test(probe.why)) return
+  diag('fuse', `스테일 마운트 감지 ${mountpoint}: ${probe.why}`)
+  for (const bin of fusermountBinaries()) {
     const r = await exec(bin, ['-uz', mountpoint])
     if (r.code === 0) {
       diag('fuse', '스테일 마운트 정리됨')
@@ -88,6 +84,46 @@ export async function clearStale(mountpoint: string, exec: typeof runCmd = runCm
     }
   }
   diag('fuse', '스테일 마운트를 정리하지 못했다')
+}
+
+/** 설치된 fusermount 후보 (시스템 경로 — 마운트 지점과 무관하다). */
+function fusermountBinaries(): string[] {
+  return ['/usr/bin/fusermount3', '/usr/bin/fusermount', '/bin/fusermount'].filter((b) =>
+    existsSync(b),
+  )
+}
+
+/**
+ * 마운트 지점을 **이벤트 루프를 막지 않고** 읽어 본다.
+ *
+ * ⚠ 여기서 `readdirSync` 를 쓰면 앱이 통째로 멈춘다. FUSE 콜백이 이 루프에
+ * 올라오는데 동기 호출이 루프를 잡고 있으면 서로를 기다린다 — 실기에서
+ * [다시 연결] 을 누르는 순간 "응답하지 않습니다" 가 떴다.
+ *
+ * 비동기 readdir 은 libuv 스레드풀에서 돌아 루프가 살아 있으므로, 우리
+ * 마운트가 살아 있으면 우리 콜백이 응답해 정상적으로 끝난다. 죽어 있으면
+ * 오류로 끝난다. **어느 쪽도 아니게 매달리는** 경우(반쯤 죽은 마운트)를 위해
+ * 타임아웃을 둔다 — 무한정 기다리면 그것도 멈춤이다.
+ */
+async function listSafely(
+  dir: string,
+  timeoutMs = 4000,
+): Promise<{ ok: true; names: string[] } | { ok: false; why: string }> {
+  const { readdir } = await import('fs/promises')
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const names = await Promise.race([
+      readdir(dir),
+      new Promise<never>((_r, reject) => {
+        timer = setTimeout(() => reject(new Error(`응답 없음 (${timeoutMs}ms)`)), timeoutMs)
+      }),
+    ])
+    return { ok: true, names }
+  } catch (e) {
+    return { ok: false, why: (e as Error).message }
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 async function runCmd(cmd: string, args: string[]): Promise<{ code: number; stderr: string }> {
@@ -307,7 +343,13 @@ export function buildOps(backend: WebdavBackend, errno: Record<string, number>):
  * 실기에서 확인한 필수 조건: setuid-root `fusermount` (비루트 마운트),
  * 비어 있는 마운트 지점, `/dev/fuse` 접근 권한.
  */
-export function preflight(mountpoint: string): PreflightProblem | null {
+/**
+ * FUSE 를 쓸 수 있는 환경인가 — **시스템 쪽만** 본다 (마운트 지점은 안 만진다).
+ *
+ * 마운트 지점 검사와 섞으면 "이 함수는 마운트에 동기 IO 를 하지 않는다"를
+ * 기계적으로 검증할 수 없다. 대상이 다르면 함수도 나눈다.
+ */
+export function checkFuseEnvironment(): PreflightProblem | null {
   const helper = ['/usr/bin/fusermount3', '/usr/bin/fusermount', '/bin/fusermount3', '/bin/fusermount']
     .map((p) => {
       try {
@@ -339,23 +381,43 @@ export function preflight(mountpoint: string): PreflightProblem | null {
       hint: '컨테이너/스냅 환경이면 FUSE 가 막혀 있을 수 있습니다. 일반 데스크톱 세션에서 실행해 보세요.',
     }
   }
+  return null
+}
+
+/**
+ * 마운트 지점이 붙일 수 있는 상태인가.
+ *
+ * ⚠ 이 함수는 **마운트 지점을 만진다** — 전부 비동기여야 한다.
+ * 동기로 읽으면 반쯤 살아 있는 마운트에서 이벤트 루프가 잡혀 앱이 멈춘다
+ * (실기: [다시 연결] → "응답하지 않습니다").
+ */
+export async function preflight(mountpoint: string): Promise<PreflightProblem | null> {
+  const env = checkFuseEnvironment()
+  if (env) return env
   // 마운트 지점은 비어 있어야 한다. 다만 **빈 디렉터리는 우리가 치운다** —
-  // 예전 버전이 에이전트 폴더를 실제로 만들던 시절의 잔재이고(구조적으로
-  // 고쳤다), 사용자에게 수동 정리를 시킬 일이 아니다. 내용이 있는 항목만
-  // 남으면 그때 사용자에게 알린다 (사용자 파일일 수 있으므로 절대 안 지운다).
+  // 내용이 있는 항목만 남으면 그때 사용자에게 알린다 (사용자 파일일 수 있다).
+  // ⚠ 전부 **비동기**다. 마운트 지점을 동기로 읽으면 반쯤 살아 있는 마운트에서
+  // 이벤트 루프가 잡혀 앱이 멈춘다 (실기: [다시 연결] → "응답하지 않습니다").
+  const first = await listSafely(mountpoint)
+  if (!first.ok) {
+    return { error: `마운트 지점을 읽을 수 없습니다: ${first.why}` }
+  }
   try {
-    for (const name of readdirSync(mountpoint)) {
+    const { rmdir } = await import('fs/promises')
+    for (const name of first.names) {
       const child = join(mountpoint, name)
       try {
-        if (statSync(child).isDirectory() && readdirSync(child).length === 0) {
-          rmdirSync(child)
+        const kids = await listSafely(child)
+        if (kids.ok && kids.names.length === 0) {
+          await rmdir(child)
           diag('fuse', `빈 잔재 폴더 정리: ${name}`)
         }
       } catch {
         /* 못 지우면 아래에서 사용자에게 알린다 */
       }
     }
-    const left = readdirSync(mountpoint)
+    const after = await listSafely(mountpoint)
+    const left = after.ok ? after.names : first.names
     if (left.length > 0) {
       return {
         error: `마운트 지점에 파일이 남아 있어 연결할 수 없습니다 (${left.length}개)`,
@@ -390,19 +452,17 @@ export interface PreflightProblem {
  *
  * @returns 옮긴 폴더 경로 (옮길 것이 없으면 null)
  */
-export function rescueStrays(mountpoint: string, stamp: string): string | null {
-  let names: string[]
-  try {
-    names = readdirSync(mountpoint)
-  } catch {
-    return null
-  }
+export async function rescueStrays(mountpoint: string, stamp: string): Promise<string | null> {
+  const probe = await listSafely(mountpoint)
+  if (!probe.ok) return null
+  const names = probe.names
   if (names.length === 0) return null
   const backup = `${mountpoint.replace(/[/\\]+$/, '')} (로컬 보관 ${stamp})`
-  mkdirSync(backup, { recursive: true })
+  const { mkdir, rename } = await import('fs/promises')
+  await mkdir(backup, { recursive: true })
   for (const name of names) {
     try {
-      renameSync(join(mountpoint, name), join(backup, name))
+      await rename(join(mountpoint, name), join(backup, name))
     } catch (e) {
       diag('fuse', `잔여 파일 이동 실패 ${name}: ${(e as Error).message}`)
     }
@@ -434,14 +494,16 @@ export async function mountFuse(
   }
   await clearStale(mountpoint)
   try {
-    mkdirSync(mountpoint, { recursive: true })
+    // 비동기 — 살아 있는 마운트 위에서 동기 mkdir 은 getattr 콜백과 얽힌다.
+    const { mkdir } = await import('fs/promises')
+    await mkdir(mountpoint, { recursive: true })
   } catch (e) {
     return { ok: false, error: `마운트 지점을 만들지 못했습니다: ${(e as Error).message}` }
   }
 
   // 바인딩의 실패 메시지는 "fuse failed" 한 줄이라 원인을 알 수 없다.
   // 미리 짚어서 **무엇이 막혔는지** 말한다.
-  const pre = preflight(mountpoint)
+  const pre = await preflight(mountpoint)
   if (pre) {
     diag('fuse', `사전 점검 실패: ${pre.error}`)
     return { ok: false, ...pre }

@@ -454,7 +454,7 @@ export class WorkspaceManager {
       // 영영 안 붙는 상태가 된다. 지울 수도 없다, 사용자 파일이다.
       // 옆으로 구해 내고 붙인 뒤, 클라우드로 올린다.
       if (!r.ok && r.strays?.length) {
-        const backup = rescueStrays(root, this.stamp())
+        const backup = await rescueStrays(root, this.stamp())
         if (backup) {
           this.rescued = backup
           diag('workspace', `잔여 파일을 옮기고 다시 마운트한다: ${backup}`)
