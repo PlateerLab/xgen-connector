@@ -12,6 +12,7 @@
  */
 
 import { diag } from './diag-log'
+import { mountFuse, type FuseMountHandle } from './fuse-mount'
 import { mountWebdav, unmountWebdav } from './mount-runner'
 import { WorkspaceDavBackend, type BackendAgent, type WorkspaceApi } from './workspace-backend'
 import { startDavServer, type DavServerHandle } from './webdav-server'
@@ -43,6 +44,8 @@ export interface WorkspaceStatus {
 export class WorkspaceManager {
   private backend = new WorkspaceDavBackend()
   private handle: DavServerHandle | null = null
+  /** Linux 는 WebDAV 서버 없이 FUSE 로 직접 붙는다 (내장 클라이언트가 없다). */
+  private fuse: FuseMountHandle | null = null
   private mountedPath: string | null = null
   private support: MountSupport = detectMountSupport()
   private lastError: string | undefined
@@ -111,6 +114,23 @@ export class WorkspaceManager {
     const cfg = this.deps.config()
     const root = rootOf(cfg)
     this.lastError = undefined
+
+    // Linux: FUSE 로 직접 붙는다. WebDAV 서버를 띄우지 않는다 — 같은 백엔드를
+    // 커널이 바로 호출하므로 루프백 HTTP 를 한 겹 더 거칠 이유가 없다.
+    if (this.support.kind === 'fuse') {
+      const r = await mountFuse(this.backend, root)
+      if (!r.ok) {
+        this.lastError = r.error
+        if (r.hint) this.lastError += ` (${r.hint})`
+        diag('workspace', `FUSE 마운트 실패: ${r.error ?? ''}`)
+        return
+      }
+      this.fuse = r.handle ?? null
+      this.mountedPath = root
+      diag('workspace', `워크스페이스 마운트(FUSE) → ${root}`)
+      return
+    }
+
     try {
       this.handle = await startDavServer(this.backend)
       diag('workspace', `WebDAV 서버 기동 port=${this.handle.port}`)
@@ -134,7 +154,15 @@ export class WorkspaceManager {
   private async teardown(): Promise<void> {
     const path = this.mountedPath
     this.mountedPath = null
-    if (path) {
+    if (this.fuse) {
+      const f = this.fuse
+      this.fuse = null
+      try {
+        await f.unmount()
+      } catch (e) {
+        diag('workspace', `FUSE 언마운트 실패: ${(e as Error).message}`)
+      }
+    } else if (path) {
       try {
         await unmountWebdav(path)
       } catch (e) {
