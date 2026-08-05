@@ -25,7 +25,7 @@
  * release/flush 에서 한 번만 올린다 (네트워크 파일시스템의 표준 방식).
  */
 
-import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmdirSync, statSync } from 'fs'
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { diag } from './diag-log'
 import type { WebdavBackend } from './webdav-server'
@@ -307,7 +307,7 @@ export function buildOps(backend: WebdavBackend, errno: Record<string, number>):
  * 실기에서 확인한 필수 조건: setuid-root `fusermount` (비루트 마운트),
  * 비어 있는 마운트 지점, `/dev/fuse` 접근 권한.
  */
-export function preflight(mountpoint: string): { error: string; hint?: string } | null {
+export function preflight(mountpoint: string): PreflightProblem | null {
   const helper = ['/usr/bin/fusermount3', '/usr/bin/fusermount', '/bin/fusermount3', '/bin/fusermount']
     .map((p) => {
       try {
@@ -362,6 +362,7 @@ export function preflight(mountpoint: string): { error: string; hint?: string } 
         hint: `${mountpoint} 의 내용을 다른 곳으로 옮긴 뒤 다시 시도하세요 (남은 항목: ${left
           .slice(0, 5)
           .join(', ')}${left.length > 5 ? ' …' : ''}).`,
+        strays: left,
       }
     }
   } catch (e) {
@@ -370,12 +371,59 @@ export function preflight(mountpoint: string): { error: string; hint?: string } 
   return null
 }
 
+export interface PreflightProblem {
+  error: string
+  hint?: string
+  /** 마운트를 막고 있는 로컬 항목들 (있으면 rescueStrays 로 구해 낼 수 있다). */
+  strays?: string[]
+}
+
+/**
+ * 마운트를 막고 있는 로컬 파일들을 **옆으로 옮긴다**.
+ *
+ * FUSE 는 비어 있지 않은 폴더 위에 못 붙는다. 예전에는 여기서 그냥 실패했고,
+ * 그래서 사용자가 (마운트가 아닌) 빈 폴더에 파일 하나를 넣는 순간 드라이브가
+ * **영영 안 붙는** 상태가 됐다 — 그 파일을 지우라고 할 수도 없다. 사용자 것이다.
+ *
+ * 그래서 지우지 않고 형제 폴더로 옮긴다. 마운트한 뒤 클라우드로 올리고,
+ * 올리기에 실패하면 그 폴더를 그대로 남겨 둔다 — 어느 쪽이든 파일은 살아 있다.
+ *
+ * @returns 옮긴 폴더 경로 (옮길 것이 없으면 null)
+ */
+export function rescueStrays(mountpoint: string, stamp: string): string | null {
+  let names: string[]
+  try {
+    names = readdirSync(mountpoint)
+  } catch {
+    return null
+  }
+  if (names.length === 0) return null
+  const backup = `${mountpoint.replace(/[/\\]+$/, '')} (로컬 보관 ${stamp})`
+  mkdirSync(backup, { recursive: true })
+  for (const name of names) {
+    try {
+      renameSync(join(mountpoint, name), join(backup, name))
+    } catch (e) {
+      diag('fuse', `잔여 파일 이동 실패 ${name}: ${(e as Error).message}`)
+    }
+  }
+  diag('fuse', `잔여 파일 ${names.length}개를 옮겼다: ${backup}`)
+  return backup
+}
+
 /** 백엔드를 mountpoint 에 FUSE 로 붙인다. */
 export async function mountFuse(
   backend: WebdavBackend,
   mountpoint: string,
   fuseModule?: FuseModule,
-): Promise<{ ok: boolean; handle?: FuseMountHandle; error?: string; hint?: string }> {
+): Promise<{
+  ok: boolean
+  handle?: FuseMountHandle
+  error?: string
+  hint?: string
+  /** 마운트를 막고 있는 로컬 항목 — 호출자가 rescueStrays 로 구해 낼 수 있다. */
+  strays?: string[]
+}> {
   const Fuse = loadFuse(fuseModule)
   if (!Fuse) {
     return {

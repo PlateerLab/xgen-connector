@@ -77,6 +77,29 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           </div>
         ) : (
           <>
+            {/* 드라이브 on/off — 끌 수 없는 기능은 고장 났을 때 손 쓸 방법이 없다 */}
+            <div className="mcp-form" style={{ marginBottom: 12 }}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>가상 드라이브 사용</div>
+                  <div className="small muted" style={{ marginTop: 2 }}>
+                    끄면 폴더가 사라집니다. 파일의 원본은 서버에 그대로 있습니다.
+                  </div>
+                </div>
+                <label className="row" style={{ gap: 6, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={ws?.enabled !== false}
+                    disabled={!!busy}
+                    onChange={(e) =>
+                      void act('enabled', () => xgen.workspace.setEnabled(e.target.checked))
+                    }
+                  />
+                  <span className="small">{ws?.enabled === false ? '꺼짐' : '켜짐'}</span>
+                </label>
+              </div>
+            </div>
+
             {/* 위치 */}
             <div className="mcp-form" style={{ marginBottom: 12 }}>
               <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -106,6 +129,14 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 꺼져 있는 것은 오류가 아니다 — 오류처럼 보이면 사용자가 고치려
                 든다. 어디서 켜는지까지 알려준다.
               */}
+              {/* 마운트를 막던 로컬 파일 — 지우지 않고 옆으로 옮겨 뒀다 */}
+              {ws?.rescued && (
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  <div>폴더에 있던 파일을 다음 위치로 옮기고 연결했습니다:</div>
+                  <div className="mcp-item-cmd" style={{ marginTop: 2 }}>{ws.rescued}</div>
+                  <div style={{ marginTop: 2 }}>클라우드로 올라가면 이 폴더는 자동으로 정리됩니다.</div>
+                </div>
+              )}
               {ws?.storageOff && (
                 <div className="small muted" style={{ marginTop: 4 }}>
                   <div>내 클라우드 스토리지가 이 드라이브에 없습니다: {ws.storageOff}</div>

@@ -97,6 +97,7 @@ export const CHANNELS = {
   workspaceOpen: 'workspace:open',
   workspaceRoot: 'workspace:root',
   workspaceSetRoot: 'workspace:setRoot',
+  workspaceSetEnabled: 'workspace:setEnabled',
   mcpStatus: 'mcp:status',
   mcpStatusEvent: 'mcp:statusEvent',
 
