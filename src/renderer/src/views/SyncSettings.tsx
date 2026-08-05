@@ -102,6 +102,19 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 </div>
               </div>
               <div className="mcp-item-cmd" style={{ marginTop: 4 }}>{root || '—'}</div>
+              {/*
+                꺼져 있는 것은 오류가 아니다 — 오류처럼 보이면 사용자가 고치려
+                든다. 어디서 켜는지까지 알려준다.
+              */}
+              {ws?.storageOff && (
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  <div>내 클라우드 스토리지가 이 드라이브에 없습니다: {ws.storageOff}</div>
+                  <div style={{ marginTop: 2 }}>
+                    XGEN 웹의 [마이페이지 → 클라우드 스토리지] 에서 켤 수 있습니다.
+                    에이전트 폴더는 이 설정과 무관하게 그대로 동작합니다.
+                  </div>
+                </div>
+              )}
               {ws?.error && (
                 <div className="small error" style={{ marginTop: 4 }}>
                   <div>{ws.error}</div>

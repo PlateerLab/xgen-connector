@@ -42,6 +42,14 @@ export interface WorkspaceStatus {
   error?: string
   /** 오류를 사용자가 직접 풀 수 있는 방법 (설치 명령 등). */
   errorHint?: string
+  /**
+   * 클라우드 스토리지가 **꺼져 있어서** 루트가 없는 경우의 사유.
+   *
+   * 관리자가 조직 전체에서 껐거나, 사용자가 자기 설정에서 껐다는 뜻이다.
+   * 오류가 아니므로 error 와 구분한다 — "실패"로 보이면 사용자가 고치려
+   * 든다. 서버 문구를 그대로 실어 무엇을 켜야 하는지 알린다.
+   */
+  storageOff?: string
   agents: Array<{ workflowId: string; label: string; folder: string }>
 }
 
@@ -72,6 +80,8 @@ export class WorkspaceManager {
   }
   private lastError: string | undefined
   private lastHint: string | undefined
+  /** 클라우드 스토리지가 꺼져 있을 때의 사유 (오류가 아니다). */
+  private storageOff: string | undefined
   private busy: Promise<void> | null = null
 
   constructor(private deps: WorkspaceManagerDeps) {}
@@ -86,6 +96,7 @@ export class WorkspaceManager {
       path: this.mountedPath ?? undefined,
       error: this.lastError,
       errorHint: this.lastHint,
+      storageOff: this.storageOff,
       agents: (cfg?.agents ?? []).map((a) => ({
         workflowId: a.workflowId,
         label: a.label,
@@ -108,6 +119,41 @@ export class WorkspaceManager {
     return this.busy
   }
 
+  /**
+   * 사용자 클라우드 스토리지를 실제로 쓸 수 있는지 서버에 물어본다.
+   *
+   * on/off 는 **두 곳**에 있다 — 관리자 전역 설정과 사용자 개인 설정. 어느
+   * 쪽이 껐는지 커넥터가 따로 알 필요는 없다. 서버가 403 으로 거절하면
+   * 그것이 곧 "꺼짐"이고, 사유 문구도 서버가 준다 (게이트 판정을 여기서
+   * 흉내내면 서버와 어긋난다).
+   *
+   * 403 이 아닌 실패(네트워크 등)는 **꺼짐이 아니다**. 잠깐 끊겼다고 루트를
+   * 떼면 파일이 전부 사라진 것처럼 보인다 — 그때는 그대로 붙여 둔다.
+   */
+  private async probeUserStorage(api: WorkspaceApi | null): Promise<WorkspaceApi | null> {
+    if (!api) {
+      this.storageOff = undefined
+      return null
+    }
+    try {
+      await api.changes(0)
+      this.storageOff = undefined
+      return api
+    } catch (e) {
+      const status = (e as { status?: number }).status
+      if (status === 403) {
+        const why = (e as Error).message || '클라우드 스토리지가 꺼져 있습니다'
+        if (this.storageOff !== why) diag('workspace', `사용자 클라우드 스토리지 꺼짐: ${why}`)
+        this.storageOff = why
+        return null
+      }
+      // 일시적 실패 — 백엔드의 트리 캐시가 알아서 버틴다.
+      diag('workspace', `사용자 스토리지 확인 실패(무시): ${(e as Error).message}`)
+      this.storageOff = undefined
+      return api
+    }
+  }
+
   private async reconcileInner(): Promise<void> {
     const cfg = this.deps.config()
     const agents = cfg?.agents ?? []
@@ -117,7 +163,11 @@ export class WorkspaceManager {
     // 그것 때문에 죽는 일이 없어야 한다.
     // 에이전트가 하나도 없어도 **사용자 클라우드 스토리지가 있으면 마운트**한다
     // — 내 스토리지를 쓰는 데 에이전트 연결이 전제일 이유가 없다.
-    const hasUser = !!this.deps.userApi?.()
+    // 로그인 상태에서만 서버에 물어본다 (로그아웃이면 어차피 걷는다).
+    const userApi = this.deps.loggedIn()
+      ? await this.probeUserStorage(this.deps.userApi?.() ?? null)
+      : null
+    const hasUser = !!userApi
     if ((agents.length === 0 && !hasUser) || !this.deps.loggedIn()) {
       if (this.mountedPath) await this.teardown()
       this.deps.onStatus?.({
@@ -126,6 +176,7 @@ export class WorkspaceManager {
         hint: this.supportCache?.hint,
         mounted: false,
         error: this.lastError,
+        storageOff: this.storageOff,
         agents: [],
       })
       return
@@ -139,7 +190,7 @@ export class WorkspaceManager {
 
     // 백엔드는 마운트 유무와 무관하게 항상 최신 목록을 들고 있어야 한다.
     // 루트 = 사용자 클라우드 스토리지, 그 안에 연결된 에이전트가 폴더로.
-    this.backend.setUserStorage(this.deps.userApi?.() ?? null)
+    this.backend.setUserStorage(userApi)
     const wired: BackendAgent[] = agents.map((a) => ({
       folder: a.folder,
       api: this.deps.apiFor(a.workflowId),
