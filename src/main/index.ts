@@ -1557,6 +1557,20 @@ function wireWorkspaceManager(): void {
         workflowId,
       ),
     loggedIn: () => !!client?.user,
+    // 루트가 되는 사용자 클라우드 스토리지 — owner key 'user:<id>' 규약.
+    userApi: () => {
+      const uid = client?.user?.userId;
+      if (!uid) return null;
+      return makeWorkspaceApi(
+        {
+          serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+          token: async () => (await tokenStore.getAccess()) ?? '',
+          deviceId: () => ensureDeviceId(),
+          tmpDir: app.getPath('userData'),
+        },
+        `user:${uid}`,
+      );
+    },
     onStatus: (s: unknown) => safeSend(mainWindow, CHANNELS.workspaceStatusEvent, s),
   });
   void getWorkspaceManager()?.reconcile();

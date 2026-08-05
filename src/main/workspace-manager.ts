@@ -26,6 +26,8 @@ export interface WorkspaceManagerDeps {
   apiFor: (workflowId: string) => WorkspaceApi
   /** 로그인 상태 — 꺼져 있으면 마운트하지 않는다. */
   loggedIn: () => boolean
+  /** 로그인한 사용자의 클라우드 스토리지 API (루트). 없으면 에이전트만. */
+  userApi?: () => WorkspaceApi | null
   onStatus?: (s: WorkspaceStatus) => void
 }
 
@@ -113,7 +115,10 @@ export class WorkspaceManager {
     // 붙은 에이전트가 없으면 **플랫폼 판정조차 하지 않는다** — 판정이
     // 네이티브 바인딩을 로드하므로, 갓 설치한 사용자가 앱을 켜자마자
     // 그것 때문에 죽는 일이 없어야 한다.
-    if (agents.length === 0 || !this.deps.loggedIn()) {
+    // 에이전트가 하나도 없어도 **사용자 클라우드 스토리지가 있으면 마운트**한다
+    // — 내 스토리지를 쓰는 데 에이전트 연결이 전제일 이유가 없다.
+    const hasUser = !!this.deps.userApi?.()
+    if ((agents.length === 0 && !hasUser) || !this.deps.loggedIn()) {
       if (this.mountedPath) await this.teardown()
       this.deps.onStatus?.({
         supported: this.supportCache?.supported ?? true,
@@ -133,6 +138,8 @@ export class WorkspaceManager {
     }
 
     // 백엔드는 마운트 유무와 무관하게 항상 최신 목록을 들고 있어야 한다.
+    // 루트 = 사용자 클라우드 스토리지, 그 안에 연결된 에이전트가 폴더로.
+    this.backend.setUserStorage(this.deps.userApi?.() ?? null)
     const wired: BackendAgent[] = agents.map((a) => ({
       folder: a.folder,
       api: this.deps.apiFor(a.workflowId),

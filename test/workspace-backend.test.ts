@@ -68,23 +68,27 @@ class FakeApi implements WorkspaceApi {
   }
 }
 
-function setup(): { be: WorkspaceDavBackend; api: FakeApi } {
+function setup(): { be: WorkspaceDavBackend; api: FakeApi; user: FakeApi } {
   const api = new FakeApi()
   api.files.set('보고서.md', '# 보고서\n')
   api.files.set('자료/표.csv', 'a,b\n')
   api.dirs.add('자료')
+  // 루트 = 사용자 클라우드 스토리지, 그 안에 에이전트가 폴더로 온다.
+  const user = new FakeApi()
+  user.files.set('내 메모.md', '개인 파일\n')
   const be = new WorkspaceDavBackend()
+  be.setUserStorage(user)
   be.setAgents([{ folder: '마케팅 리서치', api }])
-  return { be, api }
+  return { be, api, user }
 }
 
-test('루트는 붙어 있는 에이전트 목록이다', async () => {
+test('루트는 사용자 클라우드 스토리지이고 에이전트가 그 안에 있다', async () => {
   const { be } = setup()
   const root = await be.stat('/')
   assert.ok(root?.isDir)
-  const kids = await be.readdir('/')
-  assert.deepEqual(kids.map((k) => k.name), ['마케팅 리서치'])
-  assert.ok(kids[0].isDir)
+  const names = (await be.readdir('/')).map((k) => k.name)
+  assert.ok(names.includes('마케팅 리서치'), `에이전트가 없다: ${names}`)
+  assert.ok(names.includes('내 메모.md'), `사용자 파일이 없다: ${names}`)
 })
 
 test('에이전트 폴더 안에 실제 파일이 보인다 (직계 자식만)', async () => {
@@ -174,17 +178,49 @@ test('MOVE 는 복사+삭제로 처리한다 (편집기의 임시파일→rename
   assert.ok(!api.files.has('보고서.md'))
 })
 
-test('에이전트 폴더 자체는 드라이브에서 만들거나 지울 수 없다', async () => {
-  const { be } = setup()
-  await assert.rejects(() => be.mkdir('/새 에이전트'), /앱에서 추가/)
-  await assert.rejects(() => be.remove('/마케팅 리서치'), /앱에서 추가/)
-  await assert.rejects(() => be.write('/루트파일.txt', Buffer.from('x')), /밖에는 쓸 수 없습니다/)
+test('에이전트 폴더만 보호된다 (사용자 영역은 자유롭게 쓴다)', async () => {
+  const { be, user } = setup()
+  // 에이전트 폴더는 앱에서 연결/해제한다 — 드라이브에서 만들면 실제와 어긋난다.
+  await assert.rejects(() => be.mkdir('/마케팅 리서치'), /앱에서 연결\/해제/)
+  await assert.rejects(() => be.remove('/마케팅 리서치'), /앱에서 연결\/해제/)
+  // 반면 사용자 클라우드에는 루트에서도 자유롭게 쓴다 — 내 스토리지다.
+  await be.write('/새 메모.txt', Buffer.from('hello'))
+  assert.equal(user.files.get('새 메모.txt'), 'hello')
+  await be.mkdir('/새 폴더')
+  assert.ok(user.dirs.has('새 폴더'))
 })
 
-test('에이전트를 떼면 목록에서 사라지고 캐시도 정리된다', async () => {
+test('이름이 겹치면 에이전트가 사용자 폴더를 가린다', async () => {
+  // 연결한 에이전트가 안 보이는 편이 더 혼란스럽다.
+  const { be, user } = setup()
+  user.dirs.add('마케팅 리서치')
+  const names = (await be.readdir('/')).map((k) => k.name)
+  assert.equal(names.filter((n) => n === '마케팅 리서치').length, 1, '중복으로 나온다')
+  // 그리고 그 경로는 에이전트로 간다
+  const kids = (await be.readdir('/마케팅 리서치')).map((k) => k.name)
+  assert.ok(kids.includes('보고서.md'), kids.join(','))
+})
+
+test('사용자 스토리지가 없으면 에이전트만 보인다', async () => {
+  const { be } = setup()
+  be.setUserStorage(null)
+  assert.deepEqual((await be.readdir('/')).map((k) => k.name), ['마케팅 리서치'])
+  await assert.rejects(() => be.write('/x.txt', Buffer.from('x')), /연결되어 있지 않습니다/)
+})
+
+test('사용자 영역과 에이전트 영역 사이로 파일을 옮길 수 있다', async () => {
+  const { be, api, user } = setup()
+  await be.move('/내 메모.md', '/마케팅 리서치/옮긴 메모.md')
+  assert.equal(api.files.get('옮긴 메모.md'), '개인 파일\n')
+  assert.ok(!user.files.has('내 메모.md'))
+})
+
+test('에이전트를 떼면 목록에서 사라진다 (사용자 파일은 남는다)', async () => {
   const { be } = setup()
   await be.readdir('/마케팅 리서치')
   be.setAgents([])
-  assert.deepEqual(await be.readdir('/'), [])
+  const names = (await be.readdir('/')).map((k) => k.name)
+  assert.ok(!names.includes('마케팅 리서치'), '뗐는데 남아 있다')
+  assert.ok(names.includes('내 메모.md'), '사용자 파일까지 사라졌다')
   assert.equal(await be.stat('/마케팅 리서치'), null)
 })

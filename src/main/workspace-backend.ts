@@ -1,29 +1,35 @@
 /**
- * WebDAV 백엔드 — 마운트된 드라이브가 **실제 에이전트 워크스페이스**를 보여준다.
- *
- * 구조:
+ * WebDAV 백엔드 — 마운트된 드라이브가 보여주는 것의 실체.
  *
  *     Finder / 탐색기
- *          ↕ WebDAV (로컬 루프백)
+ *          ↕ WebDAV(로컬 루프백) 또는 FUSE
  *     이 백엔드  ── 트리 캐시 ──  XGEN workspace REST API
  *
- * 루트는 에이전트 목록이고, 각 에이전트가 하나의 폴더다:
+ * ── 계층 ─────────────────────────────────────────────────────────────
  *
- *     /                      ← 붙어 있는 에이전트들
- *     /마케팅 리서치/         ← 그 에이전트의 workspace
+ * 루트는 **사용자의 클라우드 스토리지**이고, 연결된 에이전트가 그 안에 폴더로
+ * 나타난다:
+ *
+ *     /                      ← 사용자 클라우드 스토리지 (내 파일)
+ *     /메모.md                ← 에이전트에 속하지 않는 내 파일
+ *     /마케팅 리서치/         ← 연결된 에이전트의 workspace
  *     /XGeny_copy/보고서.md
+ *
+ * 즉 [커넥터 로컬] ↔ [사용자 클라우드] ↔ [에이전트 workspace] 가 그대로 폴더
+ * 계층이 된다. 이름이 겹치면 **에이전트가 사용자 폴더를 가린다** — 연결한
+ * 에이전트가 안 보이는 편이 더 혼란스럽다.
  *
  * ── 왜 트리를 캐시하나 ───────────────────────────────────────────────
  *
- * Finder 는 폴더 하나를 열 때 **항목마다 PROPFIND 를 따로 쏜다**. 매번
- * 서버를 왕복하면 폴더 열기가 수 초씩 걸린다. 그래서 에이전트별 스냅샷을
- * 짧게 캐시하고(`TREE_TTL_MS`), 쓰기가 일어나면 그 에이전트만 무효화한다.
+ * Finder 는 폴더 하나를 열 때 **항목마다 PROPFIND 를 따로 쏜다**. 매번 서버를
+ * 왕복하면 폴더 열기가 수 초씩 걸린다. 스페이스별 스냅샷을 짧게 캐시하고,
+ * 쓰기가 나면 그 스페이스만 무효화한다.
  *
  * ── 쓰기 ─────────────────────────────────────────────────────────────
  *
  * 편집기는 보통 "임시 파일 쓰기 → rename" 을 한다. 서버 API 에 rename 이
- * 없으므로 MOVE 는 **복사 후 삭제**로 처리한다 (WebDAV 계약상 원자성이
- * 요구되지 않는다).
+ * 없으므로 MOVE 는 **복사 후 삭제**로 처리한다 (WebDAV 는 MOVE 의 원자성을
+ * 요구하지 않는다).
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
@@ -36,7 +42,14 @@ import type { DavNode, WebdavBackend } from './webdav-server'
 export interface WorkspaceApi {
   /** since=0 스냅샷: 살아 있는 항목 전부. */
   changes(since: number): Promise<{
-    changes: Array<{ path: string; is_dir: boolean; size: number; mtime_ns: number; sha256: string; deleted: boolean }>
+    changes: Array<{
+      path: string
+      is_dir: boolean
+      size: number
+      mtime_ns: number
+      sha256: string
+      deleted: boolean
+    }>
   }>
   download(path: string, toAbs: string): Promise<void>
   put(path: string, fromAbs: string, baseSha: string): Promise<{ sha256: string }>
@@ -44,7 +57,7 @@ export interface WorkspaceApi {
   mkdir(path: string): Promise<void>
 }
 
-/** 워크스페이스에 붙어 있는 에이전트 하나. */
+/** 루트에 연결된 에이전트 하나. */
 export interface BackendAgent {
   /** 루트 아래 폴더명 (유일). */
   folder: string
@@ -58,18 +71,36 @@ interface Entry {
   sha: string
 }
 
+/** 하나의 저장 공간 — 사용자 클라우드(루트) 또는 에이전트 workspace. */
+interface Space {
+  /** 캐시 키. 사용자 스페이스는 빈 문자열(폴더명이 될 수 없다). */
+  key: string
+  api: WorkspaceApi
+  /** 사용자 스페이스인가 (에이전트 폴더 보호 규칙에 쓰인다). */
+  isUser: boolean
+}
+
 /** 트리 스냅샷 유효 시간 — 폴더 열기가 왕복으로 느려지지 않을 만큼만. */
 const TREE_TTL_MS = 4000
 
 export class WorkspaceDavBackend implements WebdavBackend {
   private agents = new Map<string, BackendAgent>()
+  /** 사용자 클라우드 스토리지 = 루트 그 자체. 없으면 에이전트만 보인다. */
+  private userApi: WorkspaceApi | null = null
   private trees = new Map<string, { at: number; entries: Map<string, Entry> }>()
   private tmp = mkdtempSync(join(tmpdir(), 'xgen-dav-'))
+
+  /** 루트가 될 사용자 클라우드 스토리지를 배선한다 (null = 미사용). */
+  setUserStorage(api: WorkspaceApi | null): void {
+    this.userApi = api
+    this.trees.delete('')
+    diag('dav', `사용자 클라우드 스토리지 ${api ? '배선' : '해제'}`)
+  }
 
   setAgents(list: BackendAgent[]): void {
     this.agents = new Map(list.map((a) => [a.folder, a]))
     for (const key of [...this.trees.keys()]) {
-      if (!this.agents.has(key)) this.trees.delete(key)
+      if (key !== '' && !this.agents.has(key)) this.trees.delete(key)
     }
     diag('dav', `에이전트 ${this.agents.size}개 배선: ${[...this.agents.keys()].join(', ')}`)
   }
@@ -82,20 +113,36 @@ export class WorkspaceDavBackend implements WebdavBackend {
     }
   }
 
-  /** '/폴더/안의/경로' → [에이전트, 'workspace 기준 상대 경로'] */
-  private split(p: string): [BackendAgent | null, string] {
-    const parts = p.split('/').filter(Boolean)
-    if (parts.length === 0) return [null, '']
-    const agent = this.agents.get(parts[0])
-    return [agent ?? null, parts.slice(1).join('/')]
+  private userSpace(): Space | null {
+    return this.userApi ? { key: '', api: this.userApi, isUser: true } : null
   }
 
-  private async tree(agent: BackendAgent): Promise<Map<string, Entry>> {
-    const hit = this.trees.get(agent.folder)
+  /**
+   * 경로 → [스페이스, 그 안의 상대 경로].
+   *
+   * 첫 조각이 연결된 에이전트 폴더면 그 에이전트, 아니면 사용자 스토리지다
+   * (= 에이전트가 같은 이름의 사용자 폴더를 가린다).
+   */
+  private resolve(p: string): [Space | null, string] {
+    const parts = p.split('/').filter(Boolean)
+    if (parts.length === 0) return [this.userSpace(), '']
+    const agent = this.agents.get(parts[0])
+    if (agent) return [{ key: agent.folder, api: agent.api, isUser: false }, parts.slice(1).join('/')]
+    return [this.userSpace(), parts.join('/')]
+  }
+
+  /** 이 경로의 첫 조각이 에이전트 폴더인가 (드라이브에서 만들거나 지울 수 없다). */
+  private isAgentRoot(p: string): boolean {
+    const parts = p.split('/').filter(Boolean)
+    return parts.length === 1 && this.agents.has(parts[0])
+  }
+
+  private async tree(space: Space): Promise<Map<string, Entry>> {
+    const hit = this.trees.get(space.key)
     if (hit && Date.now() - hit.at < TREE_TTL_MS) return hit.entries
     const entries = new Map<string, Entry>()
     try {
-      const snap = await agent.api.changes(0)
+      const snap = await space.api.changes(0)
       for (const c of snap.changes) {
         if (c.deleted) continue
         entries.set(c.path, {
@@ -107,61 +154,67 @@ export class WorkspaceDavBackend implements WebdavBackend {
         })
       }
     } catch (e) {
-      diag('dav', `트리 조회 실패 (${agent.folder}): ${(e as Error).message}`)
-      // 실패 시 **이전 캐시를 유지**한다 — 빈 목록을 돌려주면 Finder 에
-      // "파일이 전부 사라졌다"로 보인다.
+      diag('dav', `트리 조회 실패 (${space.key || '사용자'}): ${(e as Error).message}`)
+      // 실패 시 **이전 캐시를 유지**한다 — 빈 목록을 돌려주면 "파일이 전부
+      // 사라졌다"로 보인다.
       if (hit) return hit.entries
     }
-    this.trees.set(agent.folder, { at: Date.now(), entries })
+    this.trees.set(space.key, { at: Date.now(), entries })
     return entries
   }
 
-  private invalidate(agent: BackendAgent): void {
-    this.trees.delete(agent.folder)
+  private invalidate(space: Space): void {
+    this.trees.delete(space.key)
   }
 
   private node(name: string, e: Entry): DavNode {
     return { name, isDir: e.isDir, size: e.size, mtime: e.mtime, etag: e.sha || undefined }
   }
 
+  private dirNode(name: string): DavNode {
+    return { name, isDir: true, size: 0, mtime: new Date() }
+  }
+
   async stat(p: string): Promise<DavNode | null> {
-    if (p === '/') return { name: '', isDir: true, size: 0, mtime: new Date() }
-    const [agent, rel] = this.split(p)
-    if (!agent) return null
-    // 에이전트 폴더 자체
-    if (!rel) return { name: agent.folder, isDir: true, size: 0, mtime: new Date() }
-    const e = (await this.tree(agent)).get(rel)
+    if (p === '/') return this.dirNode('')
+    if (this.isAgentRoot(p)) return this.dirNode(p.slice(1))
+    const [space, rel] = this.resolve(p)
+    if (!space || !rel) return null
+    const e = (await this.tree(space)).get(rel)
     return e ? this.node(rel.slice(rel.lastIndexOf('/') + 1), e) : null
   }
 
   async readdir(p: string): Promise<DavNode[]> {
-    if (p === '/') {
-      return [...this.agents.keys()].map((folder) => ({
-        name: folder,
-        isDir: true,
-        size: 0,
-        mtime: new Date(),
-      }))
-    }
-    const [agent, rel] = this.split(p)
-    if (!agent) return []
-    const prefix = rel ? `${rel}/` : ''
     const out: DavNode[] = []
-    for (const [path, e] of await this.tree(agent)) {
+    const seen = new Set<string>()
+
+    // 루트에서는 연결된 에이전트가 먼저다 (같은 이름의 사용자 폴더를 가린다).
+    if (p === '/') {
+      for (const folder of this.agents.keys()) {
+        out.push(this.dirNode(folder))
+        seen.add(folder)
+      }
+    }
+
+    const [space, rel] = this.resolve(p)
+    if (!space) return out
+    const prefix = rel ? `${rel}/` : ''
+    for (const [path, e] of await this.tree(space)) {
       if (!path.startsWith(prefix)) continue
       const tail = path.slice(prefix.length)
       if (!tail || tail.includes('/')) continue // 직계 자식만
+      if (seen.has(tail)) continue
       out.push(this.node(tail, e))
     }
     return out
   }
 
   async read(p: string): Promise<Buffer> {
-    const [agent, rel] = this.split(p)
-    if (!agent || !rel) return Buffer.alloc(0)
+    const [space, rel] = this.resolve(p)
+    if (!space || !rel) return Buffer.alloc(0)
     const local = join(this.tmp, `r-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     try {
-      await agent.api.download(rel, local)
+      await space.api.download(rel, local)
       return readFileSync(local)
     } catch (e) {
       diag('dav', `읽기 실패 ${p}: ${(e as Error).message}`)
@@ -176,14 +229,15 @@ export class WorkspaceDavBackend implements WebdavBackend {
   }
 
   async write(p: string, data: Buffer): Promise<void> {
-    const [agent, rel] = this.split(p)
-    if (!agent || !rel) throw new Error('에이전트 폴더 밖에는 쓸 수 없습니다')
+    const [space, rel] = this.resolve(p)
+    if (!space) throw new Error('클라우드 스토리지가 연결되어 있지 않습니다')
+    if (!rel) throw new Error('루트에는 쓸 수 없습니다')
     const local = join(this.tmp, `w-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     writeFileSync(local, data)
     try {
       // base_sha 는 현재 알고 있는 값 — 서버의 낙관적 동시성 검사에 쓰인다.
-      const cur = (await this.tree(agent)).get(rel)
-      await agent.api.put(rel, local, cur?.sha ?? '')
+      const cur = (await this.tree(space)).get(rel)
+      await space.api.put(rel, local, cur?.sha ?? '')
       diag('dav', `쓰기 ${p} (${data.length}B)`)
     } finally {
       try {
@@ -191,41 +245,49 @@ export class WorkspaceDavBackend implements WebdavBackend {
       } catch {
         /* 무해 */
       }
-      this.invalidate(agent)
+      this.invalidate(space)
     }
   }
 
   async mkdir(p: string): Promise<void> {
-    const [agent, rel] = this.split(p)
-    if (!agent || !rel) throw new Error('에이전트 폴더는 앱에서 추가/제거합니다')
-    await agent.api.mkdir(rel)
-    this.invalidate(agent)
+    // 에이전트 폴더는 앱에서 연결/해제한다 — 드라이브에서 만들면 그게 연결이
+    // 되는 것처럼 보여 실제와 어긋난다.
+    if (this.isAgentRoot(p)) throw new Error('에이전트 폴더는 앱에서 연결/해제합니다')
+    const [space, rel] = this.resolve(p)
+    if (!space) throw new Error('클라우드 스토리지가 연결되어 있지 않습니다')
+    if (!rel) throw new Error('루트는 만들 수 없습니다')
+    await space.api.mkdir(rel)
+    this.invalidate(space)
   }
 
   async remove(p: string): Promise<void> {
-    const [agent, rel] = this.split(p)
-    if (!agent || !rel) throw new Error('에이전트 폴더는 앱에서 추가/제거합니다')
-    const cur = (await this.tree(agent)).get(rel)
+    if (this.isAgentRoot(p)) throw new Error('에이전트 폴더는 앱에서 연결/해제합니다')
+    const [space, rel] = this.resolve(p)
+    if (!space) throw new Error('클라우드 스토리지가 연결되어 있지 않습니다')
+    if (!rel) throw new Error('루트는 지울 수 없습니다')
+    const cur = (await this.tree(space)).get(rel)
     // 파일은 base_sha 를 주고(서버의 fail-closed 계약), 디렉터리는 sha 가 없다.
-    await agent.api.del(rel, cur && !cur.isDir ? cur.sha : undefined)
-    this.invalidate(agent)
+    await space.api.del(rel, cur && !cur.isDir ? cur.sha : undefined)
+    this.invalidate(space)
   }
 
   async move(from: string, to: string): Promise<void> {
-    const [aFrom, relFrom] = this.split(from)
-    const [aTo, relTo] = this.split(to)
-    if (!aFrom || !relFrom || !aTo || !relTo) throw new Error('이동할 수 없는 경로입니다')
-    // 서버 API 에 rename 이 없다 — 복사 후 삭제. WebDAV 는 MOVE 의 원자성을
-    // 요구하지 않으므로 계약 위반이 아니다. (편집기의 "임시파일→rename"
-    // 저장 패턴이 이 경로를 탄다.)
-    const entry = (await this.tree(aFrom)).get(relFrom)
+    if (this.isAgentRoot(from) || this.isAgentRoot(to)) {
+      throw new Error('에이전트 폴더는 앱에서 연결/해제합니다')
+    }
+    const [sFrom, relFrom] = this.resolve(from)
+    const [sTo, relTo] = this.resolve(to)
+    if (!sFrom || !relFrom || !sTo || !relTo) throw new Error('이동할 수 없는 경로입니다')
+    // 서버 API 에 rename 이 없다 — 복사 후 삭제. 스페이스를 가로지르는 이동
+    // (사용자 ↔ 에이전트)도 같은 방식으로 자연스럽게 동작한다.
+    const entry = (await this.tree(sFrom)).get(relFrom)
     if (entry?.isDir) {
-      await aTo.api.mkdir(relTo)
+      await sTo.api.mkdir(relTo)
     } else {
       await this.write(to, await this.read(from))
     }
     await this.remove(from)
-    this.invalidate(aFrom)
-    this.invalidate(aTo)
+    this.invalidate(sFrom)
+    this.invalidate(sTo)
   }
 }
