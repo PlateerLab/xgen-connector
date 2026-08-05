@@ -47,7 +47,16 @@ export class WorkspaceManager {
   /** Linux 는 WebDAV 서버 없이 FUSE 로 직접 붙는다 (내장 클라이언트가 없다). */
   private fuse: FuseMountHandle | null = null
   private mountedPath: string | null = null
-  private support: MountSupport = detectMountSupport()
+  // ⚠ **기동 시점에 만들지 않는다.** 판정은 네이티브 FUSE 바인딩을 require
+  // 하는데, ABI 가 어긋난 .node 의 dlopen 은 JS 예외가 아니라 **프로세스를
+  // 통째로 죽일 수 있다**. 앱이 켜지자마자 죽으면 사용자는 원인을 알 길이
+  // 없으므로, 워크스페이스가 실제로 필요해질 때까지 미룬다.
+  private supportCache: MountSupport | null = null
+
+  private get support(): MountSupport {
+    if (!this.supportCache) this.supportCache = detectMountSupport()
+    return this.supportCache
+  }
   private lastError: string | undefined
   private busy: Promise<void> | null = null
 
@@ -87,9 +96,24 @@ export class WorkspaceManager {
   private async reconcileInner(): Promise<void> {
     const cfg = this.deps.config()
     const agents = cfg?.agents ?? []
-    const want = this.support.supported && this.deps.loggedIn() && agents.length > 0
 
-    if (!want) {
+    // 붙은 에이전트가 없으면 **플랫폼 판정조차 하지 않는다** — 판정이
+    // 네이티브 바인딩을 로드하므로, 갓 설치한 사용자가 앱을 켜자마자
+    // 그것 때문에 죽는 일이 없어야 한다.
+    if (agents.length === 0 || !this.deps.loggedIn()) {
+      if (this.mountedPath) await this.teardown()
+      this.deps.onStatus?.({
+        supported: this.supportCache?.supported ?? true,
+        reason: this.supportCache?.reason,
+        hint: this.supportCache?.hint,
+        mounted: false,
+        error: this.lastError,
+        agents: [],
+      })
+      return
+    }
+
+    if (!this.support.supported) {
       if (this.mountedPath) await this.teardown()
       this.emit()
       return
