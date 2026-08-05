@@ -272,3 +272,39 @@ test('동기화는 아직 못 올린 로컬 파일을 다시 올려 본다', asy
   await m.refreshNow()
   assert.equal(retried, '/tmp/보관', '첫 업로드가 실패했는데 다시 시도하지 않는다')
 })
+
+// ── 기동 직후 ─────────────────────────────────────────────────────
+//
+// 실기 신고: 커넥터를 재시작하면 "드라이브를 연결하지 못했습니다" 가 뜨고,
+// [다시 연결] 을 눌러야만 붙었다. 원인 둘 다 여기서 고정한다.
+
+test('아직 시도 중이면 실패라고 말하지 않는다', async () => {
+  // 기동 직후에는 로그인·마운트가 진행 중이라 "안 붙은" 상태가 정상이다.
+  // (실제 마운트를 걸지 않으려고 in-flight 플래그만 세운다 — 검증 대상은
+  //  "시도 중에는 실패라고 하지 않는다" 이 한 가지다.)
+  const m = manager(api(), [])
+  const inner = m as unknown as { inFlight: boolean }
+  inner.inFlight = true
+  assert.equal(m.status().error, undefined, '시도 중인데 실패라고 했다')
+  inner.inFlight = false
+  assert.match(m.status().error ?? '', /원인 미상/, '시도가 끝났는데도 침묵한다')
+})
+
+test('상태 조회는 상태를 바꾸지 않는다', async () => {
+  // 예전엔 status() 가 lastError 를 직접 써 넣어, 화면을 한 번 본 것만으로
+  // 오류가 눌러앉았다.
+  const m = manager(api({ status: 403, message: '꺼져 있습니다' }), [])
+  await m.reconcile()
+  const first = m.status().error
+  m.status()
+  m.status()
+  assert.equal(m.status().error, first, '조회할 때마다 상태가 달라진다')
+})
+
+test('꺼져 있는 것은 실패로 보고하지 않는다', async () => {
+  const m = manager(api({ status: 403, message: '내 클라우드 스토리지가 켜져 있지 않습니다' }), [])
+  await m.reconcile()
+  const s = m.status()
+  assert.ok(s.storageOff, '꺼짐 사유가 없다')
+  assert.equal(s.error, undefined, '꺼진 것을 오류로 표시했다')
+})

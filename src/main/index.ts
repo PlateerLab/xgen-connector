@@ -1092,6 +1092,11 @@ async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   syncMcp();
   getSyncManager()?.configure(loadConfig().syncPairs ?? []); // 로그인 → 페어링 재가동
   safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
+  // 가상 드라이브는 **로그인 상태에서만** 존재한다. 기동 시점의 리컨사일은
+  // 아직 로그인 전이라 아무것도 붙이지 않으므로, 로그인이 끝난 지금 다시
+  // 맞춰야 한다. 이 한 줄이 없어서 재시작할 때마다 "연결하지 못했습니다" 가
+  // 뜨고 [다시 연결] 을 눌러야만 붙었다 (실기 신고).
+  void getWorkspaceManager()?.reconcile();
   checkForUpdatesAfterLogin();
   return persisted;
 }
@@ -1241,9 +1246,14 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
     if (rotated && rotated !== access) await tokenStore.setAccess(rotated);
     const rotatedRefresh = c.getRefreshToken();
     if (rotatedRefresh && rotatedRefresh !== refresh) await tokenStore.setRefresh(rotatedRefresh);
+    // 세션 복원도 **로그인 성공과 같은 뒷정리**가 필요하다. 예전엔 여기서
+    // 같은 일을 손으로 되풀이했는데, 그러다 보니 afterAuthSuccess 에만 있는
+    // 워크스페이스 리컨사일이 빠져 **재시작할 때마다 드라이브가 안 붙었다**.
+    // 갈래가 둘이면 한쪽만 갱신되는 날이 온다 — 한 곳으로 모은다.
     syncMcp();
     getSyncManager()?.configure(loadConfig().syncPairs ?? []);
     safeSend(overlayWindow, CHANNELS.avatarRefresh); // session restored → overlay can load the avatar
+    void getWorkspaceManager()?.reconcile();
     return { user: c.user };
   }
   if (verdict === 'invalid') {

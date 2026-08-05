@@ -144,3 +144,32 @@ test('이미 XGEN-Workspace 인 폴더를 고르면 그 안에 또 만들지 않
   // 이 중첩이 바로 사용자가 갇힌 원인이다.
   assert.match(handler, /basename\(picked\) === 'XGEN-Workspace'/, '중첩 생성을 막지 않는다')
 })
+
+/**
+ * 가상 드라이브는 **로그인 상태에서만** 존재한다. 그래서 기동 시점의 리컨사일은
+ * 아직 로그인 전이라 아무것도 붙이지 않는다 — 로그인이 끝난 뒤 다시 맞춰야 한다.
+ *
+ * 이 트리거가 빠져 있어서 재시작할 때마다 연결 실패가 뜨고 [다시 연결] 을
+ * 눌러야만 붙었다. 세션 복원 경로는 afterAuthSuccess 를 거치지 않고 같은 일을
+ * 손으로 되풀이하고 있었던 것이 원인이다.
+ */
+test('모든 인증 성공 경로가 드라이브를 다시 맞춘다', async () => {
+  const { readFileSync } = await import('fs')
+  const src = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf-8')
+
+  // 1) 로그인/자동로그인/SSO 공통 훅
+  const after = src.slice(
+    src.indexOf('async function afterAuthSuccess'),
+    src.indexOf('const SSO_CALLBACK'),
+  )
+  assert.match(after, /getWorkspaceManager\(\)\?\.reconcile\(\)/, 'afterAuthSuccess 에 리컨사일이 없다')
+
+  // 2) 세션 복원(재시작 경로) — 여기가 실제로 빠져 있던 곳
+  const i = src.indexOf('CHANNELS.authRestore')
+  const restore = src.slice(i, i + 1600)
+  assert.match(
+    restore,
+    /getWorkspaceManager\(\)\?\.reconcile\(\)/,
+    '세션 복원 후 리컨사일이 없다 — 재시작하면 드라이브가 안 붙는다',
+  )
+})
