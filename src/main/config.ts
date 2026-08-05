@@ -6,8 +6,9 @@
  * (see keychain.ts). `XGEN_SERVER_URL` env pre-seeds the base URL on first run.
  */
 import { app } from 'electron';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DEPLOYMENT_DEFAULTS } from './deployment-defaults';
 
 /** A local MCP server the connector hosts + proxies to the user's XGEN agents. */
 export interface McpServerConfig {
@@ -41,6 +42,8 @@ export interface ConnectorConfig {
   ssoEnabled?: boolean;
   /** 서버 origin 기준 SSO 진입 상대 경로. 예: "/sso/signin". */
   ssoPath?: string;
+  /** SSO 팝업에서 분리된 Chromium DevTools를 자동으로 연다. 기본 false. */
+  ssoDebug?: boolean;
   theme?: 'system' | 'dark' | 'light';
   lang?: 'ko' | 'en';
   autoUpdate?: boolean; // default true
@@ -127,11 +130,13 @@ const DEFAULTS: ConnectorConfig = {
   allowPrivateCertificate: false,
   ssoEnabled: false,
   ssoPath: '/sso/signin',
+  ssoDebug: false,
   theme: 'system',
   lang: 'ko',
   autoUpdate: true,
   updateServer: 'github',
   autoLaunch: false,
+  ...DEPLOYMENT_DEFAULTS,
 };
 
 function configPath(): string {
@@ -145,7 +150,7 @@ export function loadConfig(): ConnectorConfig {
     const raw = JSON.parse(readFileSync(configPath(), 'utf-8'));
     return { ...DEFAULTS, ...raw };
   } catch {
-    return { ...DEFAULTS, serverUrl: process.env.XGEN_SERVER_URL || '' };
+    return { ...DEFAULTS, serverUrl: process.env.XGEN_SERVER_URL || DEFAULTS.serverUrl };
   }
 }
 
@@ -153,6 +158,11 @@ export function saveConfig(patch: Partial<ConnectorConfig>): ConnectorConfig {
   const next = { ...loadConfig(), ...patch };
   writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf-8');
   return next;
+}
+
+/** 저장된 로컬 설정을 제거해 다음 실행에서 배포 기본값부터 다시 시작한다. */
+export function resetConfig(): void {
+  rmSync(configPath(), { force: true });
 }
 
 /** Server-URL 정규화 (geny-connector 동형):

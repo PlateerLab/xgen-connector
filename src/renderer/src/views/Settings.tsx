@@ -31,6 +31,7 @@ export const Settings: React.FC<{
   const [linuxClickThrough, setLinuxClickThrough] = useState(config.linuxClickThrough ?? false);
   const isLinux = /linux/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
   const [resetDone, setResetDone] = useState(false);
+  const [confirmSettingsReset, setConfirmSettingsReset] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
@@ -150,13 +151,21 @@ export const Settings: React.FC<{
           </span>
         </label>
         <label className="setup-option settings-option">
-          <input type="checkbox" checked={ssoEnabled} onChange={(e) => setSsoEnabled(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={ssoEnabled}
+            onChange={(e) => setSsoEnabled(e.target.checked)}
+          />
           <span>SSO 로그인 사용</span>
         </label>
         {ssoEnabled && (
           <label className="field setup-nested-field settings-sso-path">
             <span>SSO PATH</span>
-            <input value={ssoPath} onChange={(e) => setSsoPath(e.target.value)} placeholder="/sso/signin" />
+            <input
+              value={ssoPath}
+              onChange={(e) => setSsoPath(e.target.value)}
+              placeholder="/sso/signin"
+            />
           </label>
         )}
 
@@ -356,6 +365,37 @@ export const Settings: React.FC<{
           >
             {resetDone ? '완료' : '초기화'}
           </button>
+        </div>
+
+        <div className="field-row">
+          <span>
+            저장된 설정 초기화
+            {confirmSettingsReset && (
+              <span className="small notice-warn">
+                서버, SSO, 업데이트, MCP, 워크스페이스 설정과 저장된 로그인 정보가 모두 삭제됩니다.
+                앱은 설치본의 기본 설정으로 다시 시작됩니다.
+              </span>
+            )}
+          </span>
+          <div className="row">
+            {confirmSettingsReset && (
+              <button className="secondary" onClick={() => setConfirmSettingsReset(false)}>
+                취소
+              </button>
+            )}
+            <button
+              className={confirmSettingsReset ? 'danger' : 'secondary'}
+              onClick={() => {
+                if (!confirmSettingsReset) {
+                  setConfirmSettingsReset(true);
+                  return;
+                }
+                xgen.appctl.resetSettings();
+              }}
+            >
+              {confirmSettingsReset ? '초기화 및 재시작' : '초기화'}
+            </button>
+          </div>
         </div>
 
         <div className="field-row">

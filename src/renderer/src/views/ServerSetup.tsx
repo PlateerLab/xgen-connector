@@ -86,7 +86,11 @@ export const ServerSetup: React.FC<{
           </span>
         </label>
         <label className="setup-option">
-          <input type="checkbox" checked={ssoEnabled} onChange={(e) => setSsoEnabled(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={ssoEnabled}
+            onChange={(e) => setSsoEnabled(e.target.checked)}
+          />
           <span>SSO 로그인 사용</span>
         </label>
         {ssoEnabled && (
