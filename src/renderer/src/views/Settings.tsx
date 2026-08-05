@@ -367,35 +367,35 @@ export const Settings: React.FC<{
           </button>
         </div>
 
-        <div className="field">
-          <div className="field-row">
-            <span>저장된 설정 초기화</span>
-            <div className="row">
-              {confirmSettingsReset && (
-                <button className="secondary" onClick={() => setConfirmSettingsReset(false)}>
-                  취소
-                </button>
-              )}
-              <button
-                className={confirmSettingsReset ? 'danger' : 'secondary'}
-                onClick={() => {
-                  if (!confirmSettingsReset) {
-                    setConfirmSettingsReset(true);
-                    return;
-                  }
-                  xgen.appctl.resetSettings();
-                }}
-              >
-                {confirmSettingsReset ? '초기화 및 재시작' : '초기화'}
+        <div className="field-row">
+          <span>
+            저장된 설정 초기화
+            {confirmSettingsReset && (
+              <span className="small notice-warn">
+                서버, SSO, 업데이트, MCP, 워크스페이스 설정과 저장된 로그인 정보가 모두 삭제됩니다.
+                앱은 설치본의 기본 설정으로 다시 시작됩니다.
+              </span>
+            )}
+          </span>
+          <div className="row">
+            {confirmSettingsReset && (
+              <button className="secondary" onClick={() => setConfirmSettingsReset(false)}>
+                취소
               </button>
-            </div>
+            )}
+            <button
+              className={confirmSettingsReset ? 'danger' : 'secondary'}
+              onClick={() => {
+                if (!confirmSettingsReset) {
+                  setConfirmSettingsReset(true);
+                  return;
+                }
+                xgen.appctl.resetSettings();
+              }}
+            >
+              {confirmSettingsReset ? '초기화 및 재시작' : '초기화'}
+            </button>
           </div>
-          {confirmSettingsReset && (
-            <span className="small notice-warn">
-              서버, SSO, 업데이트, MCP, 워크스페이스 설정과 저장된 로그인 정보가 모두
-              삭제됩니다. 앱은 설치본의 기본 설정으로 다시 시작됩니다.
-            </span>
-          )}
         </div>
 
         <div className="field-row">

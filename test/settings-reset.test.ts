@@ -41,3 +41,14 @@ test('설정 화면은 삭제 범위를 알리고 두 번째 클릭에서만 초
   assert.match(settings, /if \(!confirmSettingsReset\)/);
   assert.match(settings, /xgen\.appctl\.resetSettings\(\)/);
 });
+
+test('저장 설정 초기화는 다른 설정과 동일한 field-row 스타일을 사용한다', () => {
+  const settings = source('src/renderer/src/views/Settings.tsx');
+  const start = settings.indexOf('저장된 설정 초기화');
+  const end = settings.indexOf('업데이트 서버', start);
+  const resetSection = settings.slice(start - 80, end);
+
+  assert.match(resetSection, /<div className="field-row">/);
+  assert.doesNotMatch(resetSection, /<div className="field">/);
+  assert.match(resetSection, /className="small notice-warn"/);
+});
