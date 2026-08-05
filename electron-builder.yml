@@ -38,7 +38,7 @@ linux:
     - deb
   category: Utility
   maintainer: PlateerLab <noreply@plateerlab.dev>
-  synopsis: XGEN desktop connector — log in, browse your agents, chat
+  synopsis: XGEN desktop connector - log in, browse your agents, chat
   artifactName: XGEN-Connector-${version}.${ext}
   # 창 ↔ .desktop 매칭 (GNOME 독 아이콘 중복/무명 창 방지). Electron 의
   # WM_CLASS 는 package.json name("xgen-connector")에서 온다.
@@ -53,16 +53,24 @@ deb:
   # 23.10+/24.04 는 apparmor_restrict_unprivileged_userns=1 로 실제 사용자의
   # userns 를 막는다 → 헬퍼가 0755 로 남아 앱이 SIGTRAP 으로 죽는다.
   afterInstall: build/linux-after-install.tpl
-  # 기본 depends 를 재기술하면 통째로 대체되므로 전체 목록 + 추가분을 명시:
-  # libsecret(키체인), appindicator(트레이).
+  # ⚠ 기본 depends 를 재기술하면 통째로 **대체**되므로 전체 목록을 명시한다.
+  # electron-builder 의 기본값에는 GNOME2/Unity 시대 패키지(gconf2,
+  # gconf-service, libappindicator1)가 남아 있는데, **Ubuntu 22.04+ 에서
+  # 제거되어 존재하지 않는다** → 설치가 "의존성 해결 불가"로 실패한다
+  # (앱 센터에서는 이유 없이 실패한 것처럼 보인다). 실제로 후보가 있는
+  # 패키지만 남긴다.
+  #
+  # t64 전환(24.04)으로 이름이 바뀐 것들은 **양쪽을 대안으로** 적는다 —
+  # 한쪽만 적으면 그 배포판에서 설치가 막힌다.
   depends:
-    - gconf2
-    - gconf-service
     - libnotify4
-    - libappindicator1
     - libxtst6
     - libnss3
     - libsecret-1-0
+    - libxss1
+    - xdg-utils
+    - libgtk-3-0 | libgtk-3-0t64
+    - libatspi2.0-0 | libatspi2.0-0t64
     - libayatana-appindicator3-1 | libappindicator3-1
     # XGEN 워크스페이스(가상 드라이브). 근거는 추측이 아니라 바이너리다:
     #   ldd fuse.node → libfuse.so.2   (애드온이 libfuse2 를 동적 링크)
