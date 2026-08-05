@@ -29,7 +29,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import { XgenClient, type ChatEvent, type TtsSpeakOptions } from '../core/index';
 import {
   loadConfig,
@@ -1642,15 +1642,41 @@ ipcMain.handle(CHANNELS.workspaceSetRoot, async () => {
   if (r.canceled || !r.filePaths[0]) return getWorkspaceManager()?.status();
   // 고른 폴더 **안에** XGEN-Workspace 를 만든다 — 사용자가 문서 폴더를 골랐다고
   // 그 폴더 자체를 워크스페이스로 삼으면 기존 파일과 섞인다.
-  const target = join(r.filePaths[0], 'XGEN-Workspace');
-  // ⚠ **먼저 걷어낸다.** 마운트된 채로 루트만 바꾸면 옛 지점이 그대로 남아
-  // 상위 폴더가 EBUSY 로 잠기고, 되돌아갈 수도 지울 수도 없게 된다 (실기 사고).
-  await getWorkspaceManager()?.detach();
-  // moveRoot 는 되돌릴 수 없는 선택(현재 루트의 하위/상위)을 거부한다.
-  const moved = moveRoot(loadConfig().workspace ?? { agents: [] }, target);
-  await saveWorkspace(moved.config);
+  // 고른 폴더가 이미 XGEN-Workspace 면 그 안에 또 만들지 않는다 — 그렇게 해서
+  // .../XGEN-Workspace/XGEN-Workspace 가 생겼고, 사용자는 되돌리려다 갇혔다.
+  const picked = r.filePaths[0];
+  const target = basename(picked) === 'XGEN-Workspace' ? picked : join(picked, 'XGEN-Workspace');
+  const mgr = getWorkspaceManager();
+  try {
+    // ⚠ **먼저 걷어낸다.** 마운트된 채로 루트만 바꾸면 옛 지점이 그대로 남아
+    // 상위 폴더가 EBUSY 로 잠기고, 되돌아갈 수도 지울 수도 없게 된다.
+    await mgr?.detach();
+    const cur = loadConfig().workspace ?? { agents: [] };
+    const oldRoot = rootOf(cur);
+    const moved = moveRoot(cur, target);
+    // 옛 마운트 지점이 빈 폴더로 남아 새 루트를 막지 않게 치운다 (비어 있을 때만 —
+    // 사용자 파일이 남아 있으면 절대 건드리지 않는다).
+    await removeIfEmptyDir(oldRoot);
+    await saveWorkspace(moved.config);
+  } catch (e) {
+    // 여기서 던지면 렌더러는 이유를 못 받고, 최악의 경우 앱이 죽는다.
+    console.log(`[workspace] 위치 변경 실패: ${(e as Error).message}`);
+    const { diag } = await import('./diag-log');
+    diag('workspace', `위치 변경 실패: ${(e as Error).message}`);
+    return { ...(mgr?.status() ?? {}), error: `위치를 바꾸지 못했습니다: ${(e as Error).message}` };
+  }
   return getWorkspaceManager()?.status();
 });
+
+/** 빈 디렉터리면 지운다. 내용이 있으면 손대지 않는다 (사용자 파일이다). */
+async function removeIfEmptyDir(dir: string): Promise<void> {
+  try {
+    const { readdir, rmdir } = await import('fs/promises');
+    if ((await readdir(dir)).length === 0) await rmdir(dir);
+  } catch {
+    /* 없거나 못 지우면 그대로 둔다 — 마운트 사전 점검이 다시 처리한다 */
+  }
+}
 
 /** 가상 드라이브 on/off — 끄면 즉시 걷어낸다. */
 ipcMain.handle(CHANNELS.workspaceSetEnabled, async (_e, enabled: boolean) => {
@@ -1775,6 +1801,30 @@ ipcMain.handle(CHANNELS.quickChatSubmit, (_e, text: string) => {
 ipcMain.on(CHANNELS.quickChatClose, () => dismissQuickChat());
 
 // ── app lifecycle ────────────────────────────────────────────────
+/**
+ * 메인 프로세스에서 예외/거부가 새어 나가면 Electron 은 **앱을 그대로 종료**한다.
+ *
+ * 사용자에게는 "앱이 그냥 꺼졌다"로만 보이고 원인이 어디에도 남지 않는다
+ * (실기: 워크스페이스 폴더를 바꾸려는 순간 앱이 사라짐). 배경 작업 하나가
+ * 실패했다고 앱 전체가 죽을 이유는 없다 — 로그에 남기고 살려 둔다.
+ */
+process.on('uncaughtException', (err) => {
+  try {
+    console.log(`[main] 처리되지 않은 예외: ${err?.stack || err}`);
+    void import('./diag-log').then(({ diag }) => diag('main', `처리되지 않은 예외: ${err?.stack || err}`));
+  } catch {
+    /* 로깅 실패가 종료 사유가 되면 안 된다 */
+  }
+});
+process.on('unhandledRejection', (reason) => {
+  try {
+    console.log(`[main] 처리되지 않은 거부: ${String(reason)}`);
+    void import('./diag-log').then(({ diag }) => diag('main', `처리되지 않은 거부: ${String(reason)}`));
+  } catch {
+    /* 위와 같다 */
+  }
+});
+
 // Single-instance: a second launch focuses the existing app instead of opening
 // a duplicate (important — global hotkeys + tray must be owned by one instance).
 const gotLock = app.requestSingleInstanceLock();
