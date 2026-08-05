@@ -25,7 +25,7 @@
  * release/flush 에서 한 번만 올린다 (네트워크 파일시스템의 표준 방식).
  */
 
-import { accessSync, constants, existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, statSync } from 'fs'
+import { accessSync, constants, existsSync, statSync } from 'fs'
 import { join } from 'path'
 import { diag } from './diag-log'
 import type { WebdavBackend } from './webdav-server'
