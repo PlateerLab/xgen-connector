@@ -36,6 +36,8 @@ export interface WorkspaceStatusLike {
   path?: string;
   error?: string;
   errorHint?: string;
+  /** 클라우드 스토리지가 꺼져 있는 사유 (오류가 아니다). */
+  storageOff?: string;
   agents: Array<{ workflowId: string; label: string; folder: string }>;
 }
 
