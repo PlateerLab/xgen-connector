@@ -1,5 +1,11 @@
 appId: com.plateerlab.xgen.connector
-productName: XGEN Connector
+# ⚠ **공백을 넣지 말 것.** 리눅스는 /opt/<productName> 에 설치되는데, 경로에
+# 공백이 있으면 Chromium zygote 가 자기 자신을 재실행할 때 그 지점에서 잘려
+# 죽는다 (실기 확인):
+#     LaunchProcess: failed to execvp: /opt/XGEN
+#     FATAL:zygote_host_impl_linux.cc(201) Check failed
+# 사용자에게 보이는 이름은 .desktop 의 Name 이 따로 담당한다.
+productName: XGEN-Connector
 directories:
   buildResources: build
   output: release
@@ -47,6 +53,8 @@ linux:
   # — 실빌드 dpkg-deb 검증으로 확인).
   desktop:
     StartupWMClass: xgen-connector
+    # 설치 경로는 공백이 없어야 하지만(위 참조) 런처에 보이는 이름은 예쁘게.
+    Name: XGEN Connector
 deb:
   # 커스텀 postinst: chrome-sandbox 를 **무조건** SUID-root 로 만든다. 기본
   # 템플릿의 `unshare --user` 프로브는 root 로 돌아 항상 성공하지만, Ubuntu

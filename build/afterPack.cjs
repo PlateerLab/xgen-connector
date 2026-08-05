@@ -49,6 +49,10 @@ has_flag() { case " $* " in *" --no-sandbox "*) return 0 ;; esac; return 1; }
 # 사전 판단(싸다): userns 가 막혀 있고 SUID-root 헬퍼도 없으면 확실히 불가능.
 needs_no_sandbox() {
   has_flag "$@" && return 1
+  # 설치 경로에 공백이 있으면 zygote 가 자기 자신을 재실행할 때 그 지점에서
+  # 잘려 죽는다 (실기: "failed to execvp: /opt/XGEN"). productName 에서 공백을
+  # 없앴지만, 사용자가 다른 경로에 풀어 쓰는 경우(AppImage 등)까지 대비한다.
+  case "$DIR" in *" "*) return 0 ;; esac
   [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = "1" ] || return 1
   [ -u "$DIR/chrome-sandbox" ] && [ "$(stat -c %u "$DIR/chrome-sandbox" 2>/dev/null)" = "0" ] && return 1
   return 0
