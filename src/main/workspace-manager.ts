@@ -230,6 +230,33 @@ export class WorkspaceManager {
   }
 
   /**
+   * 다시 연결 — 걷고 처음부터 붙인다.
+   *
+   * 실패한 마운트는 사용자가 스스로 되살릴 수 있어야 한다. 앱을 껐다 켜라고
+   * 하는 건 해결책이 아니다. 남아 있던 오류는 지우고 시작한다 — 안 그러면
+   * 성공해도 옛 오류가 화면에 남는다.
+   */
+  async remount(): Promise<void> {
+    await this.detach()
+    this.lastError = undefined
+    this.lastHint = undefined
+    await this.reconcile()
+  }
+
+  /**
+   * 동기화 — 서버 상태를 지금 다시 읽는다.
+   *
+   * 드라이브는 스트리밍이라 "올릴 것"이 따로 쌓이지 않는다. 그래서 동기화는
+   * **캐시를 버리고 최신 목록을 다시 가져오는 것**이다. 구해 둔 로컬 파일이
+   * 남아 있으면 이때 다시 올려 본다 (첫 시도가 네트워크로 실패했을 수 있다).
+   */
+  async refreshNow(): Promise<void> {
+    this.backend.invalidateAll()
+    if (this.rescued) void this.uploadRescued(this.rescued)
+    await this.reconcile()
+  }
+
+  /**
    * 마운트가 아직 살아 있는가.
    *
    * 프로세스가 죽거나 강제 종료되면 마운트 지점이 **연결 끊긴 채로 남는다**.

@@ -98,6 +98,8 @@ export const CHANNELS = {
   workspaceRoot: 'workspace:root',
   workspaceSetRoot: 'workspace:setRoot',
   workspaceSetEnabled: 'workspace:setEnabled',
+  workspaceRemount: 'workspace:remount',
+  workspaceRefresh: 'workspace:refresh',
   mcpStatus: 'mcp:status',
   mcpStatusEvent: 'mcp:statusEvent',
 

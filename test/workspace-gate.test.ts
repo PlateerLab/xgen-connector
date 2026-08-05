@@ -236,3 +236,39 @@ test('쓰려는 저장소가 하나도 없으면 이유를 만들지 않는다',
   const s = m.status()
   assert.equal(s.error, undefined, '붙일 게 없는데 오류를 지어냈다')
 })
+
+// ── 사용자가 스스로 되살릴 수 있어야 한다 ──────────────────────────
+//
+// 마운트가 실패했을 때 할 수 있는 일이 "앱을 껐다 켜기"뿐이면 그건 해결책이
+// 아니다. [다시 연결]은 걷고 처음부터 붙이고, [동기화]는 서버 상태를 지금
+// 다시 읽는다.
+
+test('다시 연결은 남아 있던 오류를 지우고 시작한다', async () => {
+  const m = manager(null, [])
+  ;(m as unknown as { lastError?: string }).lastError = '옛 실패'
+  await m.remount()
+  // 붙일 게 없으면 오류도 없어야 한다 — 성공했는데 옛 오류가 남으면 안 된다.
+  assert.equal(m.status().error, undefined, `옛 오류가 남았다: ${m.status().error}`)
+})
+
+test('동기화는 모든 저장소 캐시를 버린다 (한 곳만 남으면 낡은 목록이 보인다)', async () => {
+  const m = manager(null, [])
+  let cleared = false
+  const backend = (m as unknown as { backend: { invalidateAll: () => void } }).backend
+  backend.invalidateAll = () => {
+    cleared = true
+  }
+  await m.refreshNow()
+  assert.equal(cleared, true, '캐시를 버리지 않았다')
+})
+
+test('동기화는 아직 못 올린 로컬 파일을 다시 올려 본다', async () => {
+  const m = manager(null, [])
+  ;(m as unknown as { rescued?: string }).rescued = '/tmp/보관'
+  let retried = ''
+  ;(m as unknown as { uploadRescued: (p: string) => Promise<void> }).uploadRescued = async (p) => {
+    retried = p
+  }
+  await m.refreshNow()
+  assert.equal(retried, '/tmp/보관', '첫 업로드가 실패했는데 다시 시도하지 않는다')
+})

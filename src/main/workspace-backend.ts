@@ -179,6 +179,11 @@ export class WorkspaceDavBackend implements WebdavBackend {
     this.trees.delete(key)
   }
 
+  /** 사용자가 [동기화]를 눌렀을 때 — 전부 다시 읽는다. */
+  invalidateAll(): void {
+    this.trees.clear()
+  }
+
   private node(name: string, e: Entry): DavNode {
     return { name, isDir: e.isDir, size: e.size, mtime: e.mtime, etag: e.sha || undefined }
   }
