@@ -1643,9 +1643,20 @@ ipcMain.handle(CHANNELS.workspaceSetRoot, async () => {
   // 고른 폴더 **안에** XGEN-Workspace 를 만든다 — 사용자가 문서 폴더를 골랐다고
   // 그 폴더 자체를 워크스페이스로 삼으면 기존 파일과 섞인다.
   const target = join(r.filePaths[0], 'XGEN-Workspace');
-  await getWorkspaceManager()?.stop();
+  // ⚠ **먼저 걷어낸다.** 마운트된 채로 루트만 바꾸면 옛 지점이 그대로 남아
+  // 상위 폴더가 EBUSY 로 잠기고, 되돌아갈 수도 지울 수도 없게 된다 (실기 사고).
+  await getWorkspaceManager()?.detach();
+  // moveRoot 는 되돌릴 수 없는 선택(현재 루트의 하위/상위)을 거부한다.
   const moved = moveRoot(loadConfig().workspace ?? { agents: [] }, target);
   await saveWorkspace(moved.config);
+  return getWorkspaceManager()?.status();
+});
+
+/** 가상 드라이브 on/off — 끄면 즉시 걷어낸다. */
+ipcMain.handle(CHANNELS.workspaceSetEnabled, async (_e, enabled: boolean) => {
+  const cur = loadConfig().workspace ?? { agents: [] };
+  if (!enabled) await getWorkspaceManager()?.detach();
+  await saveWorkspace({ ...cur, enabled: !!enabled });
   return getWorkspaceManager()?.status();
 });
 ipcMain.handle(CHANNELS.workspaceOpen, () => {

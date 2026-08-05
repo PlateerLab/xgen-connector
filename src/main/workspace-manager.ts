@@ -12,12 +12,12 @@
  */
 
 import { diag } from './diag-log'
-import { mountFuse, type FuseMountHandle } from './fuse-mount'
+import { clearStale, mountFuse, rescueStrays, type FuseMountHandle } from './fuse-mount'
 import { mountWebdav, unmountWebdav } from './mount-runner'
 import { WorkspaceDavBackend, type BackendAgent, type WorkspaceApi } from './workspace-backend'
 import { startDavServer, type DavServerHandle } from './webdav-server'
 import { detectMountSupport, type MountSupport } from './workspace-mounts'
-import { rootOf, type WorkspaceConfig } from './workspace'
+import { isEnabled, rootOf, type WorkspaceConfig } from './workspace'
 
 export interface WorkspaceManagerDeps {
   /** 현재 설정 (부착된 에이전트 목록 + 루트). */
@@ -50,6 +50,16 @@ export interface WorkspacePresence {
 
 export interface WorkspaceStatus {
   supported: boolean
+  /** 사용자가 드라이브를 켜 두었는가. 꺼져 있으면 마운트하지 않는다. */
+  enabled: boolean
+  /**
+   * 마운트 지점에 남아 있던 로컬 파일을 구해 낸 위치.
+   *
+   * FUSE 는 비어 있지 않은 폴더 위에 못 붙는다. 예전에는 여기서 그냥 실패해서
+   * **사용자 파일이 영영 드라이브를 막는** 상태가 됐다. 이제는 옆으로 옮겨
+   * 두고 마운트한 뒤, 어디로 옮겼는지 알려준다.
+   */
+  rescued?: string
   /** 미지원 사유 (macOS 미지원 등). */
   reason?: string
   hint?: string
@@ -101,6 +111,8 @@ export class WorkspaceManager {
   private storageOff: string | undefined
   /** owner → 접속 표시. 마운트되어 있는 동안만 살아 있다. */
   private presence = new Map<string, WorkspacePresence>()
+  /** 마운트를 막던 로컬 파일을 구해 낸 위치 (있으면 사용자에게 알린다). */
+  private rescued: string | undefined
   private busy: Promise<void> | null = null
 
   constructor(private deps: WorkspaceManagerDeps) {}
@@ -112,7 +124,7 @@ export class WorkspaceManager {
     // 그 파일은 아무 데도 가지 않는다. 원인을 못 밝히더라도 "모른다"고는
     // 말해야 한다 — 침묵이 가장 나쁘다.
     const attached = (cfg?.agents ?? []).length > 0
-    const wants = attached || !!this.deps.userApi?.()
+    const wants = isEnabled(cfg) && (attached || !!this.deps.userApi?.())
     if (
       wants &&
       this.mountedPath === null &&
@@ -126,8 +138,10 @@ export class WorkspaceManager {
       supported: this.support.supported,
       reason: this.support.reason,
       hint: this.support.hint,
+      enabled: isEnabled(cfg),
       mounted: this.mountedPath !== null,
       path: this.mountedPath ?? undefined,
+      rescued: this.rescued,
       error: this.lastError,
       errorHint: this.lastHint,
       storageOff: this.storageOff,
@@ -195,9 +209,123 @@ export class WorkspaceManager {
     }
   }
 
+  /**
+   * 드라이브를 끈다 — 마운트를 걷고 스테일 흔적까지 정리한다.
+   *
+   * 루트를 옮기기 전에 **반드시** 먼저 부른다. 안 그러면 옛 지점이 마운트된
+   * 채 남아 상위 폴더가 EBUSY 로 잠기고, 사용자는 되돌아갈 수도 지울 수도
+   * 없게 된다 (실기 사고).
+   */
+  async detach(): Promise<void> {
+    const prev = this.busy ?? Promise.resolve()
+    this.busy = prev
+      .then(async () => {
+        const path = this.mountedPath ?? rootOf(this.deps.config())
+        await this.teardown()
+        await clearStale(path)
+        this.emit()
+      })
+      .catch((e) => diag('workspace', `해제 실패: ${(e as Error).message}`))
+    return this.busy
+  }
+
+  /**
+   * 마운트가 아직 살아 있는가.
+   *
+   * 프로세스가 죽거나 강제 종료되면 마운트 지점이 **연결 끊긴 채로 남는다**.
+   * 그 상태에서는 목록이 비어 보이고 파일 복사가 EIO 로 실패한다 — 겉보기엔
+   * "드라이브는 있는데 아무것도 안 되는" 상태다. 우리가 mountedPath 를 들고
+   * 있다는 이유로 건너뛰면 영원히 그대로다.
+   *
+   * ⚠ 반드시 **자식 프로세스**로 확인한다. 이 프로세스에서 마운트를 동기
+   * 접근하면 FUSE 콜백과 서로 기다리는 데드락이 된다.
+   */
+  /** 보관 폴더 이름에 쓸 시각 표기. */
+  private stamp(): string {
+    const d = new Date()
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
+  }
+
+  /**
+   * 구해 낸 로컬 파일을 클라우드로 올린다.
+   *
+   * ⚠ **마운트를 거치지 않고 API 로 직접** 올린다. 자기 마운트에 파일을 쓰면
+   * FUSE 콜백과 같은 루프에서 서로를 기다리는 데드락이 된다.
+   *
+   * 실패하면 보관 폴더를 **그대로 남긴다** — 파일이 사라지느니 사용자가 직접
+   * 옮기는 편이 낫다.
+   */
+  private async uploadRescued(backup: string): Promise<void> {
+    const api = this.deps.userApi?.()
+    if (!api) return
+    const { readdir, stat } = await import('fs/promises')
+    const { join } = await import('path')
+    let ok = 0
+    let failed = 0
+    const walk = async (dir: string, rel: string): Promise<void> => {
+      for (const name of await readdir(dir)) {
+        const abs = join(dir, name)
+        const relPath = rel ? `${rel}/${name}` : name
+        try {
+          if ((await stat(abs)).isDirectory()) {
+            await api.mkdir(relPath)
+            await walk(abs, relPath)
+          } else {
+            await api.put(relPath, abs, '')
+            ok++
+          }
+        } catch (e) {
+          failed++
+          diag('workspace', `구해 낸 파일 업로드 실패 ${relPath}: ${(e as Error).message}`)
+        }
+      }
+    }
+    try {
+      await walk(backup, '')
+      diag('workspace', `구해 낸 파일 업로드: 성공 ${ok} 실패 ${failed}`)
+      if (failed === 0 && ok > 0) {
+        const { rm } = await import('fs/promises')
+        await rm(backup, { recursive: true, force: true })
+        this.rescued = undefined
+        diag('workspace', '보관 폴더 정리 완료 — 파일은 클라우드에 있다')
+      }
+      this.emit()
+    } catch (e) {
+      diag('workspace', `구해 낸 파일 처리 실패: ${(e as Error).message}`)
+    }
+  }
+
+  private async mountAlive(path: string): Promise<boolean> {
+    try {
+      const { execFile } = await import('child_process')
+      return await new Promise<boolean>((resolveP) => {
+        execFile('ls', ['-1', path], { timeout: 5000 }, (err) => resolveP(!err))
+      })
+    } catch {
+      return true // 확인할 수 없으면 살아 있다고 본다 (멀쩡한 마운트를 끊지 않는다)
+    }
+  }
+
   private async reconcileInner(): Promise<void> {
     const cfg = this.deps.config()
     const agents = cfg?.agents ?? []
+
+    // 사용자가 껐다 — 붙어 있으면 걷고 끝.
+    if (!isEnabled(cfg)) {
+      if (this.mountedPath) await this.teardown()
+      this.lastError = undefined
+      this.emit()
+      return
+    }
+
+    // 붙어 있다고 **믿고 있는** 마운트가 실제로 죽었는지 본다.
+    if (this.mountedPath && !(await this.mountAlive(this.mountedPath))) {
+      diag('workspace', `죽은 마운트 감지 — 다시 붙인다: ${this.mountedPath}`)
+      const path = this.mountedPath
+      await this.teardown()
+      await clearStale(path)
+    }
 
     // 붙은 에이전트가 없으면 **플랫폼 판정조차 하지 않는다** — 판정이
     // 네이티브 바인딩을 로드하므로, 갓 설치한 사용자가 앱을 켜자마자
@@ -215,6 +343,7 @@ export class WorkspaceManager {
         supported: this.supportCache?.supported ?? true,
         reason: this.supportCache?.reason,
         hint: this.supportCache?.hint,
+        enabled: isEnabled(cfg),
         mounted: false,
         error: this.lastError,
         storageOff: this.storageOff,
@@ -292,7 +421,20 @@ export class WorkspaceManager {
     // Linux: FUSE 로 직접 붙는다. WebDAV 서버를 띄우지 않는다 — 같은 백엔드를
     // 커널이 바로 호출하므로 루프백 HTTP 를 한 겹 더 거칠 이유가 없다.
     if (this.support.kind === 'fuse') {
-      const r = await mountFuse(this.backend, root)
+      let r = await mountFuse(this.backend, root)
+      // 마운트 지점에 로컬 파일이 남아 막힌 경우 — **여기서 끝내면 안 된다.**
+      // 사용자가 (마운트가 아닌) 빈 폴더에 파일 하나 넣는 순간 드라이브가
+      // 영영 안 붙는 상태가 된다. 지울 수도 없다, 사용자 파일이다.
+      // 옆으로 구해 내고 붙인 뒤, 클라우드로 올린다.
+      if (!r.ok && r.strays?.length) {
+        const backup = rescueStrays(root, this.stamp())
+        if (backup) {
+          this.rescued = backup
+          diag('workspace', `잔여 파일을 옮기고 다시 마운트한다: ${backup}`)
+          r = await mountFuse(this.backend, root)
+          if (r.ok) void this.uploadRescued(backup)
+        }
+      }
       if (!r.ok) {
         this.lastError = r.error
         this.lastHint = r.hint

@@ -30,6 +30,10 @@ export interface SyncPairStatusLike {
 /** 가상 드라이브 상태 (main workspace-manager.WorkspaceStatus 미러). */
 export interface WorkspaceStatusLike {
   supported: boolean;
+  /** 사용자가 드라이브를 켜 두었는가. */
+  enabled: boolean;
+  /** 마운트를 막던 로컬 파일을 구해 낸 위치. */
+  rescued?: string;
   reason?: string;
   hint?: string;
   mounted: boolean;
@@ -267,6 +271,8 @@ const api = {
     open: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(CHANNELS.workspaceOpen),
     root: (): Promise<string> => ipcRenderer.invoke(CHANNELS.workspaceRoot),
     setRoot: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceSetRoot),
+    setEnabled: (enabled: boolean): Promise<WorkspaceStatusLike> =>
+      ipcRenderer.invoke(CHANNELS.workspaceSetEnabled, enabled),
     onStatus: (cb: (s: WorkspaceStatusLike) => void): (() => void) => {
       const h = (_e: unknown, s: WorkspaceStatusLike) => cb(s);
       ipcRenderer.on(CHANNELS.workspaceStatusEvent, h);
