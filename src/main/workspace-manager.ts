@@ -113,6 +113,8 @@ export class WorkspaceManager {
   private presence = new Map<string, WorkspacePresence>()
   /** 마운트를 막던 로컬 파일을 구해 낸 위치 (있으면 사용자에게 알린다). */
   private rescued: string | undefined
+  /** 리컨사일이 진행 중인가 — 진행 중에는 "실패"라고 말하지 않는다. */
+  private inFlight = false
   private busy: Promise<void> | null = null
 
   constructor(private deps: WorkspaceManagerDeps) {}
@@ -125,15 +127,17 @@ export class WorkspaceManager {
     // 말해야 한다 — 침묵이 가장 나쁘다.
     const attached = (cfg?.agents ?? []).length > 0
     const wants = isEnabled(cfg) && (attached || !!this.deps.userApi?.())
-    if (
-      wants &&
-      this.mountedPath === null &&
-      this.support.supported &&
-      !this.lastError &&
-      !this.storageOff
-    ) {
-      this.lastError = '드라이브를 연결하지 못했습니다 (원인 미상 — 진단 로그를 확인하세요)'
-    }
+    // ⚠ **아직 시도 중이면 실패라고 말하지 않는다.** 기동 직후에는 로그인과
+    // 마운트가 진행 중이라 잠깐 "안 붙은" 상태가 정상이다. 여기서 실패를
+    // 지어내면 사용자는 매번 [다시 연결] 을 눌러야 하는 줄 안다 (실기 신고).
+    //
+    // 그리고 상태 조회는 **상태를 바꾸지 않는다** — 예전엔 여기서 lastError 를
+    // 직접 써 넣어, 화면을 한 번 본 것만으로 오류가 눌러앉았다.
+    const unexplained =
+      wants && this.mountedPath === null && this.support.supported && !this.inFlight
+        ? '드라이브를 연결하지 못했습니다 (원인 미상 — 진단 로그를 확인하세요)'
+        : undefined
+    const error = this.lastError ?? (this.storageOff ? undefined : unexplained)
     return {
       supported: this.support.supported,
       reason: this.support.reason,
@@ -142,7 +146,7 @@ export class WorkspaceManager {
       mounted: this.mountedPath !== null,
       path: this.mountedPath ?? undefined,
       rescued: this.rescued,
-      error: this.lastError,
+      error,
       errorHint: this.lastHint,
       storageOff: this.storageOff,
       agents: (cfg?.agents ?? []).map((a) => ({
@@ -161,6 +165,7 @@ export class WorkspaceManager {
   async reconcile(): Promise<void> {
     // 마운트/언마운트가 겹치면 스테일 마운트가 남는다 — 항상 한 줄로 세운다.
     const prev = this.busy ?? Promise.resolve()
+    this.inFlight = true
     this.busy = prev
       .then(() => this.reconcileInner())
       .catch((e) => {
@@ -169,6 +174,9 @@ export class WorkspaceManager {
         // 가지 않는다 — 실제로 그렇게 잃어버렸다. 반드시 화면까지 올린다.
         this.lastError = `연결하지 못했습니다: ${(e as Error).message}`
         diag('workspace', `리컨사일 실패: ${(e as Error).message}`)
+      })
+      .finally(() => {
+        this.inFlight = false
         this.emit()
       })
     return this.busy
