@@ -11,7 +11,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import type { Agent, ChatEvent, ToolEvent, Citation, VoiceConfig } from '../../../core/index';
+import type { McpBridgeStatusLike } from '../../../preload/index';
 import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
+import { mcpChatStatus } from './mcp-status-model';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
 import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon, PanelLeftIcon, MicIcon, SpeakerIcon, SpeakerOffIcon } from '../brand/icons';
@@ -176,6 +178,7 @@ export const Chat: React.FC<{
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
   const [interactionId, setInteractionId] = useState(
     () => session.interactionId ?? newInteractionId(agent.workflowId),
   );
@@ -217,6 +220,19 @@ export const Chat: React.FC<{
 
   // A stable signature of the open session — changing it resets the view.
   const sessionSig = `${agent.workflowId}::${session.resume ? session.interactionId : 'new'}`;
+
+  useEffect(() => {
+    let alive = true;
+    void xgen.mcp
+      .status()
+      .then((status) => alive && setMcpStatus(status))
+      .catch(() => undefined);
+    const off = xgen.mcp.onStatus((status) => setMcpStatus(status));
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
 
   useEffect(() => {
     cancelRef.current?.cancel();
@@ -586,6 +602,7 @@ export const Chat: React.FC<{
   useEffect(() => xgen.quickChat.onQuickSend((t) => send(t)), [send]);
 
   const kind = AGENT_KIND[agent.workflowType ?? ''] ?? (agent.workflowType || 'Agent');
+  const mcpIndicator = mcpChatStatus(mcpStatus);
 
   return (
     <div className="chat">
@@ -614,6 +631,15 @@ export const Chat: React.FC<{
           </div>
         </div>
         <div className="chat-header-actions">
+          <span
+            className={`mcp-chat-status ${mcpIndicator.tone}`}
+            title={mcpIndicator.title}
+            role="status"
+            aria-label={mcpIndicator.title}
+          >
+            <span className="mcp-chat-status-dot" />
+            {mcpIndicator.label}
+          </span>
           {ttsOn && (
             <button
               className="secondary"

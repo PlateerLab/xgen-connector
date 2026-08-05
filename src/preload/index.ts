@@ -7,7 +7,17 @@
  */
 import { contextBridge, ipcRenderer } from 'electron';
 import { CHANNELS } from '../main/ipc';
-import type { ChatEvent, ChatRequest, CurrentUser, AgentListQuery, AgentListResult, HistoryTurn, Conversation, VoiceConfig, TtsSpeakOptions } from '../core/index';
+import type {
+  ChatEvent,
+  ChatRequest,
+  CurrentUser,
+  AgentListQuery,
+  AgentListResult,
+  HistoryTurn,
+  Conversation,
+  VoiceConfig,
+  TtsSpeakOptions,
+} from '../core/index';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
 import type { ConnectorConfig, McpServerConfig, SyncPairPersistConfig } from '../main/config';
@@ -19,7 +29,8 @@ export interface SyncPairStatusLike {
   workflowId: string;
   workflowLabel?: string;
   localPath: string;
-  state: 'idle' | 'syncing' | 'paused' | 'offline' | 'error' | 'session_gone' | 'awaiting_confirmation';
+  state:
+    'idle' | 'syncing' | 'paused' | 'offline' | 'error' | 'session_gone' | 'awaiting_confirmation';
   connected: boolean;
   lastSyncAt: number | null;
   lastError: string | null;
@@ -49,8 +60,15 @@ export interface WorkspaceStatusLike {
 export interface McpBridgeStatusLike {
   enabled: boolean;
   connected: boolean;
+  catalogSynced: boolean;
+  serverToolCount: number;
   error?: string;
-  servers: Array<{ name: string; connected: boolean; error?: string; tools: Array<{ name: string }> }>;
+  servers: Array<{
+    name: string;
+    connected: boolean;
+    error?: string;
+    tools: Array<{ name: string }>;
+  }>;
 }
 
 /** Live avatar/chat state pushed from the main window to the floating overlay. */
@@ -135,21 +153,29 @@ const api = {
   avatars: {
     uploadAsset: (bytes: Uint8Array, filename: string): Promise<AvatarDescriptor> =>
       ipcRenderer.invoke(CHANNELS.avatarUploadAsset, bytes, filename),
-    deleteAsset: (avatarId: string): Promise<void> => ipcRenderer.invoke(CHANNELS.avatarDeleteAsset, avatarId),
-    setEnabled: (enabled: boolean): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.avatarSetEnabled, enabled),
+    deleteAsset: (avatarId: string): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.avatarDeleteAsset, avatarId),
+    setEnabled: (enabled: boolean): Promise<AvatarConfig> =>
+      ipcRenderer.invoke(CHANNELS.avatarSetEnabled, enabled),
     select: (id: string): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.avatarSelect, id),
-    rename: (id: string, name: string): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.avatarRename, id, name),
+    rename: (id: string, name: string): Promise<AvatarConfig> =>
+      ipcRenderer.invoke(CHANNELS.avatarRename, id, name),
     add: (descriptor: AvatarDescriptor, name?: string): Promise<AvatarConfig> =>
       ipcRenderer.invoke(CHANNELS.avatarAdd, descriptor, name),
     remove: (id: string): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.avatarRemove, id),
     storeList: (): Promise<StoreAvatar[]> => ipcRenderer.invoke(CHANNELS.avatarStoreList),
-    storePublish: (descriptor: AvatarDescriptor, name: string, description: string): Promise<StoreAvatar> =>
+    storePublish: (
+      descriptor: AvatarDescriptor,
+      name: string,
+      description: string,
+    ): Promise<StoreAvatar> =>
       ipcRenderer.invoke(CHANNELS.avatarStorePublish, descriptor, name, description),
     storeDownload: (storeId: string): Promise<AvatarDescriptor> =>
       ipcRenderer.invoke(CHANNELS.avatarStoreDownload, storeId),
     storeRate: (storeId: string, stars: number): Promise<StoreAvatar> =>
       ipcRenderer.invoke(CHANNELS.avatarStoreRate, storeId, stars),
-    storeUnpublish: (storeId: string): Promise<void> => ipcRenderer.invoke(CHANNELS.avatarStoreUnpublish, storeId),
+    storeUnpublish: (storeId: string): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.avatarStoreUnpublish, storeId),
   },
 
   history: {
@@ -313,7 +339,8 @@ const api = {
 
   mcp: {
     getEnabled: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.mcpGetEnabled),
-    setEnabled: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke(CHANNELS.mcpSetEnabled, enabled),
+    setEnabled: (enabled: boolean): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.mcpSetEnabled, enabled),
     listServers: (): Promise<McpServerConfig[]> => ipcRenderer.invoke(CHANNELS.mcpListServers),
     saveServers: (servers: McpServerConfig[]): Promise<McpServerConfig[]> =>
       ipcRenderer.invoke(CHANNELS.mcpSaveServers, servers),

@@ -31,6 +31,10 @@ const GRACE_MS = 4000; // stay closed this long before we call it "disconnected"
 export interface McpBridgeStatus {
   enabled: boolean;
   connected: boolean;
+  /** 최신 hello 카탈로그를 workflow가 catalog_id로 확인했는지 여부. */
+  catalogSynced: boolean;
+  /** workflow가 ACK한 최신 카탈로그의 도구 수. */
+  serverToolCount: number;
   error?: string;
   servers: McpServerAdvert[];
 }
@@ -45,6 +49,10 @@ export class McpBridge {
   private stopped = true;
   /** Debounced UI state — NOT the raw socket state, to avoid flicker. */
   private uiConnected = false;
+  private catalogSynced = false;
+  private serverToolCount = 0;
+  private catalogSeq = 0;
+  private pendingCatalogId = '';
   private serverUrl = '';
   private userId = '';
   private getToken: () => Promise<string | null> = async () => null;
@@ -58,13 +66,27 @@ export class McpBridge {
   }
 
   status(): McpBridgeStatus {
-    return { enabled: !this.stopped, connected: this.uiConnected, error: this.lastError, servers: this.lastServers };
+    return {
+      enabled: !this.stopped,
+      connected: this.uiConnected,
+      catalogSynced: this.catalogSynced,
+      serverToolCount: this.serverToolCount,
+      error: this.lastError,
+      servers: this.lastServers,
+    };
   }
 
   /** Emit only when the status actually changed (dedupe). */
   private emit(): void {
     const s = this.status();
-    const key = JSON.stringify({ e: s.enabled, c: s.connected, err: s.error, n: s.servers.map((x) => [x.name, x.connected, x.tools.length]) });
+    const key = JSON.stringify({
+      e: s.enabled,
+      c: s.connected,
+      sync: s.catalogSynced,
+      tools: s.serverToolCount,
+      err: s.error,
+      n: s.servers.map((x) => [x.name, x.connected, x.tools.length]),
+    });
     if (key === this.lastEmit) return;
     this.lastEmit = key;
     this.onStatus(s);
@@ -97,6 +119,9 @@ export class McpBridge {
     }
     this.ws = null;
     this.uiConnected = false;
+    this.catalogSynced = false;
+    this.serverToolCount = 0;
+    this.pendingCatalogId = '';
     this.lastError = undefined;
     this.emit();
   }
@@ -162,7 +187,9 @@ export class McpBridge {
     }
     let ws: WebSocket;
     try {
-      ws = new WebSocket(this.wsUrl(), { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+      ws = new WebSocket(this.wsUrl(), {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
     } catch (e) {
       this.lastError = e instanceof Error ? e.message : String(e);
       this.emit();
@@ -211,6 +238,9 @@ export class McpBridge {
         this.hb = null;
       }
       if (this.stopped) return;
+      this.catalogSynced = false;
+      this.serverToolCount = 0;
+      this.pendingCatalogId = '';
       // Only flip the UI to "disconnected" after a grace period, so a quick
       // reconnect (settle before grace) keeps the UI steady on "연결됨".
       if (this.uiConnected && !this.grace) {
@@ -238,8 +268,21 @@ export class McpBridge {
       this.lastServers = adverts;
       const tools = adverts
         .filter((a) => a.connected)
-        .flatMap((a) => a.tools.map((t) => ({ server: a.name, name: t.name, description: t.description, inputSchema: t.inputSchema })));
-      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'hello', tools }));
+        .flatMap((a) =>
+          a.tools.map((t) => ({
+            server: a.name,
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+          })),
+        );
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        const catalogId = `${Date.now()}-${++this.catalogSeq}`;
+        this.pendingCatalogId = catalogId;
+        this.catalogSynced = false;
+        this.serverToolCount = 0;
+        this.ws.send(JSON.stringify({ type: 'hello', catalog_id: catalogId, tools }));
+      }
       this.emit();
     } catch (e) {
       this.lastError = e instanceof Error ? e.message : String(e);
@@ -248,10 +291,27 @@ export class McpBridge {
   }
 
   private async onMessage(text: string): Promise<void> {
-    let msg: { type?: string; request_id?: string; server?: string; tool?: string; args?: unknown };
+    let msg: {
+      type?: string;
+      request_id?: string;
+      server?: string;
+      tool?: string;
+      args?: unknown;
+      catalog_id?: string;
+      tool_count?: number;
+    };
     try {
       msg = JSON.parse(text);
     } catch {
+      return;
+    }
+    if (msg.type === 'ready') {
+      if (msg.catalog_id !== this.pendingCatalogId) return;
+      this.catalogSynced = true;
+      this.serverToolCount = Number.isFinite(msg.tool_count)
+        ? Math.max(0, Math.trunc(msg.tool_count as number))
+        : 0;
+      this.emit();
       return;
     }
     if (msg.type === 'mcp_call') {
