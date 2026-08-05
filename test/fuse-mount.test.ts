@@ -201,7 +201,9 @@ test('없는 경로는 스테일 정리 대상이 아니다', async () => {
   assert.equal(called, false)
 })
 
-test('사전 점검이 원인을 특정한다 (바인딩은 "fuse failed" 한 줄만 준다)', () => {
+test('사전 점검이 원인을 특정한다 (바인딩은 "fuse failed" 한 줄만 준다)', (ctx) => {
+  // FUSE 는 리눅스 전용 — 다른 OS 에서는 "fusermount 없음"이 먼저 걸린다.
+  if (process.platform !== 'linux') return ctx.skip('linux 전용')
   const { mkdtempSync, writeFileSync } = require('fs') as typeof import('fs')
   const { tmpdir } = require('os') as typeof import('os')
   const { join } = require('path') as typeof import('path')
