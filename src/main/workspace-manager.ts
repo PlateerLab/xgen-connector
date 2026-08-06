@@ -365,16 +365,24 @@ export class WorkspaceManager {
     mountpoint: string,
   ): Promise<{ ok: boolean; error?: string; hint?: string }> {
     const { spawn } = await import('child_process')
-    const { join, dirname } = await import('path')
-    // 번들된 자식 진입점은 메인 번들과 같은 디렉터리에 나온다.
-    const entry = join(dirname(process.argv[1] ?? ''), 'fuse-host.js')
+    const { join } = await import('path')
+    // ⚠ 자식 진입점은 **__dirname 기준**으로 찾는다. process.argv[1] 은 패키징된
+    // 앱에서 메인 스크립트가 아니라서(실행 인자이거나 비어 있다) 엉뚱한 곳을
+    // 가리켰고, 자식이 "Cannot find module" 로 즉시 코드 1 로 죽었다 —
+    // 화면에는 "드라이브 연결이 끊겼습니다 (코드 1)" 로만 보였다.
+    // __dirname 은 개발(out/main)에서도 배포(app.asar/out/main)에서도 맞다.
+    const entry = join(__dirname, 'fuse-host.js')
     const child = spawn(process.execPath, [entry, `--dav=${davUrl}`, `--mount=${mountpoint}`], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     this.host = child
 
-    child.stderr?.on('data', (d) => diag('fuse-host', `stderr: ${String(d).trim().slice(0, 300)}`))
+    let lastStderr = ''
+    child.stderr?.on('data', (d) => {
+      lastStderr = String(d).trim().slice(0, 300)
+      diag('fuse-host', `stderr: ${lastStderr}`)
+    })
     child.on('exit', (code, signal) => {
       const why = signal ? `신호 ${signal}` : `코드 ${code}`
       diag('workspace', `FUSE 호스트 종료 (${why})`)
@@ -388,7 +396,10 @@ export class WorkspaceManager {
         diag('workspace', 'FUSE 호스트를 다시 띄운다')
         void this.reconcile()
       } else {
-        this.lastError = `드라이브 연결이 끊겼습니다 (${why}) — [다시 연결] 을 눌러 주세요`
+        // 코드만 보여주면 원인을 알 수 없다. 자식이 남긴 마지막 말을 함께 싣는다.
+        this.lastError = lastStderr
+          ? `드라이브 연결이 끊겼습니다 (${why}): ${lastStderr}`
+          : `드라이브 연결이 끊겼습니다 (${why}) — [다시 연결] 을 눌러 주세요`
         this.emit()
       }
     })
@@ -414,6 +425,9 @@ export class WorkspaceManager {
         }
       })
       child.on('error', (e) => done({ ok: false, error: `호스트를 실행하지 못했습니다: ${e.message}` }))
+      // 자식이 mounted/mount-failed 를 말하기도 전에 죽으면(모듈 없음 등)
+      // 여기서 끝내야 한다 — 안 그러면 20초를 기다린 뒤에야 "원인 미상" 이 된다.
+      child.once('exit', (code) => done({ ok: false, error: `FUSE 호스트가 시작하지 못했습니다 (코드 ${code}): ${lastStderr || '출력 없음'}` }))
       // 자식이 아무 말도 없으면 매달리지 않는다.
       setTimeout(() => done({ ok: false, error: 'FUSE 호스트가 응답하지 않습니다 (20초)' }), 20_000)
     })

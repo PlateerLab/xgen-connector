@@ -61,3 +61,23 @@ test('빌드가 자식 진입점을 실제로 낸다', () => {
   const cfg = readFileSync(join(__dirname, '..', 'electron.vite.config.ts'), 'utf-8')
   assert.match(cfg, /'fuse-host':/, '빌드 설정에 자식 진입점이 없다 — 배포본에 파일이 없다')
 })
+
+test('자식 진입점은 __dirname 기준이다 (argv[1] 은 패키징에서 다르다)', () => {
+  // process.argv[1] 은 패키징된 앱에서 메인 스크립트가 아니다(실행 인자이거나
+  // 비어 있다). 그걸 기준으로 잡았더니 자식이 "Cannot find module" 로 즉시
+  // 코드 1 로 죽었고, 화면에는 "연결이 끊겼습니다 (코드 1)" 만 보였다.
+  const s = readFileSync(join(SRC, 'workspace-manager.ts'), 'utf-8')
+  const fn = s.slice(s.indexOf('private async spawnFuseHost'), s.indexOf('private async stopFuseHost'))
+  assert.ok(fn.includes("join(__dirname, 'fuse-host.js')"), '진입점을 __dirname 기준으로 찾지 않는다')
+  // 주석은 계약을 설명하려고 그 이름을 적는다 — 코드만 본다.
+  const code = fn.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  assert.ok(!code.includes('process.argv[1]'), 'argv[1] 을 다시 쓰고 있다')
+})
+
+test('자식이 말하기 전에 죽으면 즉시 실패로 끝낸다', () => {
+  // 안 그러면 20초를 기다린 뒤에야 "원인 미상" 이 된다.
+  const s = readFileSync(join(SRC, 'workspace-manager.ts'), 'utf-8')
+  const fn = s.slice(s.indexOf('private async spawnFuseHost'), s.indexOf('private async stopFuseHost'))
+  assert.match(fn, /child\.once\('exit'/, '조기 종료를 감지하지 않는다')
+  assert.match(fn, /lastStderr/, '자식이 남긴 사유를 화면에 싣지 않는다')
+})
