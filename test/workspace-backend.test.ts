@@ -57,10 +57,21 @@ class FakeApi implements WorkspaceApi {
     this.files.set(path, body)
     return { sha256: `sha-${body.length}` }
   }
-  async del(path: string, baseSha?: string): Promise<void> {
-    this.calls.push(`del:${path}:base=${baseSha ?? ''}`)
+  /** 서버의 fail-closed 계약을 그대로 흉내낸다 — force 없는 삭제는 거부. */
+  strictServer = false
+  async del(path: string, baseSha?: string, opts?: { force?: boolean }): Promise<void> {
+    this.calls.push(`del:${path}:base=${baseSha ?? ''}:force=${opts?.force ? '1' : '0'}`)
+    if (this.strictServer && !opts?.force) {
+      const isDir = this.dirs.has(path)
+      const hasKids = [...this.files.keys()].some((f) => f.startsWith(`${path}/`))
+      if (isDir && hasKids) throw Object.assign(new Error('dir_not_empty'), { status: 409 })
+      if (!isDir && !baseSha) throw Object.assign(new Error('base_sha_required'), { status: 409 })
+    }
     this.files.delete(path)
     this.dirs.delete(path)
+    for (const f of [...this.files.keys()]) {
+      if (f.startsWith(`${path}/`)) this.files.delete(f)
+    }
   }
   async mkdir(path: string): Promise<void> {
     this.calls.push(`mkdir:${path}`)
@@ -168,7 +179,7 @@ test('삭제는 파일에 base_sha 를 주고 디렉터리에는 주지 않는�
   assert.ok(api.calls.some((c) => /^del:보고서\.md:base=sha-/.test(c)), api.calls.join(','))
 
   await be.remove('/마케팅 리서치/자료')
-  assert.ok(api.calls.some((c) => c === 'del:자료:base='), api.calls.join(','))
+  assert.ok(api.calls.some((c) => c.startsWith('del:자료:base=:')), api.calls.join(','))
 })
 
 test('MOVE 는 복사+삭제로 처리한다 (편집기의 임시파일→rename 저장)', async () => {
@@ -223,4 +234,52 @@ test('에이전트를 떼면 목록에서 사라진다 (사용자 파일은 남�
   assert.ok(!names.includes('마케팅 리서치'), '뗐는데 남아 있다')
   assert.ok(names.includes('내 메모.md'), '사용자 파일까지 사라졌다')
   assert.equal(await be.stat('/마케팅 리서치'), null)
+})
+
+// ── 삭제: 드라이브에서 지운 것은 사용자의 명시적 의사다 ──────────────
+//
+// 서버는 force 없는 삭제를 "동기화 레플리카의 추론"으로 보고 fail-closed 로
+// 막는다 (파일=base_sha 필수, 폴더=비어 있을 때만). 그 가드는 낡은 레플리카가
+// 에이전트 산출물을 쓸어 담는 것을 막기 위한 것이지 **사람 손**을 막으려는
+// 게 아니다. 드라이브가 force 를 안 실어 보내서 실기에서 폴더 삭제는 늘
+// 실패했고, 캐시에 없는 파일도 지워지지 않았다.
+
+test('드라이브에서 지우면 force 를 실어 보낸다', async () => {
+  const { be, user } = setup()
+  await be.readdir('/')
+  await be.remove('/내 메모.md')
+  const del = user.calls.find((c) => c.startsWith('del:'))
+  assert.ok(del?.endsWith(':force=1'), `force 를 안 보냈다: ${del}`)
+})
+
+test('내용이 있는 폴더도 드라이브에서 지워진다', async () => {
+  const { be, api } = setup()
+  api.strictServer = true // 서버의 fail-closed 계약을 켠다
+  await be.readdir('/마케팅 리서치/자료')
+  await be.remove('/마케팅 리서치/자료') // 안에 표.csv 가 있다
+  assert.ok(!api.dirs.has('자료'), '폴더가 안 지워졌다')
+  assert.ok(!api.files.has('자료/표.csv'), '폴더 안 파일이 남았다')
+})
+
+test('캐시가 모르는 파일도 지워진다', async () => {
+  const { be, api } = setup()
+  api.strictServer = true
+  await be.readdir('/마케팅 리서치')
+  // 다른 기기가 방금 만든 파일 — 우리 트리 캐시엔 없어서 base_sha 가 없다.
+  api.files.set('남이만든.txt', 'x')
+  await be.remove('/마케팅 리서치/남이만든.txt')
+  assert.ok(!api.files.has('남이만든.txt'), '캐시에 없다고 삭제를 포기했다')
+})
+
+test('레플리카 동기화 엔진은 force 를 쓰지 않는다', () => {
+  // 계약의 반대편: 리컨사일 경로가 force 를 켜면 낡은 레플리카가 에이전트
+  // 산출물을 쓸어 담는다. 소스로 고정한다 (주석은 제외하고 코드만).
+  const src = readFileSync(new URL('../src/main/sync-core.ts', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+  const dels = src.match(/transport\.del\([^)]*\)/g) ?? []
+  assert.ok(dels.length > 0, 'del 호출을 못 찾았다 — 테스트가 낡았다')
+  for (const d of dels) {
+    assert.ok(!/force/.test(d), `리컨사일 엔진이 force 를 쓴다: ${d}`)
+  }
 })
