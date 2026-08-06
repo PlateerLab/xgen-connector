@@ -11,8 +11,9 @@
  * 서버가 죽었다"(= 스테일 마운트로 폴더가 먹통) 같은 상태가 생긴다.
  */
 
+import type { ChildProcess } from 'child_process'
 import { diag } from './diag-log'
-import { clearStale, mountFuse, rescueStrays, type FuseMountHandle } from './fuse-mount'
+import { clearStale, preflight, rescueStrays } from './fuse-mount'
 import { mountWebdav, unmountWebdav } from './mount-runner'
 import { WorkspaceDavBackend, type BackendAgent, type WorkspaceApi } from './workspace-backend'
 import { startDavServer, type DavServerHandle } from './webdav-server'
@@ -92,8 +93,10 @@ export interface WorkspaceStatus {
 export class WorkspaceManager {
   private backend = new WorkspaceDavBackend()
   private handle: DavServerHandle | null = null
-  /** Linux 는 WebDAV 서버 없이 FUSE 로 직접 붙는다 (내장 클라이언트가 없다). */
-  private fuse: FuseMountHandle | null = null
+  /** Linux FUSE 를 소유한 자식 프로세스 (있으면 마운트가 살아 있다). */
+  private host: ChildProcess | null = null
+  /** 자식이 스스로 죽었을 때 한 번만 자동 복구한다 (무한 재기동 방지). */
+  private hostRestarts = 0
   private mountedPath: string | null = null
   // ⚠ **기동 시점에 만들지 않는다.** 판정은 네이티브 FUSE 바인딩을 require
   // 하는데, ABI 가 어긋난 .node 의 dlopen 은 JS 예외가 아니라 **프로세스를
@@ -331,6 +334,110 @@ export class WorkspaceManager {
     }
   }
 
+
+  /**
+   * 로컬 WebDAV 서버를 확보한다 (없으면 띄운다).
+   *
+   * Linux 도 이제 이 서버를 쓴다 — FUSE 를 자식 프로세스로 옮기면서 자식이
+   * 부모에게 되물을 통로가 필요해졌고, macOS/Windows 가 쓰던 것을 그대로
+   * 재사용한다. 백엔드 로직이 한 벌로 유지된다.
+   */
+  private async ensureDavServer(): Promise<DavServerHandle | null> {
+    if (this.handle) return this.handle
+    try {
+      this.handle = await startDavServer(this.backend, {})
+      return this.handle
+    } catch (e) {
+      diag('workspace', `WebDAV 서버 시작 실패: ${(e as Error).message}`)
+      return null
+    }
+  }
+
+  /**
+   * FUSE 호스트 자식을 띄우고 마운트 완료를 기다린다.
+   *
+   * 자식은 **Electron 바이너리를 Node 모드로** 실행한다 (앱에 별도 Node 가
+   * 없다). 마운트 결과는 stdout 한 줄로 온다 — 성공이면 `mounted`, 실패면
+   * `mount-failed <사유>|<해결법>`.
+   */
+  private async spawnFuseHost(
+    davUrl: string,
+    mountpoint: string,
+  ): Promise<{ ok: boolean; error?: string; hint?: string }> {
+    const { spawn } = await import('child_process')
+    const { join, dirname } = await import('path')
+    // 번들된 자식 진입점은 메인 번들과 같은 디렉터리에 나온다.
+    const entry = join(dirname(process.argv[1] ?? ''), 'fuse-host.js')
+    const child = spawn(process.execPath, [entry, `--dav=${davUrl}`, `--mount=${mountpoint}`], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    this.host = child
+
+    child.stderr?.on('data', (d) => diag('fuse-host', `stderr: ${String(d).trim().slice(0, 300)}`))
+    child.on('exit', (code, signal) => {
+      const why = signal ? `신호 ${signal}` : `코드 ${code}`
+      diag('workspace', `FUSE 호스트 종료 (${why})`)
+      if (this.host !== child) return // 우리가 의도적으로 걷은 경우
+      this.host = null
+      this.mountedPath = null
+      // 자식이 죽어도 앱은 산다 — 그게 프로세스를 나눈 이유다. 한 번은 스스로
+      // 되살리고, 그래도 죽으면 사유를 남긴다 (무한 재기동은 더 나쁘다).
+      if (this.hostRestarts < 1) {
+        this.hostRestarts++
+        diag('workspace', 'FUSE 호스트를 다시 띄운다')
+        void this.reconcile()
+      } else {
+        this.lastError = `드라이브 연결이 끊겼습니다 (${why}) — [다시 연결] 을 눌러 주세요`
+        this.emit()
+      }
+    })
+
+    return new Promise((resolve) => {
+      let settled = false
+      const done = (v: { ok: boolean; error?: string; hint?: string }): void => {
+        if (settled) return
+        settled = true
+        resolve(v)
+      }
+      child.stdout?.on('data', (d) => {
+        for (const line of String(d).split('\n')) {
+          if (line.startsWith('mounted')) {
+            this.hostRestarts = 0
+            done({ ok: true })
+          } else if (line.startsWith('mount-failed')) {
+            const [error, hint] = line.slice('mount-failed '.length).split('|')
+            done({ ok: false, error: error || '마운트 실패', hint: hint || undefined })
+          } else if (line.trim()) {
+            diag('fuse-host', line.trim().slice(0, 300))
+          }
+        }
+      })
+      child.on('error', (e) => done({ ok: false, error: `호스트를 실행하지 못했습니다: ${e.message}` }))
+      // 자식이 아무 말도 없으면 매달리지 않는다.
+      setTimeout(() => done({ ok: false, error: 'FUSE 호스트가 응답하지 않습니다 (20초)' }), 20_000)
+    })
+  }
+
+  /** 자식을 정중히 종료한다 (stdin 을 닫으면 자식이 스스로 언마운트한다). */
+  private async stopFuseHost(): Promise<void> {
+    const child = this.host
+    if (!child) return
+    this.host = null
+    try {
+      child.stdin?.end()
+      await new Promise<void>((r) => {
+        const t = setTimeout(() => {
+          try { child.kill('SIGKILL') } catch { /* 이미 죽었다 */ }
+          r()
+        }, 5000)
+        child.once('exit', () => { clearTimeout(t); r() })
+      })
+    } catch {
+      /* 종료 실패는 clearStale 이 마무리한다 */
+    }
+  }
+
   private async mountAlive(path: string): Promise<boolean> {
     try {
       const { execFile } = await import('child_process')
@@ -456,30 +563,38 @@ export class WorkspaceManager {
     // Linux: FUSE 로 직접 붙는다. WebDAV 서버를 띄우지 않는다 — 같은 백엔드를
     // 커널이 바로 호출하므로 루프백 HTTP 를 한 겹 더 거칠 이유가 없다.
     if (this.support.kind === 'fuse') {
-      let r = await mountFuse(this.backend, root)
       // 마운트 지점에 로컬 파일이 남아 막힌 경우 — **여기서 끝내면 안 된다.**
       // 사용자가 (마운트가 아닌) 빈 폴더에 파일 하나 넣는 순간 드라이브가
       // 영영 안 붙는 상태가 된다. 지울 수도 없다, 사용자 파일이다.
-      // 옆으로 구해 내고 붙인 뒤, 클라우드로 올린다.
-      if (!r.ok && r.strays?.length) {
+      const pre = await preflight(root)
+      if (pre?.strays?.length) {
         const backup = await rescueStrays(root, this.stamp())
         if (backup) {
           this.rescued = backup
           diag('workspace', `잔여 파일을 옮기고 다시 마운트한다: ${backup}`)
-          r = await mountFuse(this.backend, root)
-          if (r.ok) void this.uploadRescued(backup)
         }
       }
-      if (!r.ok) {
-        this.lastError = r.error
-        this.lastHint = r.hint
-        diag('workspace', `FUSE 마운트 실패: ${r.error ?? ''} / ${r.hint ?? ''}`)
+
+      // ⚠ FUSE 는 **자식 프로세스**가 건다. 네이티브 크래시(SIGSEGV)가 앱을
+      // 통째로 죽이는 일도, 마운트 콜백이 메인 루프를 물어 데드락이 나는 일도
+      // 이 경계 하나로 사라진다. 자식은 로컬 WebDAV 로 우리에게 되묻는다 —
+      // macOS/Windows 가 이미 쓰는 서버라 백엔드 로직이 한 벌로 유지된다.
+      const dav = await this.ensureDavServer()
+      if (!dav) {
+        this.lastError = '로컬 WebDAV 서버를 시작하지 못했습니다'
+        return
+      }
+      const spawned = await this.spawnFuseHost(dav.url(), root)
+      if (!spawned.ok) {
+        this.lastError = spawned.error
+        this.lastHint = spawned.hint
+        diag('workspace', `FUSE 호스트 실패: ${spawned.error ?? ''}`)
         return
       }
       this.lastHint = undefined
-      this.fuse = r.handle ?? null
       this.mountedPath = root
-      diag('workspace', `워크스페이스 마운트(FUSE) → ${root}`)
+      if (this.rescued) void this.uploadRescued(this.rescued)
+      diag('workspace', `워크스페이스 마운트(FUSE 자식 프로세스) → ${root}`)
       return
     }
 
@@ -509,15 +624,8 @@ export class WorkspaceManager {
     this.stopPresence()
     const path = this.mountedPath
     this.mountedPath = null
-    if (this.fuse) {
-      const f = this.fuse
-      this.fuse = null
-      try {
-        await f.unmount()
-      } catch (e) {
-        diag('workspace', `FUSE 언마운트 실패: ${(e as Error).message}`)
-      }
-    } else if (path) {
+    await this.stopFuseHost()
+    if (path) {
       try {
         await unmountWebdav(path)
       } catch (e) {
