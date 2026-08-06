@@ -7,6 +7,14 @@ function certificateErrorName(result: string): string {
   return result.replace(/^net::/, '').replace(/^ERR_/, '');
 }
 
+/** 사설 CA 신뢰 실패이며 사용자가 예외를 명시했는지 확인한다. */
+export function shouldIgnorePrivateCertificateError(
+  enabled: boolean,
+  verificationResult: string,
+): boolean {
+  return enabled && certificateErrorName(verificationResult) === PRIVATE_CA_ERROR;
+}
+
 /** 설정된 서버 hostname의 사설 CA 신뢰 실패만 허용한다. */
 export function shouldAllowPrivateCertificate(
   serverUrl: string,
@@ -14,7 +22,7 @@ export function shouldAllowPrivateCertificate(
   hostname: string,
   verificationResult: string,
 ): boolean {
-  if (!enabled || certificateErrorName(verificationResult) !== PRIVATE_CA_ERROR) return false;
+  if (!shouldIgnorePrivateCertificateError(enabled, verificationResult)) return false;
   try {
     return new URL(serverUrl).hostname.toLowerCase() === hostname.toLowerCase();
   } catch {

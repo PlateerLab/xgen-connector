@@ -42,6 +42,14 @@ export interface AdvertisedTool {
   inputSchema?: Record<string, unknown>;
 }
 
+/** MCP SDK의 Streamable HTTP 전송에 주입하는 fetch 형태. */
+export type McpHttpFetch = (url: string | URL, init?: RequestInit) => Promise<Response>;
+
+export interface McpNetworkOptions {
+  httpFetch?: McpHttpFetch;
+  allowPrivateCertificate?: boolean;
+}
+
 interface ServerState {
   config: McpServerConfig;
   /** 기동 중 진행 상황을 흘려보낼 곳 (테스트 화면 전용). */
@@ -213,15 +221,25 @@ export async function waitWhileProgressing<T>(
 
 export class MCPManager {
   private states = new Map<string, ServerState>();
+  private httpFetch: McpHttpFetch | undefined;
+  private allowPrivateCertificate = false;
 
   /** Reconcile the configured server list into live state (drops removed,
    *  reconnects changed configs lazily). Does NOT connect yet. */
-  configure(servers: McpServerConfig[] | undefined): void {
+  configure(servers: McpServerConfig[] | undefined, options: McpNetworkOptions = {}): void {
+    const certificatePolicyChanged =
+      this.allowPrivateCertificate !== (options.allowPrivateCertificate === true);
+    this.httpFetch = options.httpFetch;
+    this.allowPrivateCertificate = options.allowPrivateCertificate === true;
     const next = new Map<string, McpServerConfig>();
     for (const s of servers || []) if (s && s.name) next.set(s.name, s);
     for (const [name, st] of [...this.states]) {
       const cfg = next.get(name);
-      if (!cfg || JSON.stringify(cfg) !== JSON.stringify(st.config)) {
+      if (
+        !cfg ||
+        JSON.stringify(cfg) !== JSON.stringify(st.config) ||
+        (certificatePolicyChanged && st.config.transport === 'http')
+      ) {
         void this.disconnect(name);
         this.states.delete(name);
       }
@@ -283,6 +301,7 @@ export class MCPManager {
         if (!cfg.url) throw new Error('http server has no url');
         transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
           requestInit: cfg.headers ? { headers: cfg.headers } : undefined,
+          fetch: this.httpFetch,
         });
       }
       const client = new Client({ name: 'xgen-connector', version: '1.0.0' }, { capabilities: {} });
