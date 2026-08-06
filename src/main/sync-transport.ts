@@ -20,12 +20,19 @@ import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import WebSocket from 'ws'
 import { ChangesResponse, SyncConflictError, Transport } from './sync-core'
+import { xgenWebSocketTlsOptions } from './connection-security'
+
+export type NetworkFetch = (input: string | Request, init?: RequestInit) => Promise<Response>
 
 export interface TransportAuth {
   baseUrl: string // e.g. https://xgen.example.com (no trailing slash)
   token: () => string | Promise<string>
   workflowId: string
   deviceId: string
+  /** Electron net.fetch를 주입해 설정된 XGEN 서버의 인증서 정책을 공유한다. */
+  fetch?: NetworkFetch
+  /** 설정된 XGEN WebSocket의 사설 인증서를 허용한다. */
+  allowPrivateCertificate?: boolean
 }
 
 function wsPath(p: string): string {
@@ -38,6 +45,10 @@ function encPath(p: string): string {
 
 async function authHeaders(auth: TransportAuth): Promise<Record<string, string>> {
   return { Authorization: `Bearer ${await auth.token()}` }
+}
+
+function transportFetch(auth: TransportAuth, input: string, init?: RequestInit): Promise<Response> {
+  return (auth.fetch ?? globalThis.fetch)(input, init)
 }
 
 /** Files above this go through the chunked/resumable path. */
@@ -66,7 +77,7 @@ export class HttpSyncTransport implements Transport {
   }
 
   async changes(since: number): Promise<ChangesResponse> {
-    const res = await fetch(this.url('/storage/changes', { since }), {
+    const res = await transportFetch(this.auth, this.url('/storage/changes', { since }), {
       headers: await authHeaders(this.auth),
     })
     if (!res.ok) throw Object.assign(new Error(`changes HTTP ${res.status}`), { status: res.status })
@@ -74,7 +85,7 @@ export class HttpSyncTransport implements Transport {
   }
 
   async download(path: string, toAbs: string): Promise<void> {
-    const res = await fetch(this.url(`/storage-raw/${encPath(wsPath(path))}`), {
+    const res = await transportFetch(this.auth, this.url(`/storage-raw/${encPath(wsPath(path))}`), {
       headers: await authHeaders(this.auth),
     })
     if (!res.ok || !res.body) {
@@ -97,7 +108,8 @@ export class HttpSyncTransport implements Transport {
     if (size > this.chunkThreshold) {
       return this.putChunked(path, fromAbs, baseSha, size)
     }
-    const res = await fetch(
+    const res = await transportFetch(
+      this.auth,
       this.url('/storage/file', {
         path: wsPath(path),
         base_sha: baseSha,
@@ -135,7 +147,8 @@ export class HttpSyncTransport implements Transport {
     size: number,
   ): Promise<{ sha256: string }> {
     const sha = await hashFileSha256(fromAbs)
-    const startRes = await fetch(
+    const startRes = await transportFetch(
+      this.auth,
       this.url('/storage/file/chunks/start', { path: wsPath(path), size, sha256: sha }),
       { method: 'POST', headers: await authHeaders(this.auth) },
     )
@@ -155,7 +168,8 @@ export class HttpSyncTransport implements Transport {
         const { bytesRead } = await fd.read(buf, 0, len, offset)
         if (bytesRead <= 0) throw new Error('local file shrank during chunked upload')
         try {
-          const res = await fetch(
+          const res = await transportFetch(
+            this.auth,
             this.url(`/storage/file/chunks/${uploadId}`, { offset }),
             {
               method: 'PUT',
@@ -189,7 +203,7 @@ export class HttpSyncTransport implements Transport {
           // network hiccup → ask the server where to resume
           if (++attempts > 5) throw e
           await new Promise((r) => setTimeout(r, 1000 * attempts))
-          const st = await fetch(this.url(`/storage/file/chunks/${uploadId}`), {
+          const st = await transportFetch(this.auth, this.url(`/storage/file/chunks/${uploadId}`), {
             headers: await authHeaders(this.auth),
           })
           if (st.ok) offset = Number(((await st.json()) as any).received ?? offset)
@@ -199,7 +213,8 @@ export class HttpSyncTransport implements Transport {
       await fd.close()
     }
 
-    const commit = await fetch(
+    const commit = await transportFetch(
+      this.auth,
       this.url(`/storage/file/chunks/${uploadId}/commit`, { base_sha: baseSha, device: this.auth.deviceId }),
       { method: 'POST', headers: await authHeaders(this.auth) },
     )
@@ -215,7 +230,8 @@ export class HttpSyncTransport implements Transport {
   }
 
   async del(path: string, baseSha?: string): Promise<void> {
-    const res = await fetch(
+    const res = await transportFetch(
+      this.auth,
       this.url('/storage/entry', { path: wsPath(path), base_sha: baseSha, device: this.auth.deviceId }),
       { method: 'DELETE', headers: await authHeaders(this.auth) },
     )
@@ -228,7 +244,7 @@ export class HttpSyncTransport implements Transport {
   }
 
   async mkdir(path: string): Promise<void> {
-    const res = await fetch(this.url('/storage/mkdir', { path: wsPath(path) }), {
+    const res = await transportFetch(this.auth, this.url('/storage/mkdir', { path: wsPath(path) }), {
       method: 'POST',
       headers: await authHeaders(this.auth),
     })
@@ -272,7 +288,10 @@ export class WorkspaceWsClient {
       const base = this.auth.baseUrl.replace(/^http/, 'ws')
       const token = await this.auth.token()
       const url = `${base}/api/agentflow/ws/geny-workspace/${encodeURIComponent(this.auth.workflowId)}`
-      ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } })
+      ws = new WebSocket(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        ...xgenWebSocketTlsOptions(this.auth.allowPrivateCertificate === true),
+      })
     } catch {
       // token/keychain hiccup must not kill reconnection forever
       this.onState(false)

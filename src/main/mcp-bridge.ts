@@ -22,6 +22,7 @@
 import WebSocket from 'ws';
 import { getMcpManager, type McpServerAdvert } from './mcp-manager';
 import { appendMcpRuntimeLog } from './mcp-runtime-log';
+import { xgenWebSocketTlsOptions } from './connection-security';
 
 const HEARTBEAT_MS = 20000;
 const RECONNECT_MIN_MS = 5000;
@@ -56,6 +57,7 @@ export class McpBridge {
   private pendingCatalogId = '';
   private serverUrl = '';
   private userId = '';
+  private allowPrivateCertificate = false;
   private getToken: () => Promise<string | null> = async () => null;
   private lastServers: McpServerAdvert[] = [];
   private lastError: string | undefined;
@@ -93,12 +95,21 @@ export class McpBridge {
     this.onStatus(s);
   }
 
-  start(opts: { serverUrl: string; userId: string; getToken: () => Promise<string | null> }): void {
+  start(opts: {
+    serverUrl: string;
+    userId: string;
+    allowPrivateCertificate: boolean;
+    getToken: () => Promise<string | null>;
+  }): void {
     // A no-op restart (same target, already running) must NOT tear down a live
     // socket — that alone would cause a visible flap on every auth refresh.
-    const sameTarget = this.serverUrl === opts.serverUrl && this.userId === opts.userId;
+    const sameTarget =
+      this.serverUrl === opts.serverUrl &&
+      this.userId === opts.userId &&
+      this.allowPrivateCertificate === opts.allowPrivateCertificate;
     this.serverUrl = opts.serverUrl;
     this.userId = opts.userId;
+    this.allowPrivateCertificate = opts.allowPrivateCertificate;
     this.getToken = opts.getToken;
     if (!this.stopped && sameTarget && (this.ws || this.retry)) {
       void this.refreshCatalog();
@@ -190,6 +201,7 @@ export class McpBridge {
     try {
       ws = new WebSocket(this.wsUrl(), {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        ...xgenWebSocketTlsOptions(this.allowPrivateCertificate),
       });
     } catch (e) {
       this.lastError = e instanceof Error ? e.message : String(e);

@@ -84,7 +84,7 @@ const IS_LINUX = process.platform === 'linux';
 // Custom scheme the avatar overlay loads model assets through. Registered
 // BEFORE app-ready. The renderer (a file:// / WebGL context) can't reliably
 // fetch cross-origin avatar assets from the user's XGEN server (CORS/CSP vary
-// by deployment); routing them through the MAIN process (Node net.fetch, no
+// by deployment); routing them through the MAIN process (Electron net.fetch, no
 // CORS, no CSP) makes it work regardless. `standard` lets relative sibling refs
 // (moc3/textures/atlas) resolve; `corsEnabled`+`bypassCSP` keep WebGL happy.
 protocol.registerSchemesAsPrivileged([
@@ -983,6 +983,7 @@ function syncMcp(): void {
     bridge.start({
       serverUrl: normalizeServerUrl(cfg.serverUrl),
       userId,
+      allowPrivateCertificate: cfg.allowPrivateCertificate === true,
       getToken: () => tokenStore.getAccess(),
     });
   } else {
@@ -1011,6 +1012,8 @@ function wireSyncManager(): void {
     serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
     token: () => tokenStore.getAccess(),
     deviceId: () => ensureDeviceId(),
+    fetch: (input, init) => net.fetch(input, init),
+    allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
     onStatus: (statuses: SyncPairStatus[]) => safeSend(mainWindow, CHANNELS.syncStatusEvent, statuses),
     log: (msg: string) => console.log(`[sync] ${msg}`),
     // 엔진의 자동 일시정지(쿼터 폭풍·에이전트 삭제)를 config 에 영속 —
@@ -1082,6 +1085,12 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     // 연결을 닫아 다음 요청부터 새 정책을 사용한다.
     applyCertificatePolicy();
     await session.defaultSession.closeAllConnections();
+  }
+  if (patch.allowPrivateCertificate !== undefined) {
+    syncMcp();
+    getSyncManager()?.stopAll();
+    getSyncManager()?.configure(next.syncPairs ?? []);
+    getWorkspaceManager()?.restartPresence();
   }
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
   if (patch.updateServer !== undefined) setUpdateServer(patch.updateServer);
@@ -1659,6 +1668,8 @@ function wireWorkspaceManager(): void {
           serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
           token: async () => (await tokenStore.getAccess()) ?? '',
           deviceId: () => ensureDeviceId(),
+          fetch: (input, init) => net.fetch(input, init),
+          allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
           tmpDir: app.getPath('userData'),
         },
         workflowId,
@@ -1673,6 +1684,8 @@ function wireWorkspaceManager(): void {
           serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
           token: async () => (await tokenStore.getAccess()) ?? '',
           deviceId: () => ensureDeviceId(),
+          fetch: (input, init) => net.fetch(input, init),
+          allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
           tmpDir: app.getPath('userData'),
         },
         `user:${uid}`,
@@ -1692,6 +1705,8 @@ function wireWorkspaceManager(): void {
           token: async () => (await tokenStore.getAccess()) ?? '',
           workflowId: owner,
           deviceId: ensureDeviceId(),
+          fetch: (input, init) => net.fetch(input, init),
+          allowPrivateCertificate: loadConfig().allowPrivateCertificate === true,
         },
         hostname(),
         () => onChanged(),

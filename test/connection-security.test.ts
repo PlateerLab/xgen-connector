@@ -5,7 +5,9 @@ import {
   buildSsoUrl,
   parseSsoLoginResponse,
   shouldAllowPrivateCertificate,
+  xgenWebSocketTlsOptions,
 } from '../src/main/connection-security';
+import { HttpSyncTransport, type NetworkFetch } from '../src/main/sync-transport';
 
 test('사설 CA 오류는 활성화된 동일 hostname에서만 허용한다', () => {
   assert.equal(
@@ -44,6 +46,36 @@ test('사설 CA 오류는 활성화된 동일 hostname에서만 허용한다', (
     ),
     false,
   );
+});
+
+test('XGEN WebSocket은 옵션이 켜진 경우에만 인증서 검증을 비활성화한다', () => {
+  assert.deepEqual(xgenWebSocketTlsOptions(false), { rejectUnauthorized: true });
+  assert.deepEqual(xgenWebSocketTlsOptions(true), { rejectUnauthorized: false });
+});
+
+test('워크스페이스 HTTP 통신은 주입된 Electron fetch를 사용한다', async () => {
+  let calledUrl = '';
+  const injectedFetch: NetworkFetch = async (input) => {
+    calledUrl = String(input);
+    return new Response(JSON.stringify({ latest_seq: 0, changes: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const transport = new HttpSyncTransport(
+    {
+      baseUrl: 'https://xgen.internal:8443',
+      token: () => 'token',
+      workflowId: 'workflow-1',
+      deviceId: 'device-1',
+      fetch: injectedFetch,
+      allowPrivateCertificate: true,
+    },
+    '/tmp/xgen-connector-test',
+  );
+
+  assert.deepEqual(await transport.changes(0), { latest_seq: 0, changes: [] });
+  assert.match(calledUrl, /^https:\/\/xgen\.internal:8443\/api\/agentflow\/geny-workspace\//);
 });
 
 test('SSO URL은 같은 origin 상대 PATH에 완료 콜백을 추가한다', () => {

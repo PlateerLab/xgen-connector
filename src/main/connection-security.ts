@@ -22,6 +22,11 @@ export function shouldAllowPrivateCertificate(
   }
 }
 
+/** 설정된 XGEN Node WebSocket에 적용할 TLS 검증 옵션을 만든다. */
+export function xgenWebSocketTlsOptions(enabled: boolean): { rejectUnauthorized: boolean } {
+  return { rejectUnauthorized: !enabled };
+}
+
 /** 서버 origin에 상대 SSO PATH와 고정 완료 콜백을 결합한다. */
 export function buildSsoUrl(serverUrl: string, path: string, callbackName: string): string {
   const base = new URL(serverUrl);

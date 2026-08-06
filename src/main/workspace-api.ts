@@ -7,13 +7,15 @@
  */
 
 import { join } from 'path'
-import { HttpSyncTransport } from './sync-transport'
+import { HttpSyncTransport, type NetworkFetch } from './sync-transport'
 import type { WorkspaceApi } from './workspace-backend'
 
 export interface ApiFactoryDeps {
   serverUrl: () => string
   token: () => string | Promise<string>
   deviceId: () => string
+  fetch: NetworkFetch
+  allowPrivateCertificate: () => boolean
   /** 청크 업로드 스테이징에 쓸 임시 디렉터리. */
   tmpDir: string
 }
@@ -33,6 +35,8 @@ export function makeWorkspaceApi(deps: ApiFactoryDeps, workflowId: string): Work
         token: deps.token,
         workflowId,
         deviceId: deps.deviceId(),
+        fetch: deps.fetch,
+        allowPrivateCertificate: deps.allowPrivateCertificate(),
       },
       join(deps.tmpDir, 'dav-staging'),
     )
