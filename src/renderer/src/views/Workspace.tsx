@@ -327,6 +327,7 @@ export const Workspace: React.FC<{
           <Chat
             session={session}
             collapsed={collapsed}
+            mcpDebug={config.mcpDebug === true}
             onExpandSidebar={() => setCollapsed(false)}
           />
         ) : (

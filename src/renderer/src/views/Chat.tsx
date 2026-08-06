@@ -11,7 +11,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import type { Agent, ChatEvent, ToolEvent, Citation, VoiceConfig } from '../../../core/index';
+import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
 import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
+import { mcpChatStatus } from './mcp-status-model';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
 import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon, PanelLeftIcon, MicIcon, SpeakerIcon, SpeakerOffIcon } from '../brand/icons';
@@ -169,13 +171,17 @@ const AGENT_KIND: Record<string, string> = { canvas: 'Canvas', harness: 'Harness
 export const Chat: React.FC<{
   session: ChatSession;
   collapsed?: boolean;
+  mcpDebug?: boolean;
   onExpandSidebar?: () => void;
-}> = ({ session, collapsed, onExpandSidebar }) => {
+}> = ({ session, collapsed, mcpDebug = false, onExpandSidebar }) => {
   const { agent } = session;
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
+  const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
+  const [mcpLogsOpen, setMcpLogsOpen] = useState(false);
   const [interactionId, setInteractionId] = useState(
     () => session.interactionId ?? newInteractionId(agent.workflowId),
   );
@@ -217,6 +223,43 @@ export const Chat: React.FC<{
 
   // A stable signature of the open session — changing it resets the view.
   const sessionSig = `${agent.workflowId}::${session.resume ? session.interactionId : 'new'}`;
+
+  useEffect(() => {
+    if (!mcpDebug) {
+      setMcpStatus(null);
+      return;
+    }
+    let alive = true;
+    void xgen.mcp
+      .status()
+      .then((status) => alive && setMcpStatus(status))
+      .catch(() => undefined);
+    const off = xgen.mcp.onStatus((status) => setMcpStatus(status));
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [mcpDebug]);
+
+  useEffect(() => {
+    if (!mcpDebug) {
+      setMcpLogs([]);
+      setMcpLogsOpen(false);
+      return;
+    }
+    let alive = true;
+    void xgen.mcp
+      .runtimeLogs()
+      .then((logs) => alive && setMcpLogs(logs))
+      .catch(() => undefined);
+    const off = xgen.mcp.onRuntimeLog((entry) => {
+      setMcpLogs((logs) => [...logs.slice(-199), entry]);
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [mcpDebug]);
 
   useEffect(() => {
     cancelRef.current?.cancel();
@@ -586,6 +629,7 @@ export const Chat: React.FC<{
   useEffect(() => xgen.quickChat.onQuickSend((t) => send(t)), [send]);
 
   const kind = AGENT_KIND[agent.workflowType ?? ''] ?? (agent.workflowType || 'Agent');
+  const mcpIndicator = mcpChatStatus(mcpStatus);
 
   return (
     <div className="chat">
@@ -614,6 +658,19 @@ export const Chat: React.FC<{
           </div>
         </div>
         <div className="chat-header-actions">
+          {mcpDebug && (
+            <button
+              type="button"
+              className={`mcp-chat-status ${mcpIndicator.tone}`}
+              title={mcpIndicator.title}
+              aria-label={mcpIndicator.title}
+              aria-expanded={mcpLogsOpen}
+              onClick={() => setMcpLogsOpen((open) => !open)}
+            >
+              <span className="mcp-chat-status-dot" />
+              {mcpIndicator.label}
+            </button>
+          )}
           {ttsOn && (
             <button
               className="secondary"
@@ -629,6 +686,46 @@ export const Chat: React.FC<{
           </button>
         </div>
       </div>
+
+      {mcpDebug && mcpLogsOpen && (
+        <div className="mcp-runtime-log" role="log" aria-label="로컬 MCP 실행 로그">
+          <div className="mcp-runtime-log-head">
+            <strong>로컬 MCP 실행 로그</strong>
+            <div className="row">
+              <button
+                className="link"
+                onClick={() => {
+                  void xgen.mcp.clearRuntimeLogs();
+                  setMcpLogs([]);
+                }}
+                disabled={mcpLogs.length === 0}
+              >
+                초기화
+              </button>
+              <button className="link" onClick={() => setMcpLogsOpen(false)}>
+                닫기
+              </button>
+            </div>
+          </div>
+          {mcpLogs.length === 0 ? (
+            <div className="mcp-runtime-log-empty">현재 실행에서 기록된 도구 호출이 없습니다.</div>
+          ) : (
+            <div className="mcp-runtime-log-list">
+              {[...mcpLogs].reverse().map((entry) => (
+                <div className={`mcp-runtime-log-entry ${entry.ok === false ? 'error' : ''}`} key={entry.id}>
+                  <time>{new Date(entry.timestamp).toLocaleTimeString()}</time>
+                  <span className="mcp-runtime-log-kind">{entry.kind}</span>
+                  <span className="mcp-runtime-log-message">
+                    {entry.server && entry.tool ? `${entry.server}.${entry.tool} · ` : ''}
+                    {entry.message}
+                    {entry.durationMs !== undefined ? ` · ${entry.durationMs}ms` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="chat-log" ref={scrollRef}>
         {loadingHistory ? (

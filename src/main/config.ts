@@ -91,6 +91,8 @@ export interface ConnectorConfig {
   voiceOutput?: boolean;
   /** Enable hosting local MCP servers + bridging their tools to your agents. */
   mcp?: boolean;
+  /** 채팅창 로컬 MCP 상태·실행 로그 디버그 UI. connector.json 직접 설정, 기본 false. */
+  mcpDebug?: boolean;
   /** Configured local MCP servers. */
   mcpServers?: McpServerConfig[];
   /** Workspace 동기화 페어링 (에이전트 workflow ↔ 로컬 폴더). */
@@ -131,6 +133,7 @@ const DEFAULTS: ConnectorConfig = {
   ssoEnabled: false,
   ssoPath: '/sso/signin',
   ssoDebug: false,
+  mcpDebug: false,
   theme: 'system',
   lang: 'ko',
   autoUpdate: true,

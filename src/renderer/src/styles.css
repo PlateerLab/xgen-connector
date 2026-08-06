@@ -861,6 +861,7 @@ button {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  position: relative;
 }
 .chat-header {
   height: var(--header-h);
@@ -904,6 +905,95 @@ button {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+}
+.mcp-chat-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel-2);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mcp-chat-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.mcp-chat-status.pending {
+  color: #a16207;
+  border-color: rgba(202, 138, 4, 0.35);
+  background: rgba(250, 204, 21, 0.09);
+}
+.mcp-chat-status.ok {
+  color: #15803d;
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(34, 197, 94, 0.09);
+}
+[data-theme='dark'] .mcp-chat-status.pending {
+  color: #facc15;
+}
+[data-theme='dark'] .mcp-chat-status.ok {
+  color: #4ade80;
+}
+.mcp-runtime-log {
+  position: absolute;
+  z-index: 40;
+  top: calc(var(--header-h) + 8px);
+  right: 14px;
+  width: min(560px, calc(100% - 28px));
+  max-height: min(440px, calc(100% - var(--header-h) - 24px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.mcp-runtime-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.mcp-runtime-log-list {
+  overflow-y: auto;
+}
+.mcp-runtime-log-entry {
+  display: grid;
+  grid-template-columns: 82px 54px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.mcp-runtime-log-entry.error {
+  color: var(--error);
+}
+.mcp-runtime-log-entry time,
+.mcp-runtime-log-kind {
+  color: var(--muted);
+}
+.mcp-runtime-log-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mcp-runtime-log-empty {
+  padding: 28px 16px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
 }
 .avatar-slot {
   border-bottom: 1px solid var(--border);
