@@ -7,6 +7,14 @@ function certificateErrorName(result: string): string {
   return result.replace(/^net::/, '').replace(/^ERR_/, '');
 }
 
+/** 사설 CA 신뢰 실패이며 사용자가 예외를 명시했는지 확인한다. */
+export function shouldIgnorePrivateCertificateError(
+  enabled: boolean,
+  verificationResult: string,
+): boolean {
+  return enabled && certificateErrorName(verificationResult) === PRIVATE_CA_ERROR;
+}
+
 /** 설정된 서버 hostname의 사설 CA 신뢰 실패만 허용한다. */
 export function shouldAllowPrivateCertificate(
   serverUrl: string,
@@ -14,12 +22,17 @@ export function shouldAllowPrivateCertificate(
   hostname: string,
   verificationResult: string,
 ): boolean {
-  if (!enabled || certificateErrorName(verificationResult) !== PRIVATE_CA_ERROR) return false;
+  if (!shouldIgnorePrivateCertificateError(enabled, verificationResult)) return false;
   try {
     return new URL(serverUrl).hostname.toLowerCase() === hostname.toLowerCase();
   } catch {
     return false;
   }
+}
+
+/** 설정된 XGEN Node WebSocket에 적용할 TLS 검증 옵션을 만든다. */
+export function xgenWebSocketTlsOptions(enabled: boolean): { rejectUnauthorized: boolean } {
+  return { rejectUnauthorized: !enabled };
 }
 
 /** 서버 origin에 상대 SSO PATH와 고정 완료 콜백을 결합한다. */

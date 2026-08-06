@@ -583,6 +583,12 @@ export class WorkspaceManager {
     this.presence.clear()
   }
 
+  /** 인증서 정책 변경 후 기존 presence WebSocket만 새 정책으로 다시 연결한다. */
+  restartPresence(): void {
+    this.stopPresence()
+    void this.reconcile()
+  }
+
   private async setup(): Promise<void> {
     const cfg = this.deps.config()
     const root = rootOf(cfg)

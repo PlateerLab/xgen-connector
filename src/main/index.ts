@@ -63,7 +63,7 @@ import { WorkspaceWsClient } from './sync-transport';
 import { hostname } from 'os';
 import { accountKey, attachAgent, describeAccount, detachAgent, moveRoot, rootConflict, rootOf } from './workspace';
 import { TRAY_ICON_B64 } from './tray-icon';
-import { getMcpManager } from './mcp-manager';
+import { getMcpManager, type McpHttpFetch } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
 import {
   clearMcpRuntimeLogs,
@@ -76,6 +76,7 @@ import {
   buildSsoUrl,
   parseSsoLoginResponse,
   shouldAllowPrivateCertificate,
+  shouldIgnorePrivateCertificateError,
 } from './connection-security';
 import { createSsoWindowOptions } from './sso-window-options';
 
@@ -84,7 +85,7 @@ const IS_LINUX = process.platform === 'linux';
 // Custom scheme the avatar overlay loads model assets through. Registered
 // BEFORE app-ready. The renderer (a file:// / WebGL context) can't reliably
 // fetch cross-origin avatar assets from the user's XGEN server (CORS/CSP vary
-// by deployment); routing them through the MAIN process (Node net.fetch, no
+// by deployment); routing them through the MAIN process (Electron net.fetch, no
 // CORS, no CSP) makes it work regardless. `standard` lets relative sibling refs
 // (moc3/textures/atlas) resolve; `corsEnabled`+`bypassCSP` keep WebGL happy.
 protocol.registerSchemesAsPrivileged([
@@ -957,6 +958,21 @@ function rebuildTrayMenu(): void {
 // ── Local MCP (connector-hosted MCP servers → user's agents) ─────
 let mcpStatusWired = false;
 let mcpRuntimeLogWired = false;
+const mcpHttpSession = () => session.fromPartition('xgen-mcp-http');
+const mcpHttpFetch: McpHttpFetch = (url, init) =>
+  mcpHttpSession().fetch(url instanceof URL ? url.toString() : url, init);
+
+/** HTTP MCP 전용 세션에만 사설 인증서 예외를 설치한다. */
+function applyMcpHttpCertificatePolicy(): void {
+  mcpHttpSession().setCertificateVerifyProc((request, callback) => {
+    const allowed = shouldIgnorePrivateCertificateError(
+      loadConfig().allowPrivateCertificate === true,
+      request.verificationResult,
+    );
+    callback(allowed ? 0 : -3);
+  });
+}
+
 function currentUserId(): string | null {
   return client?.user?.userId ?? null;
 }
@@ -965,7 +981,10 @@ function syncMcp(): void {
   const cfg = loadConfig();
   setMcpRuntimeLogEnabled(cfg.mcpDebug === true);
   const mcp = getMcpManager();
-  mcp.configure(cfg.mcpServers);
+  mcp.configure(cfg.mcpServers, {
+    httpFetch: mcpHttpFetch,
+    allowPrivateCertificate: cfg.allowPrivateCertificate === true,
+  });
   const bridge = getMcpBridge();
   if (!mcpStatusWired) {
     mcpStatusWired = true;
@@ -983,6 +1002,7 @@ function syncMcp(): void {
     bridge.start({
       serverUrl: normalizeServerUrl(cfg.serverUrl),
       userId,
+      allowPrivateCertificate: cfg.allowPrivateCertificate === true,
       getToken: () => tokenStore.getAccess(),
     });
   } else {
@@ -1011,6 +1031,8 @@ function wireSyncManager(): void {
     serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
     token: () => tokenStore.getAccess(),
     deviceId: () => ensureDeviceId(),
+    fetch: (input, init) => net.fetch(input, init),
+    allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
     onStatus: (statuses: SyncPairStatus[]) => safeSend(mainWindow, CHANNELS.syncStatusEvent, statuses),
     log: (msg: string) => console.log(`[sync] ${msg}`),
     // 엔진의 자동 일시정지(쿼터 폭풍·에이전트 삭제)를 config 에 영속 —
@@ -1082,6 +1104,13 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     // 연결을 닫아 다음 요청부터 새 정책을 사용한다.
     applyCertificatePolicy();
     await session.defaultSession.closeAllConnections();
+  }
+  if (patch.allowPrivateCertificate !== undefined) {
+    applyMcpHttpCertificatePolicy();
+    await mcpHttpSession().closeAllConnections();
+    syncMcp();
+    stopLegacyPairSync();
+    getWorkspaceManager()?.restartPresence();
   }
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
   if (patch.updateServer !== undefined) setUpdateServer(patch.updateServer);
@@ -1659,6 +1688,8 @@ function wireWorkspaceManager(): void {
           serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
           token: async () => (await tokenStore.getAccess()) ?? '',
           deviceId: () => ensureDeviceId(),
+          fetch: (input, init) => net.fetch(input, init),
+          allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
           tmpDir: app.getPath('userData'),
         },
         workflowId,
@@ -1673,6 +1704,8 @@ function wireWorkspaceManager(): void {
           serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
           token: async () => (await tokenStore.getAccess()) ?? '',
           deviceId: () => ensureDeviceId(),
+          fetch: (input, init) => net.fetch(input, init),
+          allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
           tmpDir: app.getPath('userData'),
         },
         `user:${uid}`,
@@ -1692,6 +1725,8 @@ function wireWorkspaceManager(): void {
           token: async () => (await tokenStore.getAccess()) ?? '',
           workflowId: owner,
           deviceId: ensureDeviceId(),
+          fetch: (input, init) => net.fetch(input, init),
+          allowPrivateCertificate: loadConfig().allowPrivateCertificate === true,
         },
         hostname(),
         () => onChanged(),
@@ -1935,6 +1970,7 @@ if (!gotLock) {
     const cfg = loadConfig();
     if (cfg.theme) nativeTheme.themeSource = cfg.theme;
     applyCertificatePolicy();
+    applyMcpHttpCertificatePolicy();
 
     // Voice input: the renderer calls navigator.mediaDevices.getUserMedia for the
     // push-to-talk mic. Electron denies media by default unless we approve it —
@@ -1953,7 +1989,7 @@ if (!gotLock) {
         const u = new URL(request.url);
         const serverUrl = normalizeServerUrl(loadConfig().serverUrl).replace(/\/+$/, '');
         if (!serverUrl) return new Response('avatar proxy: no server URL', { status: 502 });
-        // xgenavatar://a/<path> → <serverUrl>/<path>. Node net.fetch: no CORS/CSP.
+        // xgenavatar://a/<path> → <serverUrl>/<path>. Electron net.fetch: no CORS/CSP.
         return await net.fetch(`${serverUrl}${u.pathname}${u.search}`, { method: 'GET' });
       } catch (e) {
         return new Response(`avatar proxy error: ${e instanceof Error ? e.message : String(e)}`, { status: 502 });

@@ -17,7 +17,7 @@ import { hostname } from 'os'
 import { join } from 'path'
 import { MassDeletePending, SyncIndex, syncOnce } from './sync-core'
 import { ReplicaFs, DEFAULT_IGNORES } from './sync-fs'
-import { HttpSyncTransport, WorkspaceWsClient } from './sync-transport'
+import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-transport'
 
 export interface SyncPairConfig {
   id: string
@@ -65,6 +65,8 @@ interface ManagerDeps {
   serverUrl: () => string
   token: () => Promise<string | null>
   deviceId: () => string
+  fetch: NetworkFetch
+  allowPrivateCertificate: () => boolean
   onStatus: (statuses: SyncPairStatus[]) => void
   log: (msg: string) => void
   /** The engine auto-paused a pair (e.g. quota storm) — persist paused
@@ -123,6 +125,8 @@ class PairEngine {
         token: async () => (await this.deps.token()) ?? '',
         workflowId: cfg.workflowId,
         deviceId: this.deps.deviceId(),
+        fetch: this.deps.fetch,
+        allowPrivateCertificate: this.deps.allowPrivateCertificate(),
       },
       join(cfg.localPath, '.geny-sync-tmp'),
     )
@@ -199,6 +203,8 @@ class PairEngine {
         token: async () => (await this.deps.token()) ?? '',
         workflowId: this.cfg.workflowId,
         deviceId: this.deps.deviceId(),
+        fetch: this.deps.fetch,
+        allowPrivateCertificate: this.deps.allowPrivateCertificate(),
       },
       hostname(),
       (latestSeq) => {
