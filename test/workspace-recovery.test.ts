@@ -209,3 +209,34 @@ test('업로드 실패해도 자동 재시도하지 않는다', async () => {
   const fn = src.slice(src.indexOf('private async uploadRescued'), src.indexOf('private async mountAlive'))
   assert.match(fn, /보관 폴더를 남긴다/, '실패 시 처리가 명시돼 있지 않다')
 })
+
+/**
+ * 레거시 페어 동기화 엔진은 **가동되지 않아야 한다.**
+ *
+ * 예전 모델(에이전트 ↔ 임의 폴더)은 가상 드라이브로 대체됐다. 그런데 설정에
+ * 남은 syncPairs 로 엔진이 계속 살아나 같은 폴더를 향해 드라이브와 동시에
+ * 동작했다. 사용자가 지운 파일을 그 엔진이 자기 인덱스를 근거로 **다시
+ * 올렸다** — 서버·드라이브·웹 어디서 지워도 곧바로 되살아난 "무한 부활" 의
+ * 원인이다.
+ *
+ * 동기화 주체는 하나여야 한다.
+ */
+test('레거시 페어 엔진을 재가동하는 경로가 없다', async () => {
+  const { readFileSync } = await import('fs')
+  const src = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf-8')
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  const starts = [...code.matchAll(/getSyncManager\(\)\?\.(configure|syncNow)\(/g)]
+  assert.deepEqual(
+    starts.map((m) => m[1]),
+    [],
+    '레거시 엔진을 가동하는 호출이 남아 있다 — 지운 파일이 되살아난다',
+  )
+})
+
+test('정지 함수가 존재하고 실패해도 앱을 죽이지 않는다', async () => {
+  const { readFileSync } = await import('fs')
+  const src = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf-8')
+  assert.match(src, /function stopLegacyPairSync/, '정지 함수가 없다')
+  const fn = src.slice(src.indexOf('function stopLegacyPairSync'), src.indexOf('function stopLegacyPairSync') + 300)
+  assert.match(fn, /try\s*\{/, '엔진이 없을 때 예외가 샌다')
+})
