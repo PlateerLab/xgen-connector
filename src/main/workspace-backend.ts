@@ -254,7 +254,18 @@ export class WorkspaceDavBackend implements WebdavBackend {
     try {
       // base_sha 는 현재 알고 있는 값 — 서버의 낙관적 동시성 검사에 쓰인다.
       const cur = (await this.tree(space)).get(rel)
-      await space.api.put(rel, local, cur?.sha ?? '')
+      try {
+        await space.api.put(rel, local, cur?.sha ?? '')
+      } catch (e) {
+        // 409 = 우리 캐시가 서버와 다르다. 사용자가 드라이브에 넣은 파일은
+        // **명시적 의사**이므로 여기서 포기하면 안 된다 — 실기에서 이 실패로
+        // 앞서 만들어 둔 0바이트 파일만 서버에 남았다.
+        if ((e as { status?: number }).status !== 409) throw e
+        diag('dav', `쓰기 충돌 — 최신 상태로 재시도 ${p}`)
+        this.invalidate(space)
+        const fresh = (await this.tree(space)).get(rel)
+        await space.api.put(rel, local, fresh?.sha ?? '')
+      }
       diag('dav', `쓰기 ${p} (${data.length}B)`)
     } finally {
       try {
@@ -283,8 +294,22 @@ export class WorkspaceDavBackend implements WebdavBackend {
     if (!space) throw new Error('클라우드 스토리지가 연결되어 있지 않습니다')
     if (!rel) throw new Error('루트는 지울 수 없습니다')
     const cur = (await this.tree(space)).get(rel)
-    // 파일은 base_sha 를 주고(서버의 fail-closed 계약), 디렉터리는 sha 가 없다.
-    await space.api.del(rel, cur && !cur.isDir ? cur.sha : undefined)
+    // 파일은 base_sha 를 실어 보낸다 (서버의 낙관적 동시성 검사).
+    const baseSha = cur && !cur.isDir ? cur.sha : undefined
+    try {
+      await space.api.del(rel, baseSha)
+    } catch (e) {
+      // 409 = 서버가 아는 내용과 우리 캐시가 다르다. **사용자가 드라이브에서
+      // 지운 것은 명시적 의사**이므로 여기서 조용히 실패하면 안 된다
+      // (실기: 로컬에서 지워도 서버에 그대로 남았다). 캐시를 버리고 지금 값으로
+      // 한 번 더 시도한다.
+      if ((e as { status?: number }).status !== 409 || !baseSha) throw e
+      diag('dav', `삭제 충돌 — 최신 상태로 재시도 ${p}`)
+      this.invalidate(space)
+      const fresh = (await this.tree(space)).get(rel)
+      if (!fresh) return // 이미 없어졌다 = 원하는 결과
+      await space.api.del(rel, fresh.isDir ? undefined : fresh.sha)
+    }
     this.invalidate(space)
   }
 

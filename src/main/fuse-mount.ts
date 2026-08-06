@@ -145,6 +145,9 @@ export function buildOps(backend: WebdavBackend, errno: Record<string, number>):
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0
   const gid = typeof process.getgid === 'function' ? process.getgid() : 0
   const open = new Map<number, OpenFile>()
+  // 만들어졌지만 아직 서버에 올라가지 않은 파일. 커널은 create 직후 getattr 을
+  // 하는데, 그때 서버에는 아직 없다 — 여기서 답해 준다.
+  const pending = new Map<string, Buffer>()
   let nextFd = 10
 
   const ENOENT = errno.ENOENT ?? -2
@@ -188,6 +191,8 @@ export function buildOps(backend: WebdavBackend, errno: Record<string, number>):
     }),
 
     getattr: guard('getattr', async (path: string, cb: (c: number, s?: unknown) => void) => {
+      const held = pending.get(path)
+      if (held) return cb(0, stat(false, held.length, new Date()))
       const node = await backend.stat(path)
       if (!node) return cb(ENOENT)
       cb(0, stat(node.isDir, node.size, node.mtime))
@@ -211,12 +216,18 @@ export function buildOps(backend: WebdavBackend, errno: Record<string, number>):
     create: guard(
       'create',
       async (path: string, _mode: number, cb: (c: number, fd?: number) => void) => {
-        // ⚠ 백엔드에 **즉시** 빈 파일을 만들어야 한다. 안 그러면 커널이 바로
-        // 이어서 하는 getattr 이 ENOENT 로 실패하고, 셸/편집기는 "Directory
-        // nonexistent" 로 열기를 포기한다 (실기에서 확인).
-        await backend.write(path, Buffer.alloc(0))
+        // ⚠ 서버에 **빈 파일을 만들지 않는다.**
+        //
+        // 예전에는 여기서 즉시 0바이트를 PUT 했다. 커널이 바로 이어서 하는
+        // getattr 이 ENOENT 로 실패하면 셸/편집기가 "Directory nonexistent" 로
+        // 포기하기 때문이었다. 그런데 그 뒤 본문 PUT 이 한 번이라도 실패하면
+        // **0바이트 파일만 서버에 남는다** — 실기에서 PDF 가 0 B 로 올라갔다.
+        //
+        // 대신 "아직 안 올라간 파일"을 여기서 기억하고 getattr 이 그것으로
+        // 답한다. 서버에는 flush/release 때 **완성된 내용 한 번만** 올린다.
+        pending.set(path, Buffer.alloc(0))
         const fd = nextFd++
-        open.set(fd, { path, buf: Buffer.alloc(0), dirty: false })
+        open.set(fd, { path, buf: Buffer.alloc(0), dirty: true })
         cb(0, fd)
       },
     ),
@@ -258,6 +269,7 @@ export function buildOps(backend: WebdavBackend, errno: Record<string, number>):
         }
         buffer.subarray(0, length).copy(f.buf, position)
         f.dirty = true
+        if (pending.has(f.path)) pending.set(f.path, f.buf)
         cb(length)
       },
     ),
@@ -290,15 +302,23 @@ export function buildOps(backend: WebdavBackend, errno: Record<string, number>):
     flush: guard('flush', async (_path: string, fd: number, cb: (c: number) => void) => {
       const f = open.get(fd)
       if (f?.dirty) {
+        // 완성된 내용을 **한 번만** 올린다. 실패하면 pending 을 그대로 두어
+        // 다음 flush/release 가 다시 시도하고, 커널에는 오류를 돌려준다 —
+        // 조용히 0바이트로 남는 것보다 낫다.
         await backend.write(f.path, f.buf)
         f.dirty = false
+        pending.delete(f.path)
       }
       cb(0)
     }),
 
     release: guard('release', async (_path: string, fd: number, cb: (c: number) => void) => {
       const f = open.get(fd)
-      if (f?.dirty) await backend.write(f.path, f.buf)
+      if (f?.dirty) {
+        await backend.write(f.path, f.buf)
+        f.dirty = false
+      }
+      if (f) pending.delete(f.path)
       open.delete(fd)
       cb(0)
     }),

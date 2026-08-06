@@ -104,20 +104,36 @@ test('write 는 버퍼에만 쌓이고 flush 에서 한 번 올라간다', async
   // 왕복한다.
   const { ops, be } = setup()
   const [, fd] = (await call(ops, 'open', '/a.txt', 0)) as [number, number]
-  await call(ops, 'write', '/a.txt', fd, Buffer.from('HELLO'), 5, 0)
+  await call(ops, 'write', '/새 파일2.txt', fd, Buffer.from('HELLO'), 5, 0)
   assert.equal(be.files.get('/a.txt')?.toString(), 'hello', '조각마다 올렸다')
-  await call(ops, 'flush', '/a.txt', fd)
+  await call(ops, 'flush', '/새 파일2.txt', fd)
   assert.equal(be.files.get('/a.txt')?.toString(), 'HELLO')
 })
 
-test('create 는 백엔드에 즉시 파일을 만든다', async () => {
-  // ⚠ 실기에서 잡힌 결함: 만들지 않으면 커널의 후속 getattr 이 ENOENT 로
-  // 실패하고, 셸/편집기가 "Directory nonexistent" 로 열기를 포기한다.
+test('create 는 서버에 빈 파일을 만들지 않는다 (0바이트 잔존 방지)', async () => {
+  // 예전에는 create 에서 즉시 0바이트를 PUT 했다. 그 뒤 본문 PUT 이 한 번이라도
+  // 실패하면 **0바이트 파일만 서버에 남는다** — 실기에서 PDF 가 0 B 로 올라갔다.
   const { ops, be } = setup()
-  const [code] = (await call(ops, 'create', '/새 파일.txt', 0o644)) as [number]
+  await call(ops, 'create', '/새 파일.txt', 0o644)
+  assert.equal(be.files.has('/새 파일.txt'), false, '서버에 빈 파일을 만들었다')
+})
+
+test('create 직후 getattr 이 성공한다 (커널이 곧바로 물어본다)', async () => {
+  // 여기서 ENOENT 를 주면 셸/편집기가 "Directory nonexistent" 로 포기한다.
+  const { ops } = setup()
+  const [code] = (await call(ops, 'create', '/새 파일.txt', 0o644)) as [number, number]
   assert.equal(code, 0)
-  assert.ok(be.files.has('/새 파일.txt'), 'create 가 백엔드에 파일을 안 만들었다')
-  assert.equal((await call(ops, 'getattr', '/새 파일.txt'))[0], 0, 'create 직후 getattr 이 실패한다')
+  const [gc] = (await call(ops, 'getattr', '/새 파일.txt')) as [number]
+  assert.equal(gc, 0, 'create 직후 getattr 이 실패했다')
+})
+
+test('내용은 flush 때 한 번만 올라간다', async () => {
+  const { ops, be } = setup()
+  const [, fd] = (await call(ops, 'create', '/새 파일2.txt', 0o644)) as [number, number]
+  await call(ops, 'write', '/새 파일2.txt', fd, Buffer.from('hello'), 5, 0)
+  assert.equal(be.files.has('/새 파일2.txt'), false, 'flush 전에 올라갔다')
+  await call(ops, 'flush', '/새 파일2.txt', fd)
+  assert.equal(be.files.get('/새 파일2.txt')?.toString(), 'hello')
 })
 
 test('create 후 write→release 로 내용이 저장된다', async () => {
@@ -131,8 +147,8 @@ test('create 후 write→release 로 내용이 저장된다', async () => {
 test('write 가 파일을 늘린다 (append 위치 쓰기)', async () => {
   const { ops, be } = setup()
   const [, fd] = (await call(ops, 'open', '/a.txt', 0)) as [number, number]
-  await call(ops, 'write', '/a.txt', fd, Buffer.from('!!'), 2, 5)
-  await call(ops, 'flush', '/a.txt', fd)
+  await call(ops, 'write', '/새 파일2.txt', fd, Buffer.from('!!'), 2, 5)
+  await call(ops, 'flush', '/새 파일2.txt', fd)
   assert.equal(be.files.get('/a.txt')?.toString(), 'hello!!')
 })
 
@@ -140,7 +156,7 @@ test('ftruncate 가 버퍼를 자른다', async () => {
   const { ops, be } = setup()
   const [, fd] = (await call(ops, 'open', '/a.txt', 0)) as [number, number]
   await call(ops, 'ftruncate', '/a.txt', fd, 2)
-  await call(ops, 'flush', '/a.txt', fd)
+  await call(ops, 'flush', '/새 파일2.txt', fd)
   assert.equal(be.files.get('/a.txt')?.toString(), 'he')
 })
 
@@ -178,7 +194,7 @@ test('백엔드가 던져도 커널에 EIO 를 돌려준다 (절대 throw 하지
 test('chmod/chown/utimens 는 받아만 준다', async () => {
   // 거부하면 편집기가 저장에 실패한다 (권한 설정을 시도하는 편집기가 많다).
   const { ops } = setup()
-  assert.equal((await call(ops, 'chmod', '/a.txt', 0o644))[0], 0)
+  assert.equal((await call(ops, 'chmod', '/새 파일2.txt', 0o644))[0], 0)
   assert.equal((await call(ops, 'chown', '/a.txt', 0, 0))[0], 0)
   assert.equal((await call(ops, 'utimens', '/a.txt', 0, 0))[0], 0)
 })
