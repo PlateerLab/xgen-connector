@@ -1109,8 +1109,7 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     applyMcpHttpCertificatePolicy();
     await mcpHttpSession().closeAllConnections();
     syncMcp();
-    getSyncManager()?.stopAll();
-    getSyncManager()?.configure(next.syncPairs ?? []);
+    stopLegacyPairSync();
     getWorkspaceManager()?.restartPresence();
   }
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
