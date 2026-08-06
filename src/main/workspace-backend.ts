@@ -53,7 +53,8 @@ export interface WorkspaceApi {
   }>
   download(path: string, toAbs: string): Promise<void>
   put(path: string, fromAbs: string, baseSha: string): Promise<{ sha256: string }>
-  del(path: string, baseSha?: string): Promise<void>
+  /** `force` = 사용자가 직접 지웠다 (드라이브에서의 삭제). 레플리카는 안 켠다. */
+  del(path: string, baseSha?: string, opts?: { force?: boolean }): Promise<void>
   mkdir(path: string): Promise<void>
 }
 
@@ -296,19 +297,29 @@ export class WorkspaceDavBackend implements WebdavBackend {
     const cur = (await this.tree(space)).get(rel)
     // 파일은 base_sha 를 실어 보낸다 (서버의 낙관적 동시성 검사).
     const baseSha = cur && !cur.isDir ? cur.sha : undefined
+    // ⚠ **드라이브에서의 삭제는 사용자의 명시적 의사다 — force 를 보낸다.**
+    //
+    // 이걸 안 보내면 서버는 이 요청을 "동기화 레플리카의 추론"으로 보고
+    // fail-closed 가드를 건다: 파일은 base_sha 필수(409 base_sha_required),
+    // 폴더는 비어 있을 때만(409 dir_not_empty). 그래서 실기에서
+    //
+    //   * 캐시에 없는 파일을 지우면 → 409 → 삭제 실패
+    //   * 내용이 있는 폴더를 지우면 → 409 → **항상** 삭제 실패
+    //
+    // 였고, 사용자에게는 "드라이브에서 지워도 그대로 남는다"로 보였다.
+    // 가드는 리컨사일 엔진을 위한 것이지 사람 손을 위한 게 아니다.
+    const opts = { force: true }
     try {
-      await space.api.del(rel, baseSha)
+      await space.api.del(rel, baseSha, opts)
     } catch (e) {
-      // 409 = 서버가 아는 내용과 우리 캐시가 다르다. **사용자가 드라이브에서
-      // 지운 것은 명시적 의사**이므로 여기서 조용히 실패하면 안 된다
-      // (실기: 로컬에서 지워도 서버에 그대로 남았다). 캐시를 버리고 지금 값으로
-      // 한 번 더 시도한다.
-      if ((e as { status?: number }).status !== 409 || !baseSha) throw e
+      // 409 = base_sha 가 어긋났다(그 사이 누가 고쳤다). 캐시를 버리고 지금
+      // 값으로 한 번 더 — 사용자의 삭제를 조용히 포기하지 않는다.
+      if ((e as { status?: number }).status !== 409) throw e
       diag('dav', `삭제 충돌 — 최신 상태로 재시도 ${p}`)
       this.invalidate(space)
       const fresh = (await this.tree(space)).get(rel)
       if (!fresh) return // 이미 없어졌다 = 원하는 결과
-      await space.api.del(rel, fresh.isDir ? undefined : fresh.sha)
+      await space.api.del(rel, fresh.isDir ? undefined : fresh.sha, opts)
     }
     this.invalidate(space)
   }

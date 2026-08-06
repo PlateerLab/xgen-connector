@@ -45,7 +45,7 @@ export function makeWorkspaceApi(deps: ApiFactoryDeps, workflowId: string): Work
     changes: (since) => transport().changes(since),
     download: (path, toAbs) => transport().download(path, toAbs),
     put: (path, fromAbs, baseSha) => transport().put(path, fromAbs, baseSha),
-    del: (path, baseSha) => transport().del(path, baseSha),
+    del: (path, baseSha, opts) => transport().del(path, baseSha, opts),
     mkdir: (path) => transport().mkdir(path),
   }
 }

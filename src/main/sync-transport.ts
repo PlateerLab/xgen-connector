@@ -229,10 +229,29 @@ export class HttpSyncTransport implements Transport {
     return { sha256: done.sha256 }
   }
 
-  async del(path: string, baseSha?: string): Promise<void> {
+  /**
+   * 항목 삭제.
+   *
+   * ⚠ `force` 는 **사용자가 직접 지웠을 때만** 켠다 (가상 드라이브에서의 삭제).
+   * 서버는 force 없는 삭제를 "동기화 레플리카의 요청"으로 보고 fail-closed 로
+   * 다룬다 — 파일은 base_sha 필수, 폴더는 비어 있을 때만. 낡은 레플리카가
+   * 에이전트 산출물을 쓸어 담는 사고를 막는 가드라서, 리컨사일 엔진은 절대
+   * 켜면 안 된다.
+   *
+   * 반대로 사용자가 드라이브에서 지운 것은 추론이 아니라 **명시적 의사**다.
+   * 여기에 force 를 안 실어 보내서 서버가 409(base_sha_required /
+   * dir_not_empty)를 돌려주었고, 그게 그대로 실패로 올라가 **드라이브에서
+   * 지워도 파일이 그대로 남았다** (폴더 삭제는 항상 실패했다).
+   */
+  async del(path: string, baseSha?: string, opts: { force?: boolean } = {}): Promise<void> {
     const res = await transportFetch(
       this.auth,
-      this.url('/storage/entry', { path: wsPath(path), base_sha: baseSha, device: this.auth.deviceId }),
+      this.url('/storage/entry', {
+        path: wsPath(path),
+        base_sha: baseSha,
+        device: this.auth.deviceId,
+        ...(opts.force ? { force: 'true' } : {}),
+      }),
       { method: 'DELETE', headers: await authHeaders(this.auth) },
     )
     if (res.status === 409) {
