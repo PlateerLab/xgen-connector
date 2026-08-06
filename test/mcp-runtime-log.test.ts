@@ -6,9 +6,27 @@ import {
   clearMcpRuntimeLogs,
   mcpRuntimeLogs,
   onMcpRuntimeLog,
+  setMcpRuntimeLogEnabled,
 } from '../src/main/mcp-runtime-log';
 
-test.beforeEach(() => clearMcpRuntimeLogs());
+test.beforeEach(() => {
+  setMcpRuntimeLogEnabled(true);
+  clearMcpRuntimeLogs();
+});
+
+test.afterEach(() => setMcpRuntimeLogEnabled(false));
+
+test('디버그 모드가 꺼지면 로그를 수집하거나 전달하지 않는다', () => {
+  const received: number[] = [];
+  const off = onMcpRuntimeLog((entry) => received.push(entry.id));
+  setMcpRuntimeLogEnabled(false);
+  const entry = appendMcpRuntimeLog({ kind: 'call', message: '호출' });
+  off();
+
+  assert.equal(entry, null);
+  assert.deepEqual(received, []);
+  assert.deepEqual(mcpRuntimeLogs(), []);
+});
 
 test('추가된 로그를 구독자와 현재 실행 목록에 전달한다', () => {
   const received: number[] = [];
@@ -21,6 +39,7 @@ test('추가된 로그를 구독자와 현재 실행 목록에 전달한다', ()
   });
   off();
 
+  assert.ok(entry);
   assert.deepEqual(received, [entry.id]);
   assert.deepEqual(mcpRuntimeLogs(), [entry]);
 });

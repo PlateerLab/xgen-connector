@@ -64,7 +64,12 @@ import { attachAgent, detachAgent, moveRoot, rootOf } from './workspace';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
-import { clearMcpRuntimeLogs, mcpRuntimeLogs, onMcpRuntimeLog } from './mcp-runtime-log';
+import {
+  clearMcpRuntimeLogs,
+  mcpRuntimeLogs,
+  onMcpRuntimeLog,
+  setMcpRuntimeLogEnabled,
+} from './mcp-runtime-log';
 import { initSyncManager, getSyncManager, type SyncPairStatus } from './sync-manager';
 import {
   buildSsoUrl,
@@ -957,6 +962,7 @@ function currentUserId(): string | null {
 /** Reconcile MCP manager + bridge with config + login state. */
 function syncMcp(): void {
   const cfg = loadConfig();
+  setMcpRuntimeLogEnabled(cfg.mcpDebug === true);
   const mcp = getMcpManager();
   mcp.configure(cfg.mcpServers);
   const bridge = getMcpBridge();

@@ -171,8 +171,9 @@ const AGENT_KIND: Record<string, string> = { canvas: 'Canvas', harness: 'Harness
 export const Chat: React.FC<{
   session: ChatSession;
   collapsed?: boolean;
+  mcpDebug?: boolean;
   onExpandSidebar?: () => void;
-}> = ({ session, collapsed, onExpandSidebar }) => {
+}> = ({ session, collapsed, mcpDebug = false, onExpandSidebar }) => {
   const { agent } = session;
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
@@ -224,6 +225,10 @@ export const Chat: React.FC<{
   const sessionSig = `${agent.workflowId}::${session.resume ? session.interactionId : 'new'}`;
 
   useEffect(() => {
+    if (!mcpDebug) {
+      setMcpStatus(null);
+      return;
+    }
     let alive = true;
     void xgen.mcp
       .status()
@@ -234,9 +239,14 @@ export const Chat: React.FC<{
       alive = false;
       off();
     };
-  }, []);
+  }, [mcpDebug]);
 
   useEffect(() => {
+    if (!mcpDebug) {
+      setMcpLogs([]);
+      setMcpLogsOpen(false);
+      return;
+    }
     let alive = true;
     void xgen.mcp
       .runtimeLogs()
@@ -249,7 +259,7 @@ export const Chat: React.FC<{
       alive = false;
       off();
     };
-  }, []);
+  }, [mcpDebug]);
 
   useEffect(() => {
     cancelRef.current?.cancel();
@@ -648,17 +658,19 @@ export const Chat: React.FC<{
           </div>
         </div>
         <div className="chat-header-actions">
-          <button
-            type="button"
-            className={`mcp-chat-status ${mcpIndicator.tone}`}
-            title={mcpIndicator.title}
-            aria-label={mcpIndicator.title}
-            aria-expanded={mcpLogsOpen}
-            onClick={() => setMcpLogsOpen((open) => !open)}
-          >
-            <span className="mcp-chat-status-dot" />
-            {mcpIndicator.label}
-          </button>
+          {mcpDebug && (
+            <button
+              type="button"
+              className={`mcp-chat-status ${mcpIndicator.tone}`}
+              title={mcpIndicator.title}
+              aria-label={mcpIndicator.title}
+              aria-expanded={mcpLogsOpen}
+              onClick={() => setMcpLogsOpen((open) => !open)}
+            >
+              <span className="mcp-chat-status-dot" />
+              {mcpIndicator.label}
+            </button>
+          )}
           {ttsOn && (
             <button
               className="secondary"
@@ -675,7 +687,7 @@ export const Chat: React.FC<{
         </div>
       </div>
 
-      {mcpLogsOpen && (
+      {mcpDebug && mcpLogsOpen && (
         <div className="mcp-runtime-log" role="log" aria-label="로컬 MCP 실행 로그">
           <div className="mcp-runtime-log-head">
             <strong>로컬 MCP 실행 로그</strong>

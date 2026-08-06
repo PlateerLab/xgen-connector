@@ -19,10 +19,17 @@ export interface McpRuntimeLogEntry {
 const entries: McpRuntimeLogEntry[] = [];
 const listeners = new Set<(entry: McpRuntimeLogEntry) => void>();
 let sequence = 0;
+let enabled = false;
+
+export function setMcpRuntimeLogEnabled(next: boolean): void {
+  enabled = next;
+  if (!enabled) clearMcpRuntimeLogs();
+}
 
 export function appendMcpRuntimeLog(
   entry: Omit<McpRuntimeLogEntry, 'id' | 'timestamp'>,
-): McpRuntimeLogEntry {
+): McpRuntimeLogEntry | null {
+  if (!enabled) return null;
   const next: McpRuntimeLogEntry = {
     ...entry,
     id: ++sequence,
