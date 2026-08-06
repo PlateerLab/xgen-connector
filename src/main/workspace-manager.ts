@@ -116,6 +116,15 @@ export class WorkspaceManager {
   private presence = new Map<string, WorkspacePresence>()
   /** 마운트를 막던 로컬 파일을 구해 낸 위치 (있으면 사용자에게 알린다). */
   private rescued: string | undefined
+  /**
+   * 구해 낸 파일을 이미 올려 봤는가.
+   *
+   * ⚠ 이 플래그가 없으면 마운트할 때마다·[동기화] 누를 때마다 보관 폴더를
+   * **다시 업로드**한다. 사용자가 지운 파일이 그대로 되살아난다 — 실기에서
+   * "지우고 새로고침하면 다시 생긴다" 의 진짜 원인이 이것이었다.
+   * 업로드는 **구해 낸 직후 딱 한 번**이다.
+   */
+  private rescueUploaded = false
   /** 리컨사일이 진행 중인가 — 진행 중에는 "실패"라고 말하지 않는다. */
   private inFlight = false
   private busy: Promise<void> | null = null
@@ -258,12 +267,13 @@ export class WorkspaceManager {
    * 동기화 — 서버 상태를 지금 다시 읽는다.
    *
    * 드라이브는 스트리밍이라 "올릴 것"이 따로 쌓이지 않는다. 그래서 동기화는
-   * **캐시를 버리고 최신 목록을 다시 가져오는 것**이다. 구해 둔 로컬 파일이
-   * 남아 있으면 이때 다시 올려 본다 (첫 시도가 네트워크로 실패했을 수 있다).
+   * **캐시를 버리고 최신 목록을 다시 가져오는 것**이 전부다.
    */
   async refreshNow(): Promise<void> {
+    // ⚠ 여기서 보관 폴더를 다시 올리면 **사용자가 지운 파일이 되살아난다.**
+    // 동기화는 "서버 상태를 다시 읽는 것"이지 "로컬을 다시 밀어 넣는 것"이
+    // 아니다. 업로드는 구해 낸 직후 한 번뿐이다.
     this.backend.invalidateAll()
-    if (this.rescued) void this.uploadRescued(this.rescued)
     await this.reconcile()
   }
 
@@ -327,6 +337,11 @@ export class WorkspaceManager {
         await rm(backup, { recursive: true, force: true })
         this.rescued = undefined
         diag('workspace', '보관 폴더 정리 완료 — 파일은 클라우드에 있다')
+      } else if (failed > 0) {
+        // 자동 재시도는 하지 않는다. 다시 올리면 그 사이 사용자가 지운 파일을
+        // 되살릴 수 있다. 보관 폴더는 남겨 두고 위치를 화면에 알린다 —
+        // 사용자가 직접 드라이브로 옮기면 된다.
+        diag('workspace', `보관 폴더를 남긴다 (실패 ${failed}건): ${backup}`)
       }
       this.emit()
     } catch (e) {
@@ -607,7 +622,12 @@ export class WorkspaceManager {
       }
       this.lastHint = undefined
       this.mountedPath = root
-      if (this.rescued) void this.uploadRescued(this.rescued)
+      // 구해 낸 파일은 **한 번만** 올린다 (재마운트마다 올리면 지운 파일이
+      // 되살아난다).
+      if (this.rescued && !this.rescueUploaded) {
+        this.rescueUploaded = true
+        void this.uploadRescued(this.rescued)
+      }
       diag('workspace', `워크스페이스 마운트(FUSE 자식 프로세스) → ${root}`)
       return
     }

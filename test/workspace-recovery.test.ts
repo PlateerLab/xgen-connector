@@ -173,3 +173,39 @@ test('모든 인증 성공 경로가 드라이브를 다시 맞춘다', async ()
     '세션 복원 후 리컨사일이 없다 — 재시작하면 드라이브가 안 붙는다',
   )
 })
+
+/**
+ * 구해 낸 파일은 **한 번만** 올린다.
+ *
+ * 실기 사고: 파일을 지워도 계속 되살아났다. 마운트할 때마다·[동기화] 누를
+ * 때마다 보관 폴더를 다시 업로드하고 있었기 때문이다. 사용자가 지운 파일이
+ * 로컬 보관본에서 그대로 다시 올라갔다.
+ *
+ * 동기화는 "서버 상태를 다시 읽는 것"이지 "로컬을 다시 밀어 넣는 것"이 아니다.
+ */
+test('동기화는 보관 폴더를 다시 올리지 않는다 (지운 파일이 되살아난다)', async () => {
+  const { readFileSync } = await import('fs')
+  const src = readFileSync(new URL('../src/main/workspace-manager.ts', import.meta.url), 'utf-8')
+  const fn = src.slice(src.indexOf('async refreshNow('), src.indexOf('async refreshNow(') + 700)
+  const code = fn.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  assert.ok(
+    !code.includes('uploadRescued'),
+    '동기화가 보관 폴더를 재업로드한다 — 사용자가 지운 파일이 되살아난다',
+  )
+})
+
+test('마운트할 때마다 재업로드하지 않는다', async () => {
+  const { readFileSync } = await import('fs')
+  const src = readFileSync(new URL('../src/main/workspace-manager.ts', import.meta.url), 'utf-8')
+  assert.match(src, /rescueUploaded/, '업로드 여부를 기억하지 않는다 — 재마운트마다 다시 올린다')
+  const i = src.indexOf('this.rescued && !this.rescueUploaded')
+  assert.ok(i > 0, '업로드 전에 이미 했는지 확인하지 않는다')
+})
+
+test('업로드 실패해도 자동 재시도하지 않는다', async () => {
+  // 재시도 사이에 사용자가 지웠으면 되살린다. 보관 폴더를 남기고 알리는 편이 낫다.
+  const { readFileSync } = await import('fs')
+  const src = readFileSync(new URL('../src/main/workspace-manager.ts', import.meta.url), 'utf-8')
+  const fn = src.slice(src.indexOf('private async uploadRescued'), src.indexOf('private async mountAlive'))
+  assert.match(fn, /보관 폴더를 남긴다/, '실패 시 처리가 명시돼 있지 않다')
+})
