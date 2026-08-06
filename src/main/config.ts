@@ -32,7 +32,15 @@ export interface McpServerConfig {
 }
 
 export interface ConnectorConfig {
-  /** 가상 드라이브 워크스페이스 (커넥터 소유 루트 + 부착 에이전트). */
+  /**
+   * 가상 드라이브 워크스페이스 — **계정별로 따로 둔다** (키: `<serverUrl>|<userId>`).
+   *
+   * 예전에는 전역 `workspace` 하나였다. 그러면 계정을 바꿔 로그인해도 이전 계정의
+   * 루트·부착 에이전트를 그대로 물고, 두 계정이 같은 폴더를 클라우드로 가리켜
+   * 서로의 파일을 덮어쓴다 (실기 신고).
+   */
+  workspaces?: Record<string, WorkspacePersistConfig>;
+  /** @deprecated 전역 단일 워크스페이스. 최초 로그인 시 workspaces 로 이관된다. */
   workspace?: WorkspacePersistConfig;
   /** Gateway origin, e.g. "https://xgen.example.com". Empty on first run. */
   serverUrl: string;

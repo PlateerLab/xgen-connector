@@ -38,6 +38,7 @@ import {
   normalizeServerUrl,
   type ConnectorConfig,
   type SyncPairPersistConfig,
+  type WorkspacePersistConfig,
 } from './config';
 import { tokenStore, credentialStore, storageStatus } from './keychain';
 import {
@@ -60,7 +61,7 @@ import {
 import { makeWorkspaceApi } from './workspace-api';
 import { WorkspaceWsClient } from './sync-transport';
 import { hostname } from 'os';
-import { attachAgent, detachAgent, moveRoot, rootOf } from './workspace';
+import { accountKey, attachAgent, describeAccount, detachAgent, moveRoot, rootConflict, rootOf } from './workspace';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
@@ -1585,10 +1586,49 @@ function openInFileManager(target: string): void {
   }
 }
 
+
+// ── 계정별 워크스페이스 ────────────────────────────────────────────
+//
+// 워크스페이스는 **로그인한 계정에 속한다**. 예전에는 전역 설정 하나여서,
+// 계정을 바꿔 로그인해도 이전 계정의 루트·부착 에이전트를 그대로 물었다.
+// 두 계정이 같은 폴더를 클라우드로 가리키면 서로의 파일을 덮어썼다.
+
+/** 지금 로그인한 계정의 키. 로그아웃 상태면 null. */
+function currentAccountKey(): string | null {
+  const uid = client?.user?.userId;
+  if (!uid) return null;
+  return accountKey(normalizeServerUrl(loadConfig().serverUrl), String(uid));
+}
+
+/** 지금 계정의 워크스페이스 설정. 로그아웃 상태면 undefined(마운트하지 않는다). */
+function currentWorkspace(): WorkspacePersistConfig | undefined {
+  const key = currentAccountKey();
+  if (!key) return undefined;
+  const cfg = loadConfig();
+  const byAccount = cfg.workspaces?.[key];
+  if (byAccount) return byAccount;
+  // 예전 전역 설정이 있으면 **최초 1회만** 이 계정으로 이관한다. 다른 계정이
+  // 나중에 로그인해도 같은 것을 물려받지 않는다.
+  return cfg.workspace;
+}
+
+/** 지금 계정의 워크스페이스를 저장한다 (전역 키는 더 이상 쓰지 않는다). */
+function saveCurrentWorkspace(next: WorkspacePersistConfig): WorkspacePersistConfig | undefined {
+  const key = currentAccountKey();
+  if (!key) return undefined;
+  const cfg = loadConfig();
+  const saved = saveConfig({
+    workspaces: { ...(cfg.workspaces ?? {}), [key]: next },
+    // 이관 완료 — 전역 키를 비워 두 곳이 어긋나지 않게 한다.
+    workspace: undefined as never,
+  });
+  return saved.workspaces?.[key];
+}
+
 // ── 워크스페이스(가상 드라이브) ─────────────────────────────────
 function wireWorkspaceManager(): void {
   initWorkspaceManager({
-    config: () => loadConfig().workspace,
+    config: () => currentWorkspace(),
     apiFor: (workflowId: string) =>
       makeWorkspaceApi(
         {
@@ -1640,7 +1680,7 @@ function wireWorkspaceManager(): void {
 
 /** 워크스페이스 설정 변경 → 저장 + 마운트 리컨사일. */
 async function saveWorkspace(next: unknown): Promise<unknown> {
-  const saved = saveConfig({ workspace: next as never });
+  const saved = { workspace: saveCurrentWorkspace(next as WorkspacePersistConfig) };
   await getWorkspaceManager()?.reconcile();
   return saved.workspace;
 }
@@ -1649,17 +1689,17 @@ ipcMain.handle(CHANNELS.workspaceStatus, () => {
   return getWorkspaceManager()?.status() ?? { supported: false, mounted: false, agents: [] };
 });
 ipcMain.handle(CHANNELS.workspaceAttach, async (_e, agent: { workflowId: string; label: string }) => {
-  const cur = loadConfig().workspace ?? { agents: [] };
+  const cur = currentWorkspace() ?? { agents: [] };
   const next = attachAgent(cur, { ...agent, id: randomUUID() });
   await saveWorkspace(next);
   return getWorkspaceManager()?.status();
 });
 ipcMain.handle(CHANNELS.workspaceDetach, async (_e, workflowId: string) => {
-  const next = detachAgent(loadConfig().workspace ?? { agents: [] }, workflowId);
+  const next = detachAgent(currentWorkspace() ?? { agents: [] }, workflowId);
   await saveWorkspace(next);
   return getWorkspaceManager()?.status();
 });
-ipcMain.handle(CHANNELS.workspaceRoot, () => rootOf(loadConfig().workspace));
+ipcMain.handle(CHANNELS.workspaceRoot, () => rootOf(currentWorkspace()));
 ipcMain.handle(CHANNELS.workspaceSetRoot, async () => {
   // 구글 드라이브가 드라이브 위치만 바꾸게 하는 것과 같다 — 폴더 하나를 고른다.
   const win = mainWindow;
@@ -1678,7 +1718,13 @@ ipcMain.handle(CHANNELS.workspaceSetRoot, async () => {
     // ⚠ **먼저 걷어낸다.** 마운트된 채로 루트만 바꾸면 옛 지점이 그대로 남아
     // 상위 폴더가 EBUSY 로 잠기고, 되돌아갈 수도 지울 수도 없게 된다.
     await mgr?.detach();
-    const cur = loadConfig().workspace ?? { agents: [] };
+    const cur = currentWorkspace() ?? { agents: [] };
+    // 다른 계정이 이미 그 폴더를 쓰고 있으면 막는다 — 두 계정이 같은 폴더를
+    // 클라우드로 가리키면 마운트는 하나만 걸리고, 나중에 붙은 쪽이 조용히
+    // 이겨 상대 파일을 덮어쓴다.
+    const acct = currentAccountKey();
+    const clash = acct ? rootConflict(loadConfig().workspaces, acct, target) : null;
+    if (clash) throw new Error(`이미 ${describeAccount(clash)} 가 이 폴더를 쓰고 있습니다`);
     const oldRoot = rootOf(cur);
     const moved = moveRoot(cur, target);
     // 옛 마운트 지점이 빈 폴더로 남아 새 루트를 막지 않게 치운다 (비어 있을 때만 —
@@ -1707,7 +1753,7 @@ async function removeIfEmptyDir(dir: string): Promise<void> {
 
 /** 가상 드라이브 on/off — 끄면 즉시 걷어낸다. */
 ipcMain.handle(CHANNELS.workspaceSetEnabled, async (_e, enabled: boolean) => {
-  const cur = loadConfig().workspace ?? { agents: [] };
+  const cur = currentWorkspace() ?? { agents: [] };
   if (!enabled) await getWorkspaceManager()?.detach();
   await saveWorkspace({ ...cur, enabled: !!enabled });
   return getWorkspaceManager()?.status();
