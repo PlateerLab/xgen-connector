@@ -1020,16 +1020,18 @@ function wireSyncManager(): void {
         p.id === id ? { ...p, paused: true, pausedReason: reason } : p,
       );
       saveConfig({ syncPairs: pairs });
-      getSyncManager()?.configure(pairs);
+      stopLegacyPairSync(); // 재가동 금지 — 지운 파일이 되살아난다
     },
   });
-  getSyncManager()?.configure(loadConfig().syncPairs ?? []);
+  stopLegacyPairSync(); // 레거시 엔진 재가동 금지 (삭제 되살아남)
 }
 
 /** 페어링 변경 → 저장 + 엔진 리컨사일 + 상태 브로드캐스트. */
 function saveSyncPairs(pairs: SyncPairPersistConfig[]): SyncPairPersistConfig[] {
   const next = saveConfig({ syncPairs: pairs });
-  getSyncManager()?.configure(next.syncPairs ?? []);
+  // 설정은 보존하되 엔진은 가동하지 않는다 — 가상 드라이브가 이 역할을
+  // 대체했고, 둘이 같은 폴더를 향하면 삭제가 서로를 되돌린다.
+  stopLegacyPairSync();
   return next.syncPairs ?? [];
 }
 
@@ -1098,12 +1100,34 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
 // Persist the rotated tokens + wake dependent subsystems after any successful sign-in.
 // @returns 토큰이 **영속** 저장됐는지 — false 면 재시작 시 재로그인이 필요하다
 // (키체인/암호화 저장 전부 불가). 무음 실패 금지: 호출자가 UI 에 표면화한다.
+/**
+ * ⚠ **레거시 페어 동기화 엔진은 더 이상 가동하지 않는다.**
+ *
+ * 예전 모델(에이전트 하나 ↔ 사용자가 고른 임의 폴더)은 가상 드라이브로
+ * 대체됐다. 그런데 설정에 남은 syncPairs 로 이 엔진이 계속 살아나 **같은
+ * 폴더를 향해 드라이브와 동시에 동작**했다.
+ *
+ * 결과: 사용자가 지운 파일을 레거시 엔진이 자기 인덱스를 근거로 **다시 올렸다**.
+ * 서버에서 지워도, 드라이브에서 지워도, 웹에서 지워도 곧바로 되살아났다 —
+ * 실기의 "무한 부활" 이 이것이다.
+ *
+ * 동기화 주체는 하나여야 한다. 남은 페어는 조용히 멈춰 둔다(설정은 보존 —
+ * 지우면 되돌릴 수 없다).
+ */
+function stopLegacyPairSync(): void {
+  try {
+    getSyncManager()?.stopAll();
+  } catch {
+    /* 엔진이 없으면 멈출 것도 없다 */
+  }
+}
+
 async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   const c = getClient();
   const persisted = await tokenStore.setAccess(c.getAccessTokenAfterRotation());
   if (refreshToken) await tokenStore.setRefresh(refreshToken);
   syncMcp();
-  getSyncManager()?.configure(loadConfig().syncPairs ?? []); // 로그인 → 페어링 재가동
+  stopLegacyPairSync(); // 가상 드라이브가 대체했다 — 둘이 같이 돌면 삭제가 되살아난다
   safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
   // 가상 드라이브는 **로그인 상태에서만** 존재한다. 기동 시점의 리컨사일은
   // 아직 로그인 전이라 아무것도 붙이지 않으므로, 로그인이 끝난 지금 다시
@@ -1264,7 +1288,7 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
     // 워크스페이스 리컨사일이 빠져 **재시작할 때마다 드라이브가 안 붙었다**.
     // 갈래가 둘이면 한쪽만 갱신되는 날이 온다 — 한 곳으로 모은다.
     syncMcp();
-    getSyncManager()?.configure(loadConfig().syncPairs ?? []);
+    stopLegacyPairSync(); // 레거시 엔진 재가동 금지 (삭제 되살아남)
     safeSend(overlayWindow, CHANNELS.avatarRefresh); // session restored → overlay can load the avatar
     void getWorkspaceManager()?.reconcile();
     return { user: c.user };
@@ -1835,8 +1859,9 @@ ipcMain.handle(CHANNELS.syncSetPaused, (_e, id: string, paused: boolean) => {
   );
   return saveSyncPairs(pairs);
 });
-ipcMain.handle(CHANNELS.syncNow, (_e, id: string) => {
-  getSyncManager()?.syncNow(id);
+ipcMain.handle(CHANNELS.syncNow, () => {
+  // 레거시 페어 동기화는 중단됐다. 여기서 돌리면 지운 파일이 되살아난다.
+  stopLegacyPairSync();
   return true;
 });
 ipcMain.handle(CHANNELS.syncConfirmMassDelete, (_e, id: string, accept: boolean) => {
