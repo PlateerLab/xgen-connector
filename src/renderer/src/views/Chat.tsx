@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import type { Agent, ChatEvent, ToolEvent, Citation, VoiceConfig } from '../../../core/index';
-import type { McpBridgeStatusLike } from '../../../preload/index';
+import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
 import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
 import { mcpChatStatus } from './mcp-status-model';
 import type { AvatarState } from '../avatar/AvatarSlot';
@@ -179,6 +179,8 @@ export const Chat: React.FC<{
   const [streaming, setStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
+  const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
+  const [mcpLogsOpen, setMcpLogsOpen] = useState(false);
   const [interactionId, setInteractionId] = useState(
     () => session.interactionId ?? newInteractionId(agent.workflowId),
   );
@@ -228,6 +230,21 @@ export const Chat: React.FC<{
       .then((status) => alive && setMcpStatus(status))
       .catch(() => undefined);
     const off = xgen.mcp.onStatus((status) => setMcpStatus(status));
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void xgen.mcp
+      .runtimeLogs()
+      .then((logs) => alive && setMcpLogs(logs))
+      .catch(() => undefined);
+    const off = xgen.mcp.onRuntimeLog((entry) => {
+      setMcpLogs((logs) => [...logs.slice(-199), entry]);
+    });
     return () => {
       alive = false;
       off();
@@ -631,15 +648,17 @@ export const Chat: React.FC<{
           </div>
         </div>
         <div className="chat-header-actions">
-          <span
+          <button
+            type="button"
             className={`mcp-chat-status ${mcpIndicator.tone}`}
             title={mcpIndicator.title}
-            role="status"
             aria-label={mcpIndicator.title}
+            aria-expanded={mcpLogsOpen}
+            onClick={() => setMcpLogsOpen((open) => !open)}
           >
             <span className="mcp-chat-status-dot" />
             {mcpIndicator.label}
-          </span>
+          </button>
           {ttsOn && (
             <button
               className="secondary"
@@ -655,6 +674,46 @@ export const Chat: React.FC<{
           </button>
         </div>
       </div>
+
+      {mcpLogsOpen && (
+        <div className="mcp-runtime-log" role="log" aria-label="로컬 MCP 실행 로그">
+          <div className="mcp-runtime-log-head">
+            <strong>로컬 MCP 실행 로그</strong>
+            <div className="row">
+              <button
+                className="link"
+                onClick={() => {
+                  void xgen.mcp.clearRuntimeLogs();
+                  setMcpLogs([]);
+                }}
+                disabled={mcpLogs.length === 0}
+              >
+                초기화
+              </button>
+              <button className="link" onClick={() => setMcpLogsOpen(false)}>
+                닫기
+              </button>
+            </div>
+          </div>
+          {mcpLogs.length === 0 ? (
+            <div className="mcp-runtime-log-empty">현재 실행에서 기록된 도구 호출이 없습니다.</div>
+          ) : (
+            <div className="mcp-runtime-log-list">
+              {[...mcpLogs].reverse().map((entry) => (
+                <div className={`mcp-runtime-log-entry ${entry.ok === false ? 'error' : ''}`} key={entry.id}>
+                  <time>{new Date(entry.timestamp).toLocaleTimeString()}</time>
+                  <span className="mcp-runtime-log-kind">{entry.kind}</span>
+                  <span className="mcp-runtime-log-message">
+                    {entry.server && entry.tool ? `${entry.server}.${entry.tool} · ` : ''}
+                    {entry.message}
+                    {entry.durationMs !== undefined ? ` · ${entry.durationMs}ms` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="chat-log" ref={scrollRef}>
         {loadingHistory ? (

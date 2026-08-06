@@ -21,6 +21,7 @@
  */
 import WebSocket from 'ws';
 import { getMcpManager, type McpServerAdvert } from './mcp-manager';
+import { appendMcpRuntimeLog } from './mcp-runtime-log';
 
 const HEARTBEAT_MS = 20000;
 const RECONNECT_MIN_MS = 5000;
@@ -282,6 +283,11 @@ export class McpBridge {
         this.catalogSynced = false;
         this.serverToolCount = 0;
         this.ws.send(JSON.stringify({ type: 'hello', catalog_id: catalogId, tools }));
+        appendMcpRuntimeLog({
+          kind: 'catalog',
+          message: `도구 카탈로그 ${tools.length}개 재초기화 요청`,
+          requestId: catalogId,
+        });
       }
       this.emit();
     } catch (e) {
@@ -311,11 +317,25 @@ export class McpBridge {
       this.serverToolCount = Number.isFinite(msg.tool_count)
         ? Math.max(0, Math.trunc(msg.tool_count as number))
         : 0;
+      appendMcpRuntimeLog({
+        kind: 'catalog',
+        message: `workflow 도구 ${this.serverToolCount}개 적용 완료`,
+        requestId: msg.catalog_id,
+        ok: true,
+      });
       this.emit();
       return;
     }
     if (msg.type === 'mcp_call') {
       const { request_id, server, tool, args } = msg;
+      const startedAt = Date.now();
+      appendMcpRuntimeLog({
+        kind: 'call',
+        message: '로컬 MCP 도구 호출 수신',
+        requestId: request_id,
+        server: String(server),
+        tool: String(tool),
+      });
       let payload: Record<string, unknown>;
       try {
         const result = await getMcpManager().callTool(String(server), String(tool), args ?? {});
@@ -323,6 +343,17 @@ export class McpBridge {
       } catch (e) {
         payload = { request_id, ok: false, error: e instanceof Error ? e.message : String(e) };
       }
+      appendMcpRuntimeLog({
+        kind: 'result',
+        message: payload.ok
+          ? '로컬 MCP 도구 실행 성공'
+          : String(payload.error || '로컬 MCP 도구 실행 실패'),
+        requestId: request_id,
+        server: String(server),
+        tool: String(tool),
+        ok: payload.ok === true,
+        durationMs: Date.now() - startedAt,
+      });
       try {
         this.ws?.send(JSON.stringify({ type: 'mcp_result', ...payload }));
       } catch {

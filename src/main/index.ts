@@ -64,6 +64,7 @@ import { attachAgent, detachAgent, moveRoot, rootOf } from './workspace';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
+import { clearMcpRuntimeLogs, mcpRuntimeLogs, onMcpRuntimeLog } from './mcp-runtime-log';
 import { initSyncManager, getSyncManager, type SyncPairStatus } from './sync-manager';
 import {
   buildSsoUrl,
@@ -949,6 +950,7 @@ function rebuildTrayMenu(): void {
 
 // ── Local MCP (connector-hosted MCP servers → user's agents) ─────
 let mcpStatusWired = false;
+let mcpRuntimeLogWired = false;
 function currentUserId(): string | null {
   return client?.user?.userId ?? null;
 }
@@ -961,6 +963,10 @@ function syncMcp(): void {
   if (!mcpStatusWired) {
     mcpStatusWired = true;
     bridge.setStatusListener((s) => safeSend(mainWindow, CHANNELS.mcpStatusEvent, s));
+  }
+  if (!mcpRuntimeLogWired) {
+    mcpRuntimeLogWired = true;
+    onMcpRuntimeLog((entry) => safeSend(mainWindow, CHANNELS.mcpRuntimeLogEvent, entry));
   }
   const userId = currentUserId();
   if (cfg.mcp && userId) {
@@ -1545,6 +1551,11 @@ ipcMain.handle(CHANNELS.mcpTestServer, (e, cfg) =>
   }),
 );
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
+ipcMain.handle(CHANNELS.mcpRuntimeLogs, () => mcpRuntimeLogs());
+ipcMain.handle(CHANNELS.mcpClearRuntimeLogs, () => {
+  clearMcpRuntimeLogs();
+  return true;
+});
 
 /**
  * 파일 관리자로 경로 열기 — **shell.openPath 를 쓰면 안 된다.**

@@ -71,6 +71,19 @@ export interface McpBridgeStatusLike {
   }>;
 }
 
+/** 앱 실행 중에만 유지되는 로컬 MCP 카탈로그·도구 호출 로그. */
+export interface McpRuntimeLogEntryLike {
+  id: number;
+  timestamp: number;
+  kind: 'catalog' | 'call' | 'result';
+  message: string;
+  requestId?: string;
+  server?: string;
+  tool?: string;
+  ok?: boolean;
+  durationMs?: number;
+}
+
 /** Live avatar/chat state pushed from the main window to the floating overlay. */
 export interface OverlayState {
   workflowId: string;
@@ -362,6 +375,14 @@ const api = {
     status: (): Promise<McpBridgeStatusLike> => ipcRenderer.invoke(CHANNELS.mcpStatus),
     /** 서버들에 다시 붙어 상태를 갱신한다 (설정 화면 진입/테스트 성공 후). */
     refresh: (): Promise<McpBridgeStatusLike> => ipcRenderer.invoke(CHANNELS.mcpRefresh),
+    runtimeLogs: (): Promise<McpRuntimeLogEntryLike[]> =>
+      ipcRenderer.invoke(CHANNELS.mcpRuntimeLogs),
+    clearRuntimeLogs: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.mcpClearRuntimeLogs),
+    onRuntimeLog: (cb: (entry: McpRuntimeLogEntryLike) => void): (() => void) => {
+      const h = (_e: unknown, entry: McpRuntimeLogEntryLike) => cb(entry);
+      ipcRenderer.on(CHANNELS.mcpRuntimeLogEvent, h);
+      return () => ipcRenderer.removeListener(CHANNELS.mcpRuntimeLogEvent, h);
+    },
     onStatus: (cb: (s: McpBridgeStatusLike) => void): (() => void) => {
       const h = (_e: unknown, s: McpBridgeStatusLike) => cb(s);
       ipcRenderer.on(CHANNELS.mcpStatusEvent, h);
