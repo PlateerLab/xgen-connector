@@ -134,3 +134,21 @@ test('업로드 실패는 서버가 준 이유를 메시지에 남긴다', () =>
     '상태코드만 남기면 EIO 뒤에 원인을 찾을 수 없다',
   )
 })
+
+test('업로드가 Chromium 금지 헤더를 붙이지 않는다 (net.fetch 가 요청을 거부한다)', () => {
+  // Electron net.fetch(Chromium 네트워크 스택)는 Content-Length 같은 *금지
+  // 헤더*가 붙으면 요청을 **보내기도 전에** 거부한다:
+  //     net::ERR_INVALID_ARGUMENT
+  // 실기에서 단일 PUT 이 전부 이렇게 죽었고, 헤더를 안 붙이는 청크 업로드
+  // 경로만 멀쩡했다. 드라이브 복사가 close() 에서 EIO 로 끝난 원인이다.
+  const src = readFileSync(new URL('../src/main/sync-transport.ts', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+  const FORBIDDEN = ['Content-Length', 'Host', 'Connection', 'Transfer-Encoding']
+  for (const h of FORBIDDEN) {
+    assert.ok(
+      !new RegExp(`['"\`]${h}['"\`]\\s*:`, 'i').test(src),
+      `${h} 헤더를 직접 설정한다 — net.fetch 가 요청을 거부한다`,
+    )
+  }
+})

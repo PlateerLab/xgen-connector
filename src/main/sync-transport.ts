@@ -120,7 +120,19 @@ export class HttpSyncTransport implements Transport {
         headers: {
           ...(await authHeaders(this.auth)),
           'Content-Type': 'application/octet-stream',
-          'Content-Length': String(size),
+          // ⚠ **Content-Length 를 직접 넣지 않는다.**
+          //
+          // Chromium 의 fetch 에서 Content-Length 는 *금지 헤더*다. 이 전송
+          // 계층은 설정된 XGEN 서버의 인증서 정책을 공유하려고 Electron
+          // `net.fetch`(Chromium 네트워크 스택)를 주입받는데, 금지 헤더가
+          // 붙으면 요청을 **보내기도 전에** 거부한다:
+          //
+          //     net::ERR_INVALID_ARGUMENT
+          //
+          // 그래서 주입이 들어간 뒤로 단일 PUT 이 전부 실패했고, 드라이브에
+          // 파일을 복사하면 close() 에서 EIO 로 끝났다. 헤더를 안 넣는 청크
+          // 업로드 경로만 멀쩡했던 이유이기도 하다.
+          // 길이는 fetch 가 바디에서 알아서 계산한다.
         },
         // ⚠ **버퍼로 보낸다. 스트림 바디를 쓰면 안 된다.**
         //
