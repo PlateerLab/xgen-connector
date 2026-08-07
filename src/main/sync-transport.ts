@@ -55,6 +55,37 @@ function transportFetch(auth: TransportAuth, input: string, init?: RequestInit):
 const CHUNK_THRESHOLD_DEFAULT = 64 * 1024 * 1024
 const CHUNK_SIZE = 8 * 1024 * 1024
 
+/**
+ * 서버가 준 실패 사유를 살려 예외로 만든다.
+ *
+ * ⚠ 상태코드만 남기면 **원인이 여기서 소멸한다.** 실기 사고: 관리자가 조직
+ * 전체에서 클라우드 스토리지를 끄면 서버는 403 과 함께 "클라우드 스토리지
+ * 기능이 비활성화되어 있습니다" 를 주는데, 커넥터에는 `changes HTTP 403` 만
+ * 남아 사용자에게는 그냥 "연결 불가" 로 보였다. 어디서 껐는지도, 무엇을 해야
+ * 하는지도 알 수 없었다.
+ *
+ * FastAPI 는 오류 본문을 `{"detail": "..."}` 로 준다.
+ */
+async function httpError(what: string, res: Response): Promise<Error & { status: number }> {
+  let detail = ''
+  try {
+    const body = await res.text()
+    if (body) {
+      try {
+        const parsed = JSON.parse(body) as { detail?: unknown }
+        const d = parsed?.detail
+        detail = typeof d === 'string' ? d : d ? JSON.stringify(d) : body
+      } catch {
+        detail = body
+      }
+    }
+  } catch {
+    /* 본문을 못 읽어도 상태코드는 남긴다 */
+  }
+  const msg = detail ? `${what} HTTP ${res.status}: ${detail.slice(0, 300)}` : `${what} HTTP ${res.status}`
+  return Object.assign(new Error(msg), { status: res.status })
+}
+
 export class HttpSyncTransport implements Transport {
   private chunkThreshold: number
 
@@ -80,7 +111,7 @@ export class HttpSyncTransport implements Transport {
     const res = await transportFetch(this.auth, this.url('/storage/changes', { since }), {
       headers: await authHeaders(this.auth),
     })
-    if (!res.ok) throw Object.assign(new Error(`changes HTTP ${res.status}`), { status: res.status })
+    if (!res.ok) throw await httpError('changes', res)
     return (await res.json()) as ChangesResponse
   }
 
@@ -89,7 +120,7 @@ export class HttpSyncTransport implements Transport {
       headers: await authHeaders(this.auth),
     })
     if (!res.ok || !res.body) {
-      throw Object.assign(new Error(`download HTTP ${res.status}`), { status: res.status })
+      throw await httpError('download', res)
     }
     await mkdir(this.tmpDir, { recursive: true })
     const tmp = join(this.tmpDir, `dl-${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -153,14 +184,7 @@ export class HttpSyncTransport implements Transport {
       const body = await res.json().catch(() => ({}) as any)
       throw new SyncConflictError(body?.detail?.current_sha)
     }
-    if (!res.ok) {
-      // 서버가 준 이유를 함께 싣는다 — EIO 뒤에 원인이 남아야 한다.
-      const detail = await res.text().catch(() => '')
-      throw Object.assign(
-        new Error(`put HTTP ${res.status}${detail ? `: ${detail.slice(0, 300)}` : ''}`),
-        { status: res.status },
-      )
-    }
+    if (!res.ok) throw await httpError('put', res)
     const data = (await res.json()) as { sha256: string }
     return { sha256: data.sha256 }
   }
@@ -181,7 +205,7 @@ export class HttpSyncTransport implements Transport {
       { method: 'POST', headers: await authHeaders(this.auth) },
     )
     if (!startRes.ok) {
-      throw Object.assign(new Error(`chunk start HTTP ${startRes.status}`), { status: startRes.status })
+      throw await httpError('chunk start', startRes)
     }
     const { upload_id: uploadId } = (await startRes.json()) as { upload_id: string }
 
@@ -222,7 +246,7 @@ export class HttpSyncTransport implements Transport {
             offset = resume
             continue
           }
-          if (!res.ok) throw Object.assign(new Error(`chunk HTTP ${res.status}`), { status: res.status })
+          if (!res.ok) throw await httpError('chunk', res)
           const data = (await res.json()) as { received: number }
           offset = data.received
           attempts = 0
@@ -251,7 +275,7 @@ export class HttpSyncTransport implements Transport {
       throw new SyncConflictError(body?.detail?.current_sha)
     }
     if (!commit.ok) {
-      throw Object.assign(new Error(`chunk commit HTTP ${commit.status}`), { status: commit.status })
+      throw await httpError('chunk commit', commit)
     }
     const done = (await commit.json()) as { sha256: string }
     return { sha256: done.sha256 }
@@ -287,7 +311,7 @@ export class HttpSyncTransport implements Transport {
       throw new SyncConflictError(body?.detail?.current_sha)
     }
     if (res.status === 404) throw Object.assign(new Error('not found'), { status: 404 })
-    if (!res.ok) throw Object.assign(new Error(`delete HTTP ${res.status}`), { status: res.status })
+    if (!res.ok) throw await httpError('delete', res)
   }
 
   async mkdir(path: string): Promise<void> {
@@ -296,7 +320,7 @@ export class HttpSyncTransport implements Transport {
       headers: await authHeaders(this.auth),
     })
     if (res.status === 409) return // already exists — fine
-    if (!res.ok) throw Object.assign(new Error(`mkdir HTTP ${res.status}`), { status: res.status })
+    if (!res.ok) throw await httpError('mkdir', res)
   }
 }
 

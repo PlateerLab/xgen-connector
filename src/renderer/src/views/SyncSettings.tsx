@@ -161,11 +161,20 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   <div style={{ marginTop: 2 }}>클라우드로 올라가면 이 폴더는 자동으로 정리됩니다.</div>
                 </div>
               )}
+              {/* on/off 는 두 곳에 있다 — 관리자의 조직 전체 설정과 본인 설정.
+                  어느 쪽이 껐는지는 **서버가 준 사유**가 말해 준다(커넥터가
+                  게이트 판정을 흉내내면 서버와 어긋난다). 그래서 사유를 그대로
+                  보여주고, 안내는 두 경우를 모두 덮는 문구로 둔다 — 예전에는
+                  조직 전체가 꺼졌을 때도 "마이페이지에서 켜라"고 해서 사용자가
+                  이미 켜져 있는 자기 설정만 들여다보게 만들었다. */}
               {ws?.storageOff && (
                 <div className="small muted" style={{ marginTop: 4 }}>
-                  <div>내 클라우드 스토리지가 이 드라이브에 없습니다: {ws.storageOff}</div>
+                  <div>내 클라우드 스토리지를 쓸 수 없습니다: {ws.storageOff}</div>
                   <div style={{ marginTop: 2 }}>
-                    XGEN 웹의 [마이페이지 → 클라우드 스토리지] 에서 켤 수 있습니다.
+                    본인 설정은 XGEN 웹의 [마이페이지 → 클라우드 스토리지] 에서 켤 수 있습니다.
+                    조직 전체가 꺼져 있으면 관리자만 켤 수 있습니다.
+                  </div>
+                  <div style={{ marginTop: 2 }}>
                     에이전트 폴더는 이 설정과 무관하게 그대로 동작합니다.
                   </div>
                 </div>
