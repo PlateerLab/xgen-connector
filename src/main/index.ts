@@ -29,7 +29,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, join, sep } from 'node:path';
 import { XgenClient, type ChatEvent, type TtsSpeakOptions } from '../core/index';
 import {
   loadConfig,
@@ -37,7 +37,6 @@ import {
   resetConfig,
   normalizeServerUrl,
   type ConnectorConfig,
-  type SyncPairPersistConfig,
   type WorkspacePersistConfig,
 } from './config';
 import { tokenStore, credentialStore, storageStatus } from './keychain';
@@ -71,7 +70,6 @@ import {
   onMcpRuntimeLog,
   setMcpRuntimeLogEnabled,
 } from './mcp-runtime-log';
-import { initSyncManager, getSyncManager, type SyncPairStatus } from './sync-manager';
 import {
   buildSsoUrl,
   parseSsoLoginResponse,
@@ -864,7 +862,6 @@ function resetPositions(): void {
 /** 로컬 설정과 로그인 정보를 지운 뒤 배포 기본값으로 다시 시작한다. */
 async function resetStoredSettings(): Promise<void> {
   getMcpBridge().stop();
-  getSyncManager()?.stopAll();
   void client?.logout().catch(() => undefined);
   client = null;
   await Promise.allSettled([
@@ -1025,46 +1022,6 @@ function ensureDeviceId(): string {
   return id;
 }
 
-function wireSyncManager(): void {
-  initSyncManager({
-    indexDir: join(app.getPath('userData'), 'sync-index'),
-    serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
-    token: () => tokenStore.getAccess(),
-    deviceId: () => ensureDeviceId(),
-    fetch: (input, init) => net.fetch(input, init),
-    allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
-    onStatus: (statuses: SyncPairStatus[]) => safeSend(mainWindow, CHANNELS.syncStatusEvent, statuses),
-    log: (msg: string) => console.log(`[sync] ${msg}`),
-    // 엔진의 자동 일시정지(쿼터 폭풍·에이전트 삭제)를 config 에 영속 —
-    // 재시작 후에도 이유가 표시되고 재해머링하지 않는다.
-    onAutoPause: (id: string, reason: string) => {
-      const pairs = (loadConfig().syncPairs ?? []).map((p) =>
-        p.id === id ? { ...p, paused: true, pausedReason: reason } : p,
-      );
-      saveConfig({ syncPairs: pairs });
-      stopLegacyPairSync(); // 재가동 금지 — 지운 파일이 되살아난다
-    },
-  });
-  stopLegacyPairSync(); // 레거시 엔진 재가동 금지 (삭제 되살아남)
-}
-
-/** 페어링 변경 → 저장 + 엔진 리컨사일 + 상태 브로드캐스트. */
-function saveSyncPairs(pairs: SyncPairPersistConfig[]): SyncPairPersistConfig[] {
-  const next = saveConfig({ syncPairs: pairs });
-  // 설정은 보존하되 엔진은 가동하지 않는다 — 가상 드라이브가 이 역할을
-  // 대체했고, 둘이 같은 폴더를 향하면 삭제가 서로를 되돌린다.
-  stopLegacyPairSync();
-  return next.syncPairs ?? [];
-}
-
-/** 로컬 경로 중첩/중복 가드 — 같은 폴더(또는 부모/자식)를 두 페어링이 잡으면
- *  두 허브가 서로 핑퐁하며 발산한다 (geny-connector 동형). */
-function syncPathOverlaps(a: string, b: string): boolean {
-  const ra = resolve(a) + sep;
-  const rb = resolve(b) + sep;
-  return ra === rb || ra.startsWith(rb) || rb.startsWith(ra);
-}
-
 // ── IPC: config ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.configGet, () => loadConfig());
 ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) => {
@@ -1079,18 +1036,7 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     normalizeServerUrl(patch.serverUrl) !== prevServer;
   if (serverChanged) {
     getMcpBridge().stop();
-    // 구 서버의 workflow 를 가리키는 페어링은 새 서버에서 무의미 — 엔진을
-    // 내리고 전부 일시정지로 전환한다 (재해머링·오연결 방지, 명시 재개 필요).
-    getSyncManager()?.stopAll();
     void getWorkspaceManager()?.reconcile();
-    patch = {
-      ...patch,
-      syncPairs: (loadConfig().syncPairs ?? []).map((p) => ({
-        ...p,
-        paused: true,
-        pausedReason: 'session_gone',
-      })),
-    };
     void client?.logout().catch(() => undefined); // 구 서버 세션 무효화 (rebind 전 호출)
     client = null; // in-memory user/token 을 남기지 않도록 새 인스턴스로
     await tokenStore.clear();
@@ -1109,7 +1055,6 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     applyMcpHttpCertificatePolicy();
     await mcpHttpSession().closeAllConnections();
     syncMcp();
-    stopLegacyPairSync();
     getWorkspaceManager()?.restartPresence();
   }
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
@@ -1129,34 +1074,12 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
 // Persist the rotated tokens + wake dependent subsystems after any successful sign-in.
 // @returns 토큰이 **영속** 저장됐는지 — false 면 재시작 시 재로그인이 필요하다
 // (키체인/암호화 저장 전부 불가). 무음 실패 금지: 호출자가 UI 에 표면화한다.
-/**
- * ⚠ **레거시 페어 동기화 엔진은 더 이상 가동하지 않는다.**
- *
- * 예전 모델(에이전트 하나 ↔ 사용자가 고른 임의 폴더)은 가상 드라이브로
- * 대체됐다. 그런데 설정에 남은 syncPairs 로 이 엔진이 계속 살아나 **같은
- * 폴더를 향해 드라이브와 동시에 동작**했다.
- *
- * 결과: 사용자가 지운 파일을 레거시 엔진이 자기 인덱스를 근거로 **다시 올렸다**.
- * 서버에서 지워도, 드라이브에서 지워도, 웹에서 지워도 곧바로 되살아났다 —
- * 실기의 "무한 부활" 이 이것이다.
- *
- * 동기화 주체는 하나여야 한다. 남은 페어는 조용히 멈춰 둔다(설정은 보존 —
- * 지우면 되돌릴 수 없다).
- */
-function stopLegacyPairSync(): void {
-  try {
-    getSyncManager()?.stopAll();
-  } catch {
-    /* 엔진이 없으면 멈출 것도 없다 */
-  }
-}
 
 async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   const c = getClient();
   const persisted = await tokenStore.setAccess(c.getAccessTokenAfterRotation());
   if (refreshToken) await tokenStore.setRefresh(refreshToken);
   syncMcp();
-  stopLegacyPairSync(); // 가상 드라이브가 대체했다 — 둘이 같이 돌면 삭제가 되살아난다
   safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
   // 가상 드라이브는 **로그인 상태에서만** 존재한다. 기동 시점의 리컨사일은
   // 아직 로그인 전이라 아무것도 붙이지 않으므로, 로그인이 끝난 지금 다시
@@ -1317,7 +1240,6 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
     // 워크스페이스 리컨사일이 빠져 **재시작할 때마다 드라이브가 안 붙었다**.
     // 갈래가 둘이면 한쪽만 갱신되는 날이 온다 — 한 곳으로 모은다.
     syncMcp();
-    stopLegacyPairSync(); // 레거시 엔진 재가동 금지 (삭제 되살아남)
     safeSend(overlayWindow, CHANNELS.avatarRefresh); // session restored → overlay can load the avatar
     void getWorkspaceManager()?.reconcile();
     return { user: c.user };
@@ -1332,7 +1254,6 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
 
 ipcMain.handle(CHANNELS.authLogout, async () => {
   getMcpBridge().stop();
-  getSyncManager()?.stopAll(); // 토큰 없이 401 을 반복 해머링하지 않게 (재로그인 시 재가동)
   // 가상 드라이브는 로그인 상태에서만 존재한다 — 로그아웃하면 걷어낸다.
   void getWorkspaceManager()?.reconcile();
   if (client) await client.logout();
@@ -1850,72 +1771,6 @@ ipcMain.handle(CHANNELS.mcpRefresh, async () => {
   return getMcpBridge().status();
 });
 
-// ── IPC: workspace 동기화 ────────────────────────────────────────
-ipcMain.handle(CHANNELS.syncList, () => ({
-  pairs: loadConfig().syncPairs ?? [],
-  statuses: getSyncManager()?.statuses() ?? [],
-}));
-ipcMain.handle(CHANNELS.syncPickFolder, async () => {
-  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  const res = win
-    ? await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
-    : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
-  return res.canceled || !res.filePaths.length ? null : res.filePaths[0];
-});
-ipcMain.handle(
-  CHANNELS.syncAddPair,
-  (_e, workflowId: string, workflowLabel: string, localPath: string) => {
-    if (!workflowId || !localPath) return { ok: false, error: 'invalid arguments' };
-    const pairs = loadConfig().syncPairs ?? [];
-    for (const p of pairs) {
-      if (syncPathOverlaps(p.localPath, localPath)) {
-        return {
-          ok: false,
-          error: '이미 동기화 중인 폴더(또는 그 상위/하위 폴더)입니다 — 겹치는 페어링은 서로 충돌합니다.',
-        };
-      }
-    }
-    const pair: SyncPairPersistConfig = {
-      id: randomUUID(),
-      workflowId,
-      workflowLabel: workflowLabel || undefined,
-      localPath,
-    };
-    return { ok: true, pairs: saveSyncPairs([...pairs, pair]) };
-  },
-);
-ipcMain.handle(CHANNELS.syncRemovePair, (_e, id: string) => {
-  const pairs = (loadConfig().syncPairs ?? []).filter((p) => p.id !== id);
-  return saveSyncPairs(pairs);
-});
-ipcMain.handle(CHANNELS.syncSetPaused, (_e, id: string, paused: boolean) => {
-  const pairs = (loadConfig().syncPairs ?? []).map((p) =>
-    p.id === id ? { ...p, paused: !!paused, pausedReason: undefined } : p,
-  );
-  return saveSyncPairs(pairs);
-});
-ipcMain.handle(CHANNELS.syncNow, () => {
-  // 레거시 페어 동기화는 중단됐다. 여기서 돌리면 지운 파일이 되살아난다.
-  stopLegacyPairSync();
-  return true;
-});
-ipcMain.handle(CHANNELS.syncConfirmMassDelete, (_e, id: string, accept: boolean) => {
-  getSyncManager()?.confirmMassDelete(id, !!accept);
-  // 거부는 일시정지로 이어진다 — config 에도 반영해 재시작 후 유지.
-  if (!accept) {
-    const pairs = (loadConfig().syncPairs ?? []).map((p) =>
-      p.id === id ? { ...p, paused: true } : p,
-    );
-    saveConfig({ syncPairs: pairs });
-  }
-  return true;
-});
-ipcMain.handle(CHANNELS.syncOpenFolder, (_e, id: string) => {
-  const pair = (loadConfig().syncPairs ?? []).find((p) => p.id === id);
-  if (pair) void shell.openPath(pair.localPath);
-  return true;
-});
-
 // ── IPC: 시크릿 저장 상태 (키체인 불가 표면화) ────────────────────
 ipcMain.handle(CHANNELS.secureStorageStatus, () => storageStatus());
 
@@ -2014,9 +1869,6 @@ if (!gotLock) {
     const startHidden = process.argv.includes('--hidden') && trayOk;
     createWindow();
     if (startHidden) mainWindow?.removeAllListeners('ready-to-show');
-    // Workspace 동기화 엔진 — 저장된 페어링을 즉시 가동한다 (토큰이 아직
-    // 없으면 changes 가 401 로 실패하고 로그인/restore 후 재가동된다).
-    wireSyncManager();
     wireWorkspaceManager();
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
@@ -2053,7 +1905,6 @@ if (!gotLock) {
     disposeUpdater();
     getMcpBridge().stop();
     void getMcpManager().closeAll();
-    getSyncManager()?.stopAll(); // 인덱스 플러시 + 워처/WS 정리
     // ⚠ 마운트를 남긴 채 죽으면 폴더가 스테일 상태로 먹통이 된다.
     void getWorkspaceManager()?.stop();
   });

@@ -221,22 +221,19 @@ test('업로드 실패해도 자동 재시도하지 않는다', async () => {
  *
  * 동기화 주체는 하나여야 한다.
  */
-test('레거시 페어 엔진을 재가동하는 경로가 없다', async () => {
-  const { readFileSync } = await import('fs')
-  const src = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf-8')
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
-  const starts = [...code.matchAll(/getSyncManager\(\)\?\.(configure|syncNow)\(/g)]
-  assert.deepEqual(
-    starts.map((m) => m[1]),
-    [],
-    '레거시 엔진을 가동하는 호출이 남아 있다 — 지운 파일이 되살아난다',
-  )
-})
-
-test('정지 함수가 존재하고 실패해도 앱을 죽이지 않는다', async () => {
-  const { readFileSync } = await import('fs')
-  const src = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf-8')
-  assert.match(src, /function stopLegacyPairSync/, '정지 함수가 없다')
-  const fn = src.slice(src.indexOf('function stopLegacyPairSync'), src.indexOf('function stopLegacyPairSync') + 300)
-  assert.match(fn, /try\s*\{/, '엔진이 없을 때 예외가 샌다')
+test('레거시 페어 동기화 엔진의 흔적이 남아 있지 않다', async () => {
+  // 멈추는 것으로는 부족했다 — 재가동 경로가 다섯 군데였고 하나만 되살아나도
+  // 증상이 돌아온다(지운 파일이 무한 부활). 코드에서 들어냈으므로, 배선이
+  // 다시 들어오는 것을 여기서 막는다.
+  const { readFileSync, existsSync } = await import('fs')
+  for (const gone of ['sync-core.ts', 'sync-fs.ts', 'sync-manager.ts']) {
+    assert.ok(!existsSync(new URL(`../src/main/${gone}`, import.meta.url)), `되살아남: ${gone}`)
+  }
+  for (const f of ['index.ts', 'config.ts', 'ipc.ts']) {
+    const src = readFileSync(new URL(`../src/main/${f}`, import.meta.url), 'utf-8')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    for (const token of ['SyncManager', 'syncPairs', 'SyncPairPersistConfig']) {
+      assert.ok(!code.includes(token), `${f} 에 레거시 배선이 남아 있다: ${token}`)
+    }
+  }
 })

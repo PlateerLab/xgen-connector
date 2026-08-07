@@ -119,15 +119,6 @@ export const CHANNELS = {
   openExternal: 'shell:openExternal',
 
   // Workspace 동기화 (에이전트 workflow ↔ 로컬 폴더 Drive형 동기화)
-  syncList: 'sync:list',
-  syncPickFolder: 'sync:pick-folder',
-  syncAddPair: 'sync:add-pair',
-  syncRemovePair: 'sync:remove-pair',
-  syncSetPaused: 'sync:set-paused',
-  syncNow: 'sync:sync-now',
-  syncConfirmMassDelete: 'sync:confirm-mass-delete',
-  syncOpenFolder: 'sync:open-folder',
-  syncStatusEvent: 'sync:status-event', // main → renderer (상태 브로드캐스트)
 
   // 로그인 시크릿 저장 상태 (키체인/암호화 저장 불가 표면화)
   secureStorageStatus: 'secure:storageStatus',

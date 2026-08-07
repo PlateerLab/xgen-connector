@@ -104,23 +104,12 @@ export interface ConnectorConfig {
   /** Configured local MCP servers. */
   mcpServers?: McpServerConfig[];
   /** Workspace 동기화 페어링 (에이전트 workflow ↔ 로컬 폴더). */
-  syncPairs?: SyncPairPersistConfig[];
   /** 이 설치본의 안정 디바이스 id (최초 1회 생성) — 동기화 텔레메트리/충돌 사본 이름. */
   deviceId?: string;
   /** Linux 전용: 오버레이 클릭 통과 옵트인 ({forward:true} 미지원 플랫폼 안전장치). */
   linuxClickThrough?: boolean;
 }
 
-/** 동기화 페어링의 영속 형태 (sync-manager.SyncPairConfig 와 동일 필드 —
- *  main 이외에서 sync-manager 를 import 하지 않도록 여기 재선언). */
-export interface SyncPairPersistConfig {
-  id: string;
-  workflowId: string;
-  workflowLabel?: string;
-  localPath: string;
-  paused?: boolean;
-  pausedReason?: string;
-}
 
 /** XGEN 워크스페이스(가상 드라이브) 영속 형태 — workspace.WorkspaceConfig 미러. */
 export interface WorkspacePersistConfig {

@@ -1,5 +1,5 @@
 /**
- * sync-transport — real HTTP implementation of the sync-core Transport
+ * sync-transport — sync-protocol 의 `Transport` 를 XGEN workspace 저장소 API 위에
  * against the XGEN geny-workspace storage API (xgen-workflow), plus the
  * thin change-notify WebSocket client
  * (/api/agentflow/ws/geny-workspace/{workflowId}).
@@ -8,7 +8,7 @@
  * (workflowId)** 라는 점만 다르고 프로토콜(base_sha 낙관적 동시성, 청크/
  * 재개 업로드, thin WS notify)은 동일하다.
  *
- * Paths: sync-core speaks WORKSPACE-relative paths; the REST API speaks
+ * 경로: `Transport` 는 WORKSPACE 상대 경로를 쓰고 REST API 는
  * storage-root-relative ("workspace/<p>") — mapped here and nowhere else.
  */
 
@@ -19,7 +19,7 @@ import { dirname, join } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import WebSocket from 'ws'
-import { ChangesResponse, SyncConflictError, Transport } from './sync-core'
+import { ChangesResponse, SyncConflictError, Transport } from './sync-protocol'
 import { xgenWebSocketTlsOptions } from './connection-security'
 
 export type NetworkFetch = (input: string | Request, init?: RequestInit) => Promise<Response>
