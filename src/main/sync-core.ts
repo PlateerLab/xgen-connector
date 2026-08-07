@@ -55,8 +55,18 @@ export interface Transport {
 
 export class SyncConflictError extends Error {
   currentSha?: string
+  /**
+   * HTTP 상태를 **함께 들고 다닌다**.
+   *
+   * 이게 없어서 실기에서 사고가 났다: 호출부들이 `(e as {status?}).status !== 409`
+   * 로 충돌을 가려내는데, 이 예외에는 status 가 없어 늘 `undefined !== 409` 가
+   * 되어 **409 재시도 분기가 한 번도 실행되지 않았다.** 드라이브에 파일을
+   * 복사하면 close() 에서 EIO 로 끝났고(재시도했으면 성공했을 상황),
+   * 0바이트 파일만 서버에 남은 것도 같은 이유다.
+   */
+  readonly status = 409
   constructor(currentSha?: string) {
-    super('sync conflict')
+    super(currentSha ? `sync conflict (서버 sha=${currentSha})` : 'sync conflict')
     this.currentSha = currentSha
   }
 }

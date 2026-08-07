@@ -9,6 +9,7 @@ import assert from 'assert'
 import { test } from 'node:test'
 import { readFileSync, writeFileSync } from 'fs'
 import { WorkspaceDavBackend, type WorkspaceApi } from '../src/main/workspace-backend'
+import { SyncConflictError } from '../src/main/sync-core'
 
 interface Rec {
   path: string
@@ -282,4 +283,49 @@ test('레플리카 동기화 엔진은 force 를 쓰지 않는다', () => {
   for (const d of dels) {
     assert.ok(!/force/.test(d), `리컨사일 엔진이 force 를 쓴다: ${d}`)
   }
+})
+
+// ── 409 충돌 재시도: 실제로 도는가 ────────────────────────────────────
+//
+// 재시도 코드는 오래전부터 있었지만 **한 번도 실행되지 않았다.** 전송 계층이
+// 던지는 SyncConflictError 에 status 가 없어서 `status !== 409` 가 늘 참이었기
+// 때문이다. 그래서 드라이브에 파일을 복사하면 close() 에서 EIO 로 끝났고
+// (재시도했으면 성공했을 상황), 서버에는 0바이트 파일만 남았다.
+
+test('전송 계층의 충돌 예외를 409 로 알아본다', () => {
+  const e = new SyncConflictError('abc123')
+  assert.equal((e as unknown as { status: number }).status, 409, 'status 가 없다')
+  assert.match(e.message, /abc123/, '서버 sha 를 메시지에 안 남긴다')
+})
+
+test('쓰기가 충돌하면 최신 sha 로 다시 올린다 (EIO 로 끝내지 않는다)', async () => {
+  const { be, user } = setup()
+  await be.readdir('/')
+  let first = true
+  const realPut = user.put.bind(user)
+  user.put = async (path, fromAbs, baseSha) => {
+    if (first) {
+      first = false
+      throw new SyncConflictError('서버가아는sha') // 캐시가 낡았다
+    }
+    return realPut(path, fromAbs, baseSha)
+  }
+  await be.write('/내 메모.md', Buffer.from('새 내용\n'))
+  assert.equal(user.files.get('내 메모.md'), '새 내용\n', '재시도가 안 돌아 쓰기가 유실됐다')
+})
+
+test('삭제가 충돌해도 최신 sha 로 다시 지운다', async () => {
+  const { be, user } = setup()
+  await be.readdir('/')
+  let first = true
+  const realDel = user.del.bind(user)
+  user.del = async (path, baseSha, opts) => {
+    if (first) {
+      first = false
+      throw new SyncConflictError('서버가아는sha')
+    }
+    return realDel(path, baseSha, opts)
+  }
+  await be.remove('/내 메모.md')
+  assert.ok(!user.files.has('내 메모.md'), '재시도가 안 돌아 삭제가 유실됐다')
 })
