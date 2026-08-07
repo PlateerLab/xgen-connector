@@ -35,6 +35,7 @@
 import {
   closeSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -114,6 +115,24 @@ export class WorkspaceDavBackend implements WebdavBackend {
   private userApi: WorkspaceApi | null = null
   private trees = new Map<string, { at: number; entries: Map<string, Entry> }>()
   private tmp = mkdtempSync(join(tmpdir(), 'xgen-dav-'))
+
+  /**
+   * 임시 디렉터리가 살아 있게 한다.
+   *
+   * `/tmp` 청소기(systemd-tmpfiles 등)는 오래된 디렉터리를 지운다. 앱이 며칠
+   * 떠 있으면 캐시/스테이징 디렉터리가 사라지고, 그때부터 **모든 읽기와 쓰기가
+   * ENOENT 로 죽는다** — 드라이브가 통째로 먹통이 된다. 쓰기 직전에 한 번씩
+   * 확인하는 비용은 무시할 만하다.
+   */
+  private ensureTmp(): string {
+    if (!existsSync(this.tmp)) {
+      mkdirSync(this.tmp, { recursive: true })
+      // 디렉터리가 사라졌다면 캐시 파일도 같이 사라졌다 — 장부를 비운다.
+      this.cache.clear()
+      this.cacheBytes = 0
+    }
+    return this.tmp
+  }
 
   /** 루트가 될 사용자 클라우드 스토리지를 배선한다 (null = 미사용). */
   setUserStorage(api: WorkspaceApi | null): void {
@@ -300,7 +319,7 @@ export class WorkspaceDavBackend implements WebdavBackend {
     const running = this.inflight.get(key)
     if (running) return running // 같은 파일을 동시에 여러 번 읽어도 한 번만 받는다
     const task = (async () => {
-      const file = join(this.tmp, `c-${createHash('sha1').update(key).digest('hex')}`)
+      const file = join(this.ensureTmp(), `c-${createHash('sha1').update(key).digest('hex')}`)
       try {
         await space.api.download(rel, file)
         const size = statSync(file).size
@@ -354,7 +373,7 @@ export class WorkspaceDavBackend implements WebdavBackend {
     const [space, rel] = this.resolve(p)
     if (!space) throw new Error('클라우드 스토리지가 연결되어 있지 않습니다')
     if (!rel) throw new Error('루트에는 쓸 수 없습니다')
-    const local = join(this.tmp, `w-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const local = join(this.ensureTmp(), `w-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     writeFileSync(local, data)
     try {
       // base_sha 는 현재 알고 있는 값 — 서버의 낙관적 동시성 검사에 쓰인다.
