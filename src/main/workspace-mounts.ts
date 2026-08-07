@@ -3,14 +3,13 @@
  *
  * 지원 현황 (2026-08):
  *
- *     Linux    FUSE (libfuse2 + @cocalc/fuse-native)   실기 검증됨
- *     Windows  Cloud Filter API (cfapi)                네이티브 애드온
- *     macOS    **미지원**                               File Provider Extension 은
- *                                                      Apple Developer Program
- *                                                      (App Group entitlement) 필요
+ *     Linux    FUSE (libfuse2 + @cocalc/fuse-native)   자식 프로세스로 마운트
+ *     macOS    `mount_webdav` (내장)                    로컬 WebDAV 서버에 붙는다
+ *     Windows  WebClient (내장, `net use`)              로컬 WebDAV 서버에 붙는다
  *
- * macOS 는 기능을 숨긴다 — "반쯤 되는" 상태로 두면 사용자가 파일이 사라졌다고
- * 느끼는 사고가 난다. 명시적으로 미지원이라고 말하는 편이 정직하고 안전하다.
+ * 즉 **서버는 하나**(webdav-server)이고, 플랫폼별 코드는 "이 URL 을 어떻게
+ * 붙이느냐"뿐이다. macOS 는 Apple Developer Program 이 필요한 File Provider
+ * Extension 을 쓰지 않으므로 별도 자격이 필요 없다.
  *
  * 여기서 하는 일은 **판정과 사유 전달**뿐이다. 실제 파일시스템 구현은 각
  * 제공자 모듈에 있고, 이 모듈은 그것들을 고르기만 한다 — 새 플랫폼이 생기면

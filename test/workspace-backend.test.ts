@@ -329,3 +329,55 @@ test('삭제가 충돌해도 최신 sha 로 다시 지운다', async () => {
   await be.remove('/내 메모.md')
   assert.ok(!user.files.has('내 메모.md'), '재시도가 안 돌아 삭제가 유실됐다')
 })
+
+// ── macOS/Windows: 조각 읽기와 다운로드 횟수 ──────────────────────────
+//
+// 두 OS 의 내장 WebDAV 클라이언트는 큰 파일을 Range 로 조각내 읽는다.
+// 조각마다 서버에서 파일 전체를 내려받으면 100MB 파일 한 번 여는 데 수십 GB
+// 가 오간다. Linux 는 FUSE 가 열 때 통째로 한 번 읽어서 안 드러났다.
+
+test('같은 파일을 여러 번 읽어도 한 번만 내려받는다', async () => {
+  const { be, api } = setup()
+  const before = api.calls.filter((c) => c.startsWith('download:')).length
+  await be.read('/마케팅 리서치/보고서.md')
+  await be.read('/마케팅 리서치/보고서.md')
+  await be.read('/마케팅 리서치/보고서.md')
+  const n = api.calls.filter((c) => c.startsWith('download:')).length - before
+  assert.equal(n, 1, `${n}번 내려받았다 — 캐시가 안 먹는다`)
+})
+
+test('부분 읽기가 정확한 조각을 준다', async () => {
+  const { be } = setup()
+  const whole = await be.read('/마케팅 리서치/보고서.md')
+  const part = await be.readRange('/마케팅 리서치/보고서.md', 2, 5)
+  assert.deepEqual(part, whole.subarray(2, 6))
+})
+
+test('조각을 여러 번 읽어도 내려받기는 한 번뿐이다', async () => {
+  const { be, api } = setup()
+  const before = api.calls.filter((c) => c.startsWith('download:')).length
+  for (let i = 0; i < 5; i++) await be.readRange('/마케팅 리서치/보고서.md', i, i + 1)
+  const n = api.calls.filter((c) => c.startsWith('download:')).length - before
+  assert.equal(n, 1, `조각 5개에 ${n}번 내려받았다`)
+})
+
+test('내용이 바뀌면 캐시가 저절로 무효화된다 (키가 sha)', async () => {
+  const { be, api } = setup()
+  await be.read('/마케팅 리서치/보고서.md')
+  await be.write('/마케팅 리서치/보고서.md', Buffer.from('완전히 다른 내용이다\n'))
+  const after = await be.read('/마케팅 리서치/보고서.md')
+  assert.equal(after.toString(), '완전히 다른 내용이다\n', '낡은 캐시를 돌려줬다')
+  assert.ok(api.calls.filter((c) => c.startsWith('download:')).length >= 2)
+})
+
+test('동시에 같은 파일을 읽어도 한 번만 내려받는다', async () => {
+  const { be, api } = setup()
+  const before = api.calls.filter((c) => c.startsWith('download:')).length
+  await Promise.all([
+    be.read('/마케팅 리서치/보고서.md'),
+    be.read('/마케팅 리서치/보고서.md'),
+    be.readRange('/마케팅 리서치/보고서.md', 0, 3),
+  ])
+  const n = api.calls.filter((c) => c.startsWith('download:')).length - before
+  assert.equal(n, 1, `동시 읽기가 ${n}번 내려받았다`)
+})
