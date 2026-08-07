@@ -48,7 +48,7 @@ import { createHash } from 'crypto'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { diag } from './diag-log'
-import { SyncConflictError } from './sync-core'
+import { SyncConflictError } from './sync-protocol'
 import type { DavNode, WebdavBackend } from './webdav-server'
 
 /**

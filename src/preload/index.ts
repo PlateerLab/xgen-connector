@@ -20,23 +20,8 @@ import type {
 } from '../core/index';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
-import type { ConnectorConfig, McpServerConfig, SyncPairPersistConfig } from '../main/config';
+import type { ConnectorConfig, McpServerConfig } from '../main/config';
 
-/** Workspace 동기화 페어링 상태 (main sync-manager.SyncPairStatus 미러 —
- *  preload 는 main 모듈을 런타임 import 하지 않으므로 타입만 재선언). */
-export interface SyncPairStatusLike {
-  id: string;
-  workflowId: string;
-  workflowLabel?: string;
-  localPath: string;
-  state:
-    'idle' | 'syncing' | 'paused' | 'offline' | 'error' | 'session_gone' | 'awaiting_confirmation';
-  connected: boolean;
-  lastSyncAt: number | null;
-  lastError: string | null;
-  counts: { downloaded: number; uploaded: number; conflicts: number; skippedLarge: number };
-  pendingMassDelete: { count: number; total: number } | null;
-}
 
 /** 가상 드라이브 상태 (main workspace-manager.WorkspaceStatus 미러). */
 export interface WorkspaceStatusLike {
@@ -324,32 +309,6 @@ const api = {
   },
 
   /** Local MCP — host MCP servers here and bridge their tools to your agents. */
-  /** Workspace 동기화 — 에이전트(workflow) ↔ 로컬 폴더 Drive형 동기화. */
-  sync: {
-    list: (): Promise<{ pairs: SyncPairPersistConfig[]; statuses: SyncPairStatusLike[] }> =>
-      ipcRenderer.invoke(CHANNELS.syncList),
-    pickFolder: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.syncPickFolder),
-    addPair: (
-      workflowId: string,
-      workflowLabel: string,
-      localPath: string,
-    ): Promise<{ ok: boolean; error?: string; pairs?: SyncPairPersistConfig[] }> =>
-      ipcRenderer.invoke(CHANNELS.syncAddPair, workflowId, workflowLabel, localPath),
-    removePair: (id: string): Promise<SyncPairPersistConfig[]> =>
-      ipcRenderer.invoke(CHANNELS.syncRemovePair, id),
-    setPaused: (id: string, paused: boolean): Promise<SyncPairPersistConfig[]> =>
-      ipcRenderer.invoke(CHANNELS.syncSetPaused, id, paused),
-    syncNow: (id: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.syncNow, id),
-    confirmMassDelete: (id: string, accept: boolean): Promise<boolean> =>
-      ipcRenderer.invoke(CHANNELS.syncConfirmMassDelete, id, accept),
-    openFolder: (id: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.syncOpenFolder, id),
-    onStatus: (cb: (statuses: SyncPairStatusLike[]) => void): (() => void) => {
-      const h = (_e: unknown, statuses: SyncPairStatusLike[]) => cb(statuses);
-      ipcRenderer.on(CHANNELS.syncStatusEvent, h);
-      return () => ipcRenderer.removeListener(CHANNELS.syncStatusEvent, h);
-    },
-  },
-
   mcp: {
     getEnabled: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.mcpGetEnabled),
     setEnabled: (enabled: boolean): Promise<boolean> =>

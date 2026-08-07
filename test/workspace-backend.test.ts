@@ -7,9 +7,9 @@
  */
 import assert from 'assert'
 import { test } from 'node:test'
-import { readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { WorkspaceDavBackend, type WorkspaceApi } from '../src/main/workspace-backend'
-import { SyncConflictError } from '../src/main/sync-core'
+import { SyncConflictError } from '../src/main/sync-protocol'
 
 interface Rec {
   path: string
@@ -272,16 +272,17 @@ test('캐시가 모르는 파일도 지워진다', async () => {
   assert.ok(!api.files.has('남이만든.txt'), '캐시에 없다고 삭제를 포기했다')
 })
 
-test('레플리카 동기화 엔진은 force 를 쓰지 않는다', () => {
-  // 계약의 반대편: 리컨사일 경로가 force 를 켜면 낡은 레플리카가 에이전트
-  // 산출물을 쓸어 담는다. 소스로 고정한다 (주석은 제외하고 코드만).
-  const src = readFileSync(new URL('../src/main/sync-core.ts', import.meta.url), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1')
-  const dels = src.match(/transport\.del\([^)]*\)/g) ?? []
-  assert.ok(dels.length > 0, 'del 호출을 못 찾았다 — 테스트가 낡았다')
-  for (const d of dels) {
-    assert.ok(!/force/.test(d), `리컨사일 엔진이 force 를 쓴다: ${d}`)
+test('레거시 페어 동기화 엔진이 코드에 존재하지 않는다', () => {
+  // 예전에는 "리컨사일 경로는 force 를 쓰지 않는다"를 고정했다. 이제 그
+  // 엔진 자체가 없다 — 가상 드라이브가 대체한 뒤에도 설정에 남은 syncPairs 로
+  // 계속 되살아나 **같은 폴더를 향해 두 시스템이 동시에** 돌았고, 사용자가
+  // 지운 파일을 레거시 엔진이 자기 인덱스를 근거로 다시 올렸다(무한 부활).
+  // 멈추는 것으로는 부족했다 — 재가동 경로가 다섯 군데였다. 지웠다.
+  for (const gone of ['sync-core.ts', 'sync-fs.ts', 'sync-manager.ts']) {
+    assert.ok(
+      !existsSync(new URL(`../src/main/${gone}`, import.meta.url)),
+      `레거시 엔진이 되살아났다: src/main/${gone}`,
+    )
   }
 })
 
