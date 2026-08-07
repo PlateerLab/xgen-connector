@@ -638,6 +638,22 @@ export class WorkspaceManager {
       return
     }
 
+    // ⚠ macOS 도 마운트 지점이 **비어 있어야** 붙는다 (`mount_webdav` 는
+    // 비어 있지 않은 디렉터리를 거부하거나 그 위를 덮어 사용자 파일을
+    // 가려 버린다). 잔여 파일 구조는 FUSE 분기에만 있었는데, 그러면 맥
+    // 사용자는 폴더에 파일 하나만 있어도 드라이브가 영영 안 붙고 되돌릴
+    // 방법도 없다. Windows 는 드라이브 문자를 쓰므로 해당 없다.
+    if (process.platform === 'darwin') {
+      const pre = await preflight(root)
+      if (pre?.strays?.length) {
+        const backup = await rescueStrays(root, this.stamp())
+        if (backup) {
+          this.rescued = backup
+          diag('workspace', `잔여 파일을 옮기고 다시 마운트한다: ${backup}`)
+        }
+      }
+    }
+
     try {
       this.handle = await startDavServer(this.backend)
       diag('workspace', `WebDAV 서버 기동 port=${this.handle.port}`)
@@ -655,6 +671,12 @@ export class WorkspaceManager {
       return
     }
     this.mountedPath = res.path ?? root
+    // 구해 낸 파일은 **한 번만** 올린다 (재마운트마다 올리면 지운 파일이
+    // 되살아난다 — FUSE 분기와 같은 계약).
+    if (this.rescued && !this.rescueUploaded) {
+      this.rescueUploaded = true
+      void this.uploadRescued(this.rescued)
+    }
     diag('workspace', `워크스페이스 마운트 → ${this.mountedPath}`)
   }
 

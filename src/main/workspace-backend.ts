@@ -32,7 +32,18 @@
  * 요구하지 않는다).
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs'
+import { createHash } from 'crypto'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { diag } from './diag-log'
@@ -240,22 +251,102 @@ export class WorkspaceDavBackend implements WebdavBackend {
     return out
   }
 
-  async read(p: string): Promise<Buffer> {
-    const [space, rel] = this.resolve(p)
-    if (!space || !rel) return Buffer.alloc(0)
-    const local = join(this.tmp, `r-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    try {
-      await space.api.download(rel, local)
-      return readFileSync(local)
-    } catch (e) {
-      diag('dav', `읽기 실패 ${p}: ${(e as Error).message}`)
-      throw e
-    } finally {
+  /**
+   * 콘텐츠 주소 디스크 캐시 — **같은 내용은 한 번만 내려받는다.**
+   *
+   * ⚠ 이게 없으면 macOS/Windows 에서 사실상 못 쓴다. 두 OS 의 내장 WebDAV
+   * 클라이언트는 큰 파일을 **조각(Range)으로 나눠 읽는데**, 조각마다 서버에서
+   * 파일 전체를 내려받으면 100MB 파일 한 번 여는 데 수십 GB 가 오간다.
+   * Linux 는 FUSE 가 열 때 한 번 통째로 읽어 버퍼에 들고 있어서 이 결함이
+   * 드러나지 않았다.
+   *
+   * 키는 sha(내용)다 — 내용이 바뀌면 키가 바뀌므로 무효화가 저절로 된다.
+   */
+  private cache = new Map<string, { file: string; size: number; at: number }>()
+  private cacheBytes = 0
+  private inflight = new Map<string, Promise<{ file: string; size: number } | null>>()
+
+  /** 디스크 캐시 예산. 넘으면 오래 안 쓴 것부터 지운다. */
+  private static readonly CACHE_BUDGET = 512 * 1024 * 1024
+
+  private evict(): void {
+    if (this.cacheBytes <= WorkspaceDavBackend.CACHE_BUDGET) return
+    const byAge = [...this.cache.entries()].sort((a, b) => a[1].at - b[1].at)
+    for (const [key, v] of byAge) {
+      if (this.cacheBytes <= WorkspaceDavBackend.CACHE_BUDGET) break
+      this.cache.delete(key)
+      this.cacheBytes -= v.size
       try {
-        rmSync(local, { force: true })
+        rmSync(v.file, { force: true })
       } catch {
         /* 무해 */
       }
+    }
+  }
+
+  /** 이 경로의 내용을 디스크 캐시에 확보한다 (이미 있으면 재사용). */
+  private async ensureCached(p: string): Promise<{ file: string; size: number } | null> {
+    const [space, rel] = this.resolve(p)
+    if (!space || !rel) return null
+    const entry = (await this.tree(space)).get(rel)
+    if (!entry || entry.isDir) return null
+    // sha 가 없으면(구서버·빈 파일) stat 로 대신 키를 만든다.
+    const key = `${space.key}\u0000${rel}\u0000${entry.sha || `${entry.size}:${entry.mtime.getTime()}`}`
+    const hit = this.cache.get(key)
+    if (hit && existsSync(hit.file)) {
+      hit.at = Date.now()
+      return { file: hit.file, size: hit.size }
+    }
+    const running = this.inflight.get(key)
+    if (running) return running // 같은 파일을 동시에 여러 번 읽어도 한 번만 받는다
+    const task = (async () => {
+      const file = join(this.tmp, `c-${createHash('sha1').update(key).digest('hex')}`)
+      try {
+        await space.api.download(rel, file)
+        const size = statSync(file).size
+        this.cache.set(key, { file, size, at: Date.now() })
+        this.cacheBytes += size
+        this.evict()
+        return { file, size }
+      } catch (e) {
+        diag('dav', `읽기 실패 ${p}: ${(e as Error).message}`)
+        try {
+          rmSync(file, { force: true })
+        } catch {
+          /* 무해 */
+        }
+        throw e
+      } finally {
+        this.inflight.delete(key)
+      }
+    })()
+    this.inflight.set(key, task)
+    return task
+  }
+
+  async read(p: string): Promise<Buffer> {
+    const c = await this.ensureCached(p)
+    return c ? readFileSync(c.file) : Buffer.alloc(0)
+  }
+
+  /**
+   * 부분 읽기 — 캐시된 파일에서 **필요한 조각만** 꺼낸다.
+   *
+   * 전체를 메모리에 올리지 않는다: 1GB 파일의 64KB 조각을 읽으려고 1GB 를
+   * 버퍼에 담으면 앱이 죽는다.
+   */
+  async readRange(p: string, start: number, end: number): Promise<Buffer> {
+    const c = await this.ensureCached(p)
+    if (!c) return Buffer.alloc(0)
+    const len = Math.max(0, Math.min(end, c.size - 1) - start + 1)
+    if (len === 0) return Buffer.alloc(0)
+    const buf = Buffer.alloc(len)
+    const fd = openSync(c.file, 'r')
+    try {
+      const n = readSync(fd, buf, 0, len, start)
+      return n === len ? buf : buf.subarray(0, n)
+    } finally {
+      closeSync(fd)
     }
   }
 
