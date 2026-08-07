@@ -23,12 +23,15 @@ test('업로드가 스트림 바디를 쓰지 않는다 (Electron net.fetch 는 
 })
 
 test('업로드 실패는 서버가 준 이유를 메시지에 남긴다', () => {
+  // 조립 방식이 아니라 **의도**를 고정한다: 실패 경로는 전부 httpError() 를
+  // 지나야 하고(서버 본문을 읽어 메시지에 싣는다), 상태코드만 남기는 직접
+  // 조립이 남아 있으면 안 된다.
   const src = readFileSync(new URL('../src/main/sync-transport.ts', import.meta.url), 'utf8')
-  assert.match(
-    src,
-    /put HTTP \$\{res\.status\}\$\{detail/,
-    '상태코드만 남기면 EIO 뒤에 원인을 찾을 수 없다',
-  )
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+  assert.match(src, /throw await httpError\('put', res\)/, '업로드 실패가 헬퍼를 안 지난다')
+  const bare = src.match(/new Error\(`\w[\w ]* HTTP \$\{[^}]+\}`\)/g) ?? []
+  assert.deepEqual(bare, [], `서버 사유를 버리는 지점이 남았다: ${bare.join(', ')}`)
 })
 
 test('업로드가 Chromium 금지 헤더를 붙이지 않는다 (net.fetch 가 요청을 거부한다)', () => {
