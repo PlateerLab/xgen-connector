@@ -274,7 +274,12 @@ export class WorkspaceDavBackend implements WebdavBackend {
         // 409 = 우리 캐시가 서버와 다르다. 사용자가 드라이브에 넣은 파일은
         // **명시적 의사**이므로 여기서 포기하면 안 된다 — 실기에서 이 실패로
         // 앞서 만들어 둔 0바이트 파일만 서버에 남았다.
-        if (!isConflict(e)) throw e
+        if (!isConflict(e)) {
+          // 충돌이 아니면 여기서 끝난다. 이유를 남기지 않으면 사용자에게는
+          // 커널의 EIO 한 줄만 도착한다.
+          diag('dav', `쓰기 실패 ${p}: ${(e as Error).message}`)
+          throw e
+        }
         diag('dav', `쓰기 충돌 — 최신 상태로 재시도 ${p}`)
         this.invalidate(space)
         const fresh = (await this.tree(space)).get(rel)
@@ -327,7 +332,10 @@ export class WorkspaceDavBackend implements WebdavBackend {
     } catch (e) {
       // 409 = base_sha 가 어긋났다(그 사이 누가 고쳤다). 캐시를 버리고 지금
       // 값으로 한 번 더 — 사용자의 삭제를 조용히 포기하지 않는다.
-      if (!isConflict(e)) throw e
+      if (!isConflict(e)) {
+        diag('dav', `삭제 실패 ${p}: ${(e as Error).message}`)
+        throw e
+      }
       diag('dav', `삭제 충돌 — 최신 상태로 재시도 ${p}`)
       this.invalidate(space)
       const fresh = (await this.tree(space)).get(rel)

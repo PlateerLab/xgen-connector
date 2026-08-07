@@ -132,7 +132,9 @@ function davBackend(base: string): WebdavBackend {
     },
     async write(path, data) {
       const r = await dav('PUT', toUrl(base, path), data)
-      if (r.status >= 400) throw new Error(`PUT ${r.status}`)
+      // 상태코드만 남기면 원인이 여기서 소멸한다 — 부모가 실어 보낸 이유를
+      // 그대로 올린다. 커널에는 어차피 EIO 하나뿐이라, 로그가 유일한 단서다.
+      if (r.status >= 400) throw new Error(`PUT ${r.status}: ${r.body.toString().slice(0, 300)}`)
     },
     async mkdir(path) {
       const r = await dav('MKCOL', toUrl(base, path))

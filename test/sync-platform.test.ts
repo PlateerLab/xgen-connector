@@ -11,7 +11,7 @@
  */
 import assert from 'assert'
 import { test } from 'node:test'
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
@@ -104,4 +104,33 @@ test('NFD on-disk name reachable through NFC key (rawByNfc map)', async () => {
   assert.equal(sha.length, 64)
   const st: LocalStat | null = await r.fs.stat(nfc)
   assert.ok(st && !st.isDir && st.size === 9)
+})
+
+// ── 업로드 바디는 반드시 버퍼여야 한다 ────────────────────────────────
+//
+// 이 전송 계층은 설정된 XGEN 서버의 인증서 정책을 공유하려고 Electron
+// `net.fetch`(Chromium 네트워크 스택)를 주입받는다. Chromium 은
+// **ReadableStream 업로드를 지원하지 않는다.** `Readable.toWeb(...)` +
+// `duplex:'half'` 는 Node(undici) 전용이라, 주입이 들어간 순간부터 단일 PUT 이
+// 전부 실패했다 — 드라이브에 파일을 복사하면 close() 에서 EIO.
+// 8MiB 씩 Buffer 로 보내는 청크 경로만 멀쩡했다.
+
+test('업로드가 스트림 바디를 쓰지 않는다 (Electron net.fetch 는 못 받는다)', () => {
+  const src = readFileSync(new URL('../src/main/sync-transport.ts', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+  assert.ok(!/duplex\s*:/.test(src), "duplex 옵션이 있다 — Node 전용 스트림 업로드다")
+  assert.ok(
+    !/body\s*:\s*Readable\.toWeb/.test(src),
+    'body 로 ReadableStream 을 보낸다 — net.fetch 가 거부한다',
+  )
+})
+
+test('업로드 실패는 서버가 준 이유를 메시지에 남긴다', () => {
+  const src = readFileSync(new URL('../src/main/sync-transport.ts', import.meta.url), 'utf8')
+  assert.match(
+    src,
+    /put HTTP \$\{res\.status\}\$\{detail/,
+    '상태코드만 남기면 EIO 뒤에 원인을 찾을 수 없다',
+  )
 })

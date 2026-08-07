@@ -243,7 +243,14 @@ export async function startDavServer(
     if (method === 'PUT') {
       const data = await readBody(req)
       const existed = await backend.stat(path)
-      await backend.write(path, data)
+      try {
+        await backend.write(path, data)
+      } catch (e) {
+        // ⚠ 이유를 본문에 실어 보낸다. FUSE 자식 프로세스는 상태코드만 보고
+        // EIO 로 바꾸므로, 여기서 안 실으면 원인이 **여기서 소멸**한다 —
+        // 사용자에게는 "입력/출력 오류" 한 줄만 남는다.
+        return send(res, 500, String((e as Error).message ?? e))
+      }
       return send(res, existed ? 204 : 201)
     }
 

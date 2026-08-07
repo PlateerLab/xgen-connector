@@ -14,7 +14,7 @@
 
 import { createReadStream, createWriteStream } from 'fs'
 import { createHash } from 'crypto'
-import { mkdir, open, rename, rm, stat } from 'fs/promises'
+import { mkdir, open, readFile, rename, rm, stat } from 'fs/promises'
 import { dirname, join } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
@@ -122,17 +122,33 @@ export class HttpSyncTransport implements Transport {
           'Content-Type': 'application/octet-stream',
           'Content-Length': String(size),
         },
-        body: Readable.toWeb(createReadStream(fromAbs)) as any,
-        // node fetch requires duplex for streaming bodies
-        // @ts-expect-error node-only option
-        duplex: 'half',
+        // ⚠ **버퍼로 보낸다. 스트림 바디를 쓰면 안 된다.**
+        //
+        // `Readable.toWeb(...)` + `duplex:'half'` 는 Node(undici) 전용이다.
+        // 이 전송 계층은 설정된 XGEN 서버의 인증서 정책을 공유하려고
+        // Electron `net.fetch`(Chromium 네트워크 스택)를 주입받는데,
+        // Chromium 은 ReadableStream 업로드를 지원하지 않는다. 그래서 주입이
+        // 들어간 순간부터 **단일 PUT 이 전부 실패**했다 — 드라이브에 파일을
+        // 복사하면 close() 에서 EIO. 8MiB 씩 Buffer 로 보내는 청크 경로만
+        // 멀쩡했던 이유이기도 하다.
+        //
+        // 여기 오는 파일은 chunkThreshold 이하이고, 상위 FUSE 계층이 이미
+        // 전체 내용을 메모리에 들고 있다. 버퍼링이 새 비용을 만들지 않는다.
+        body: (await readFile(fromAbs)) as unknown as BodyInit,
       },
     )
     if (res.status === 409) {
       const body = await res.json().catch(() => ({}) as any)
       throw new SyncConflictError(body?.detail?.current_sha)
     }
-    if (!res.ok) throw Object.assign(new Error(`put HTTP ${res.status}`), { status: res.status })
+    if (!res.ok) {
+      // 서버가 준 이유를 함께 싣는다 — EIO 뒤에 원인이 남아야 한다.
+      const detail = await res.text().catch(() => '')
+      throw Object.assign(
+        new Error(`put HTTP ${res.status}${detail ? `: ${detail.slice(0, 300)}` : ''}`),
+        { status: res.status },
+      )
+    }
     const data = (await res.json()) as { sha256: string }
     return { sha256: data.sha256 }
   }
