@@ -12,13 +12,21 @@
  */
 
 import type { ChildProcess } from 'child_process'
+import { randomUUID } from 'crypto'
 import { diag } from './diag-log'
 import { clearStale, preflight, rescueStrays } from './fuse-mount'
 import { mountWebdav, unmountWebdav } from './mount-runner'
 import { WorkspaceDavBackend, type BackendAgent, type WorkspaceApi } from './workspace-backend'
 import { startDavServer, type DavServerHandle } from './webdav-server'
 import { detectMountSupport, type MountSupport } from './workspace-mounts'
-import { isEnabled, rootOf, type WorkspaceConfig } from './workspace'
+import {
+  applyCloudLinks,
+  isEnabled,
+  rootOf,
+  sameAgents,
+  type CloudAgentLink,
+  type WorkspaceConfig,
+} from './workspace'
 
 export interface WorkspaceManagerDeps {
   /** 현재 설정 (부착된 에이전트 목록 + 루트). */
@@ -51,6 +59,17 @@ export interface WorkspaceManagerDeps {
    * 모르면 ``null`` — "재연결 필요" 라고 단정하지 않는다.
    */
   cloudProbe?: () => Promise<{ needsReconnect: boolean; homeFolder: string } | null>
+  /**
+   * 서버가 아는 **연결된 에이전트 목록**. 이것이 유일한 원본이다.
+   *
+   * 예전에는 커넥터가 자기 설정 파일에 목록을 따로 들고 있어서, 웹에서 연결한
+   * 에이전트는 커넥터에 안 뜨고 커넥터에서 추가한 에이전트는 웹에 안 떴다.
+   */
+  cloudLinks?: () => Promise<CloudAgentLink[]>
+  /** 서버에서 받아온 목록을 이 계정 설정에 저장한다. */
+  persist?: (cfg: WorkspaceConfig) => void
+  /** 새 동기화 페어 id 발급 (테스트에서 고정할 수 있게 주입한다). */
+  newId?: () => string
   onStatus?: (s: WorkspaceStatus) => void
 }
 
@@ -568,7 +587,34 @@ export class WorkspaceManager {
     }
   }
 
+  /**
+   * 서버의 연결 목록을 이 PC 에 반영한다 — **매 리컨사일마다**.
+   *
+   * 실패하면 **아무것도 하지 않는다.** 서버를 못 읽었다고 빈 목록을 반영하면
+   * 드라이브의 에이전트 폴더가 전부 사라진다 — 사용자에게는 파일이 통째로
+   * 날아간 것으로 보인다.
+   */
+  private async syncCloudLinks(): Promise<void> {
+    const fetchLinks = this.deps.cloudLinks
+    if (!fetchLinks || !this.deps.loggedIn()) return
+    let links: CloudAgentLink[]
+    try {
+      links = await fetchLinks()
+    } catch (e) {
+      diag('workspace', `연결 목록 조회 실패(로컬 유지): ${(e as Error).message}`)
+      return
+    }
+    const cur = this.deps.config()
+    const next = applyCloudLinks(cur, links, this.deps.newId ?? (() => randomUUID()))
+    if (sameAgents(cur?.agents ?? [], next.agents)) return
+    diag('workspace', `연결 목록 갱신: ${next.agents.map((a) => a.label).join(', ') || '(없음)'}`)
+    this.deps.persist?.(next)
+  }
+
   private async reconcileInner(): Promise<void> {
+    // 설정을 읽기 **전에** 서버와 맞춘다 — 이 라운드가 최신 목록으로 돌아야
+    // 사용자가 웹에서 붙인 에이전트가 바로 드라이브에 나타난다.
+    await this.syncCloudLinks()
     const cfg = this.deps.config()
     const agents = cfg?.agents ?? []
 

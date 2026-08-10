@@ -30,8 +30,11 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   useEffect(() => {
     xgen.workspace.status().then(setWs).catch((e) => setError(String(e?.message ?? e)));
     void refreshRoot();
+    // **내 에이전트만** 고를 수 있다. 공유받은 에이전트의 workspace 는 서버가
+    // 소유자에게만 열어 주므로(check_owner_access), 목록에 넣으면 고를 수는
+    // 있는데 추가가 404 로 거절돼 사용자는 이유를 알 수 없는 실패를 본다.
     xgen.agents
-      .list({ page: 1, pageSize: 200 })
+      .list({ page: 1, pageSize: 200, owner: 'personal' })
       .then((r) => setAgents((r.items ?? []).map((a) => ({ id: a.workflowId, name: a.workflowName }))))
       .catch(() => undefined);
     return xgen.workspace.onStatus(setWs);
