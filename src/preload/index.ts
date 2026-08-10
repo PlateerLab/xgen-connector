@@ -38,6 +38,18 @@ export interface WorkspaceStatusLike {
   errorHint?: string;
   /** 클라우드 스토리지가 꺼져 있는 사유 (오류가 아니다). */
   storageOff?: string;
+  /**
+   * 이 PC 가 **재연결** 대상이다 — 서버가 이름 없이 알고 있다.
+   *
+   * ⚠ 이 두 필드를 여기서 빼먹으면 main 이 아무리 정확히 판정해도 **화면에는
+   * 아무 일도 일어나지 않는다.** 실제로 그랬다: 재연결 감지를 붙여 놓고
+   * 미러 타입에 옮기지 않아, 사용자는 자기 PC 가 루트에 파일을 흩뿌리고
+   * 있다는 사실을 끝까지 몰랐다.
+   */
+  needsReconnect?: boolean;
+  reconnectReason?: string;
+  /** 클라우드 안 이 PC 의 폴더 — `{클라우드}/{PC 이름}/(파일)`. */
+  homeFolder?: string;
   agents: Array<{ workflowId: string; label: string; folder: string }>;
 }
 

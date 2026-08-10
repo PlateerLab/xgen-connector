@@ -150,6 +150,33 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               </div>
               <div className="mcp-item-cmd" style={{ marginTop: 4 }}>{root || '—'}</div>
               {/*
+                재연결 안내. **조용히 두면 안 되는 이유**: 이름 없이 등록된 PC 는
+                클라우드 안에서 자기 폴더를 갖지 못해 파일이 루트에 섞이고, 웹은
+                기기 id 앞 8자를 이름인 줄 보여준다. 사용자는 무엇이 잘못됐는지
+                알 방법이 없다 — 그래서 여기서 말하고, 고치는 버튼까지 준다.
+              */}
+              {ws?.needsReconnect && (
+                <div className="small" style={{ marginTop: 6 }}>
+                  <div className="notice-warn">재연결이 필요합니다</div>
+                  <div className="muted" style={{ marginTop: 2 }}>{ws.reconnectReason}</div>
+                  <button
+                    className="link"
+                    style={{ marginTop: 4 }}
+                    disabled={!!busy}
+                    onClick={() => void act('remount', () => xgen.workspace.remount())}
+                  >
+                    {busy === 'remount' ? '재연결 중…' : '지금 재연결'}
+                  </button>
+                </div>
+              )}
+              {/* 이 PC 의 폴더. 어디에 넣어야 하는지를 말해 주지 않으면 사용자는
+                  루트에 떨어뜨리고, 그러면 모든 PC 의 파일이 한 트리에 섞인다. */}
+              {ws?.homeFolder && !ws?.needsReconnect && (
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  이 PC 의 클라우드 폴더: <span className="mcp-item-cmd">/{ws.homeFolder}</span>
+                </div>
+              )}
+              {/*
                 꺼져 있는 것은 오류가 아니다 — 오류처럼 보이면 사용자가 고치려
                 든다. 어디서 켜는지까지 알려준다.
               */}

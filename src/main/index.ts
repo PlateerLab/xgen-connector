@@ -1661,15 +1661,25 @@ function wireWorkspaceManager(): void {
      * 서버는 이름 없는 기기를 `needs_reconnect` 로 표시한다 — 그 기기는
      * 클라우드 안에서 자기 폴더를 갖지 못해 파일이 루트에 섞인다.
      */
-    reconnectProbe: async () => {
+    cloudProbe: async () => {
       const base = normalizeServerUrl(loadConfig().serverUrl).replace(/\/$/, '');
       const token = (await tokenStore.getAccess()) ?? '';
       const res = await net.fetch(`${base}/api/cloud/overview`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) return false;   // 모르면 경고하지 않는다
-      const body = (await res.json()) as { needs_reconnect?: string[] };
-      return (body.needs_reconnect ?? []).includes(ensureDeviceId());
+      if (!res.ok) return null;   // 모르면 경고하지 않는다
+      const body = (await res.json()) as {
+        needs_reconnect?: string[];
+        devices?: Array<{ device_id: string; home_folder?: string }>;
+      };
+      const me = ensureDeviceId();
+      // 폴더 이름은 **서버가 정한 것**을 그대로 쓴다. 여기서 hostname 으로
+      // 흉내 내면(구분자 제거 규칙까지 다시 구현하면) 서버가 아는 폴더와
+      // 어긋나 파일이 엉뚱한 곳으로 간다.
+      return {
+        needsReconnect: (body.needs_reconnect ?? []).includes(me),
+        homeFolder: (body.devices ?? []).find((d) => d.device_id === me)?.home_folder ?? '',
+      };
     },
     onStatus: (s: unknown) => safeSend(mainWindow, CHANNELS.workspaceStatusEvent, s),
   });
