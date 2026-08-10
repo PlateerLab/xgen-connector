@@ -41,11 +41,16 @@ export interface WorkspaceManagerDeps {
    */
   presenceFor?: (owner: string, onChanged: () => void) => WorkspacePresence
   /**
-   * 이 PC 가 서버에서 **재연결 대상**인지 묻는다. 없으면 확인하지 않는다.
+   * 서버가 이 PC 를 어떻게 알고 있는지 묻는다. 없으면 확인하지 않는다.
    *
-   * 커넥터가 직접 판단할 수 없는 이유: 이름이 서버까지 갔는지는 서버만 안다.
+   * 커넥터가 직접 판단할 수 없는 이유: 이름이 서버까지 갔는지, 그래서 이 PC 의
+   * 홈 폴더가 무엇으로 정해졌는지는 **서버만** 안다. 여기서 이름을 흉내 내면
+   * (예: hostname 을 그대로 폴더로 쓰면) 서버가 정한 것과 어긋나 파일이 엉뚱한
+   * 폴더로 간다.
+   *
+   * 모르면 ``null`` — "재연결 필요" 라고 단정하지 않는다.
    */
-  reconnectProbe?: () => Promise<boolean>
+  cloudProbe?: () => Promise<{ needsReconnect: boolean; homeFolder: string } | null>
   onStatus?: (s: WorkspaceStatus) => void
 }
 
@@ -83,6 +88,13 @@ export interface WorkspaceStatus {
    */
   needsReconnect?: boolean
   reconnectReason?: string
+  /**
+   * 클라우드 안에서 이 PC 가 쓰는 폴더 — ``{클라우드}/{PC 이름}/(파일)``.
+   *
+   * 화면에 이걸 보여 줘야 사용자가 자기 파일을 어디에 두는지 안다. 예전에는
+   * 모든 PC 가 루트를 그대로 썼고, 그래서 파일이 전부 한 트리에 섞였다.
+   */
+  homeFolder?: string
   /** 마운트된 경로 또는 드라이브 문자. */
   path?: string
   error?: string
@@ -131,6 +143,8 @@ export class WorkspaceManager {
   /** 클라우드 스토리지가 꺼져 있을 때의 사유 (오류가 아니다). */
   private storageOff: string | undefined
   private needsReconnect = false
+  /** 클라우드 안 이 PC 의 폴더 이름. 서버가 정한다 — 모르면 빈 문자열. */
+  private homeFolder = ''
   private reconnectReason: string | undefined
   /** owner → 접속 표시. 마운트되어 있는 동안만 살아 있다. */
   private presence = new Map<string, WorkspacePresence>()
@@ -183,6 +197,7 @@ export class WorkspaceManager {
       storageOff: this.storageOff,
       needsReconnect: this.needsReconnect,
       reconnectReason: this.reconnectReason,
+      homeFolder: this.homeFolder || undefined,
       agents: (cfg?.agents ?? []).map((a) => ({
         workflowId: a.workflowId,
         label: a.label,
@@ -234,11 +249,13 @@ export class WorkspaceManager {
    * 확인하지 못했으면 "재연결 필요" 라고 단정하지 않는다(모르면서 경고하면
    * 사용자는 멀쩡한 연결을 다시 맺는다).
    */
-  private async checkReconnect(): Promise<void> {
-    const probe = this.deps.reconnectProbe
+  private async checkReconnect(api: WorkspaceApi | null): Promise<void> {
+    const probe = this.deps.cloudProbe
     if (!probe) return
     try {
-      const stale = await probe()
+      const seen = await probe()
+      if (!seen) return              // 모르면 아무 말도 하지 않는다
+      const stale = seen.needsReconnect
       if (stale !== this.needsReconnect) {
         diag('workspace', stale ? '재연결 필요로 표시됨' : '재연결 필요 해제')
       }
@@ -246,8 +263,34 @@ export class WorkspaceManager {
       this.reconnectReason = stale
         ? '이 PC 가 이름 없이 등록되어 클라우드 안에서 자기 폴더를 쓰지 못합니다. 다시 연결하면 PC 이름으로 정리됩니다.'
         : undefined
+      if (this.homeFolder !== seen.homeFolder) {
+        diag('workspace', `이 PC 의 클라우드 폴더: /${seen.homeFolder}`)
+      }
+      this.homeFolder = seen.homeFolder
+      if (!stale) await this.ensureHomeFolder(api)
     } catch {
       // 모르면 아무 말도 하지 않는다.
+    }
+  }
+
+  /**
+   * 클라우드 안에 이 PC 의 폴더를 만들어 둔다 — ``{클라우드}/{PC 이름}/(파일)``.
+   *
+   * 폴더가 **비어 있어도 보여야** 한다. 없으면 사용자는 드라이브 루트에 파일을
+   * 떨어뜨리고, 그러면 모든 PC 의 파일이 한 트리에 섞인다 — 그게 원래 문제였다.
+   * 여기서 미리 만들어 두면 어디에 넣어야 하는지가 화면에 드러난다.
+   *
+   * 이름은 **서버가 정한 것**을 그대로 쓴다(:func:`home_folder_for`). 커넥터가
+   * hostname 으로 흉내 내면 서버가 아는 폴더와 어긋난다.
+   *
+   * 실패는 삼킨다 — 폴더 하나 때문에 드라이브가 안 붙으면 안 된다.
+   */
+  private async ensureHomeFolder(api: WorkspaceApi | null): Promise<void> {
+    if (!api || !this.homeFolder) return
+    try {
+      await api.mkdir(this.homeFolder)
+    } catch (e) {
+      diag('workspace', `PC 폴더 준비 실패(무시): ${(e as Error).message}`)
     }
   }
 
@@ -259,7 +302,7 @@ export class WorkspaceManager {
     try {
       await api.changes(0)
       this.storageOff = undefined
-      await this.checkReconnect()
+      await this.checkReconnect(api)
       return api
     } catch (e) {
       const status = (e as { status?: number }).status
