@@ -40,6 +40,12 @@ export interface WorkspaceManagerDeps {
    *   2. 서버 변경을 못 받아, 웹에서 올린 파일이 드라이브에 늦게/안 나타난다
    */
   presenceFor?: (owner: string, onChanged: () => void) => WorkspacePresence
+  /**
+   * 이 PC 가 서버에서 **재연결 대상**인지 묻는다. 없으면 확인하지 않는다.
+   *
+   * 커넥터가 직접 판단할 수 없는 이유: 이름이 서버까지 갔는지는 서버만 안다.
+   */
+  reconnectProbe?: () => Promise<boolean>
   onStatus?: (s: WorkspaceStatus) => void
 }
 
@@ -65,6 +71,18 @@ export interface WorkspaceStatus {
   reason?: string
   hint?: string
   mounted: boolean
+  /**
+   * 이 PC 가 **재연결**을 해야 하는 상태.
+   *
+   * 서버에 이름 없이 등록된 기기는 클라우드 안에서 자기 폴더를 갖지 못한다 —
+   * 예전 커넥터가 쓰기 요청에 id 만 실어 보내던 시절의 흔적이다. 그대로 두면
+   * 파일이 계속 루트에 섞이고, 웹은 id 앞 8자를 기기 이름인 줄 보여준다.
+   *
+   * 조용히 고칠 수 없는 이유: 서버가 이 PC 를 다시 등록해야 하고, 그것은
+   * 사용자가 연결을 다시 맺을 때 일어난다. 그래서 **알린다.**
+   */
+  needsReconnect?: boolean
+  reconnectReason?: string
   /** 마운트된 경로 또는 드라이브 문자. */
   path?: string
   error?: string
@@ -112,6 +130,8 @@ export class WorkspaceManager {
   private lastHint: string | undefined
   /** 클라우드 스토리지가 꺼져 있을 때의 사유 (오류가 아니다). */
   private storageOff: string | undefined
+  private needsReconnect = false
+  private reconnectReason: string | undefined
   /** owner → 접속 표시. 마운트되어 있는 동안만 살아 있다. */
   private presence = new Map<string, WorkspacePresence>()
   /** 마운트를 막던 로컬 파일을 구해 낸 위치 (있으면 사용자에게 알린다). */
@@ -161,6 +181,8 @@ export class WorkspaceManager {
       error,
       errorHint: this.lastHint,
       storageOff: this.storageOff,
+      needsReconnect: this.needsReconnect,
+      reconnectReason: this.reconnectReason,
       agents: (cfg?.agents ?? []).map((a) => ({
         workflowId: a.workflowId,
         label: a.label,
@@ -205,6 +227,30 @@ export class WorkspaceManager {
    * 403 이 아닌 실패(네트워크 등)는 **꺼짐이 아니다**. 잠깐 끊겼다고 루트를
    * 떼면 파일이 전부 사라진 것처럼 보인다 — 그때는 그대로 붙여 둔다.
    */
+  /**
+   * 서버가 이 PC 를 어떻게 알고 있는지 확인한다.
+   *
+   * 실패는 삼킨다 — 상태 표시를 위한 조회가 드라이브를 막으면 안 된다.
+   * 확인하지 못했으면 "재연결 필요" 라고 단정하지 않는다(모르면서 경고하면
+   * 사용자는 멀쩡한 연결을 다시 맺는다).
+   */
+  private async checkReconnect(): Promise<void> {
+    const probe = this.deps.reconnectProbe
+    if (!probe) return
+    try {
+      const stale = await probe()
+      if (stale !== this.needsReconnect) {
+        diag('workspace', stale ? '재연결 필요로 표시됨' : '재연결 필요 해제')
+      }
+      this.needsReconnect = stale
+      this.reconnectReason = stale
+        ? '이 PC 가 이름 없이 등록되어 클라우드 안에서 자기 폴더를 쓰지 못합니다. 다시 연결하면 PC 이름으로 정리됩니다.'
+        : undefined
+    } catch {
+      // 모르면 아무 말도 하지 않는다.
+    }
+  }
+
   private async probeUserStorage(api: WorkspaceApi | null): Promise<WorkspaceApi | null> {
     if (!api) {
       this.storageOff = undefined
@@ -213,6 +259,7 @@ export class WorkspaceManager {
     try {
       await api.changes(0)
       this.storageOff = undefined
+      await this.checkReconnect()
       return api
     } catch (e) {
       const status = (e as { status?: number }).status

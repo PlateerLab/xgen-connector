@@ -1646,6 +1646,8 @@ function wireWorkspaceManager(): void {
           token: async () => (await tokenStore.getAccess()) ?? '',
           workflowId: owner,
           deviceId: ensureDeviceId(),
+          // 이름이 쓰기 요청에도 실려야 서버가 이 PC 의 홈 폴더를 만든다.
+          deviceName: hostname(),
           fetch: (input, init) => net.fetch(input, init),
           allowPrivateCertificate: loadConfig().allowPrivateCertificate === true,
         },
@@ -1653,6 +1655,22 @@ function wireWorkspaceManager(): void {
         () => onChanged(),
         () => undefined,
       ),
+    /**
+     * 서버가 이 PC 를 이름 없이 알고 있으면 재연결이 필요하다.
+     *
+     * 서버는 이름 없는 기기를 `needs_reconnect` 로 표시한다 — 그 기기는
+     * 클라우드 안에서 자기 폴더를 갖지 못해 파일이 루트에 섞인다.
+     */
+    reconnectProbe: async () => {
+      const base = normalizeServerUrl(loadConfig().serverUrl).replace(/\/$/, '');
+      const token = (await tokenStore.getAccess()) ?? '';
+      const res = await net.fetch(`${base}/api/cloud/overview`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return false;   // 모르면 경고하지 않는다
+      const body = (await res.json()) as { needs_reconnect?: string[] };
+      return (body.needs_reconnect ?? []).includes(ensureDeviceId());
+    },
     onStatus: (s: unknown) => safeSend(mainWindow, CHANNELS.workspaceStatusEvent, s),
   });
   void getWorkspaceManager()?.reconcile();
