@@ -60,7 +60,7 @@ import {
 import { makeWorkspaceApi } from './workspace-api';
 import { WorkspaceWsClient } from './sync-transport';
 import { hostname } from 'os';
-import { accountKey, attachAgent, describeAccount, detachAgent, moveRoot, rootConflict, rootOf } from './workspace';
+import { accountKey, describeAccount, moveRoot, rootConflict, rootOf } from './workspace';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager, type McpHttpFetch } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
@@ -1599,6 +1599,40 @@ function saveCurrentWorkspace(next: WorkspacePersistConfig): WorkspacePersistCon
   return saved.workspaces?.[key];
 }
 
+/**
+ * 클라우드 연결 API 한 번 — 실패하면 **던진다.**
+ *
+ * 조용히 삼키면 사용자는 [추가] 를 눌렀는데 목록이 그대로인 것을 보고 다시
+ * 누른다. 던지면 렌더러가 오류를 띄운다.
+ */
+async function cloudLinkRequest(
+  method: 'GET' | 'POST' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  const base = normalizeServerUrl(loadConfig().serverUrl).replace(/\/$/, '');
+  const token = (await tokenStore.getAccess()) ?? '';
+  const res = await net.fetch(`${base}${path}`, {
+    method,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const j = (await res.json()) as { detail?: string };
+      if (j?.detail) detail = j.detail;
+    } catch {
+      /* 본문이 JSON 이 아니면 상태 코드로 충분하다 */
+    }
+    throw new Error(detail);
+  }
+  return res.json().catch(() => ({}));
+}
+
 // ── 워크스페이스(가상 드라이브) ─────────────────────────────────
 function wireWorkspaceManager(): void {
   initWorkspaceManager({
@@ -1661,6 +1695,26 @@ function wireWorkspaceManager(): void {
      * 서버는 이름 없는 기기를 `needs_reconnect` 로 표시한다 — 그 기기는
      * 클라우드 안에서 자기 폴더를 갖지 못해 파일이 루트에 섞인다.
      */
+    // 연결된 에이전트의 **원본은 서버**다 — 커넥터 설정은 그 사본일 뿐이다.
+    cloudLinks: async () => {
+      const body = (await cloudLinkRequest('GET', '/api/cloud/links')) as {
+        links?: Array<{
+          workflow_id: string;
+          label?: string;
+          paused?: boolean;
+          paused_reason?: string;
+        }>;
+      };
+      return (body.links ?? []).map((l) => ({
+        workflowId: l.workflow_id,
+        label: l.label || l.workflow_id,
+        paused: !!l.paused,
+        pausedReason: l.paused_reason || '',
+      }));
+    },
+    persist: (next) => {
+      saveCurrentWorkspace(next as WorkspacePersistConfig);
+    },
     cloudProbe: async () => {
       const base = normalizeServerUrl(loadConfig().serverUrl).replace(/\/$/, '');
       const token = (await tokenStore.getAccess()) ?? '';
@@ -1696,15 +1750,28 @@ async function saveWorkspace(next: unknown): Promise<unknown> {
 ipcMain.handle(CHANNELS.workspaceStatus, () => {
   return getWorkspaceManager()?.status() ?? { supported: false, mounted: false, agents: [] };
 });
+/**
+ * 에이전트 추가/제거는 **서버에 쓴다.**
+ *
+ * 예전에는 커넥터가 자기 `connector.json` 에만 적었다. 그래서 웹의 [연결]
+ * 목록과 커넥터의 목록이 서로 다른 말을 했다 — 같은 이름의 목록 둘이 각자
+ * 다른 저장소를 보고 있었다. 이제 서버가 유일한 원본이고, 로컬 설정은 다음
+ * 리컨사일이 서버에서 받아 적는 사본이다.
+ *
+ * 서버 쓰기가 실패하면 **로컬도 바꾸지 않는다.** 한쪽만 바뀌면 정확히 예전
+ * 상태(두 목록이 어긋남)로 돌아간다.
+ */
 ipcMain.handle(CHANNELS.workspaceAttach, async (_e, agent: { workflowId: string; label: string }) => {
-  const cur = currentWorkspace() ?? { agents: [] };
-  const next = attachAgent(cur, { ...agent, id: randomUUID() });
-  await saveWorkspace(next);
+  await cloudLinkRequest('POST', '/api/cloud/links', {
+    workflow_id: agent.workflowId,
+    label: agent.label,
+  });
+  await getWorkspaceManager()?.reconcile();
   return getWorkspaceManager()?.status();
 });
 ipcMain.handle(CHANNELS.workspaceDetach, async (_e, workflowId: string) => {
-  const next = detachAgent(currentWorkspace() ?? { agents: [] }, workflowId);
-  await saveWorkspace(next);
+  await cloudLinkRequest('DELETE', `/api/cloud/links/${encodeURIComponent(workflowId)}`);
+  await getWorkspaceManager()?.reconcile();
   return getWorkspaceManager()?.status();
 });
 ipcMain.handle(CHANNELS.workspaceRoot, () => rootOf(currentWorkspace()));
