@@ -29,6 +29,14 @@ export interface TransportAuth {
   token: () => string | Promise<string>
   workflowId: string
   deviceId: string
+  /**
+   * 이 PC 의 표시 이름. **쓰기 요청에도 실어야 한다.**
+   *
+   * 예전에는 WS 접속(hello)에서만 보냈다. 그런데 업로드가 먼저 도착하면 서버는
+   * 이름 없이 기기를 등록하고 그대로 굳는다 — 그러면 웹이 id 앞 8자를 이름처럼
+   * 보여주고(`b5b5f5cf`), 그 기기는 클라우드 안에서 자기 폴더를 갖지 못한다.
+   */
+  deviceName?: string
   /** Electron net.fetch를 주입해 설정된 XGEN 서버의 인증서 정책을 공유한다. */
   fetch?: NetworkFetch
   /** 설정된 XGEN WebSocket의 사설 인증서를 허용한다. */
@@ -145,6 +153,7 @@ export class HttpSyncTransport implements Transport {
         path: wsPath(path),
         base_sha: baseSha,
         device: this.auth.deviceId,
+        device_name: this.auth.deviceName,
       }),
       {
         method: 'PUT',
@@ -267,7 +276,7 @@ export class HttpSyncTransport implements Transport {
 
     const commit = await transportFetch(
       this.auth,
-      this.url(`/storage/file/chunks/${uploadId}/commit`, { base_sha: baseSha, device: this.auth.deviceId }),
+      this.url(`/storage/file/chunks/${uploadId}/commit`, { base_sha: baseSha, device: this.auth.deviceId, device_name: this.auth.deviceName }),
       { method: 'POST', headers: await authHeaders(this.auth) },
     )
     if (commit.status === 409) {
@@ -302,6 +311,7 @@ export class HttpSyncTransport implements Transport {
         path: wsPath(path),
         base_sha: baseSha,
         device: this.auth.deviceId,
+        device_name: this.auth.deviceName,
         ...(opts.force ? { force: 'true' } : {}),
       }),
       { method: 'DELETE', headers: await authHeaders(this.auth) },
