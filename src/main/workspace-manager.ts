@@ -14,6 +14,9 @@
 import type { ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 import { diag } from './diag-log'
+
+/** 연결 목록 폴링 주기. 연결은 자주 바뀌지 않으므로 짧을 이유가 없다. */
+const LINK_POLL_MS = 60_000
 import { clearStale, preflight, rescueStrays } from './fuse-mount'
 import { mountWebdav, unmountWebdav } from './mount-runner'
 import { WorkspaceDavBackend, type BackendAgent, type WorkspaceApi } from './workspace-backend'
@@ -164,6 +167,7 @@ export class WorkspaceManager {
   private needsReconnect = false
   /** 클라우드 안 이 PC 의 폴더 이름. 서버가 정한다 — 모르면 빈 문자열. */
   private homeFolder = ''
+  private linkTimer: ReturnType<typeof setInterval> | null = null
   private reconnectReason: string | undefined
   /** owner → 접속 표시. 마운트되어 있는 동안만 살아 있다. */
   private presence = new Map<string, WorkspacePresence>()
@@ -594,27 +598,61 @@ export class WorkspaceManager {
    * 드라이브의 에이전트 폴더가 전부 사라진다 — 사용자에게는 파일이 통째로
    * 날아간 것으로 보인다.
    */
-  private async syncCloudLinks(): Promise<void> {
+  private async syncCloudLinks(): Promise<boolean> {
     const fetchLinks = this.deps.cloudLinks
-    if (!fetchLinks || !this.deps.loggedIn()) return
+    if (!fetchLinks || !this.deps.loggedIn()) return false
     let links: CloudAgentLink[]
     try {
       links = await fetchLinks()
     } catch (e) {
       diag('workspace', `연결 목록 조회 실패(로컬 유지): ${(e as Error).message}`)
-      return
+      return false
     }
     const cur = this.deps.config()
     const next = applyCloudLinks(cur, links, this.deps.newId ?? (() => randomUUID()))
-    if (sameAgents(cur?.agents ?? [], next.agents)) return
+    if (sameAgents(cur?.agents ?? [], next.agents)) return false
     diag('workspace', `연결 목록 갱신: ${next.agents.map((a) => a.label).join(', ') || '(없음)'}`)
     this.deps.persist?.(next)
+    return true
+  }
+
+  /**
+   * 웹에서 바꾼 연결이 **저절로** 이 PC 에 반영되게 한다.
+   *
+   * 리컨사일만으로는 부족하다. 리컨사일은 로그인·설정 변경·[다시 연결] 같은
+   * 사건에서만 도는데, 사용자는 웹에서 에이전트를 붙이고 나서 아무 사건도
+   * 일으키지 않는다 — 그냥 커넥터를 본다. 그리고 목록이 그대로면 "동기화가
+   * 안 되네" 라고 결론짓는다. 실제로 그랬다.
+   *
+   * 바뀐 게 없으면 아무 일도 하지 않으므로(설정을 다시 쓰지도 않는다) 비용은
+   * 요청 하나다.
+   */
+  private startLinkPoll(): void {
+    if (this.linkTimer || !this.deps.cloudLinks) return
+    this.linkTimer = setInterval(() => {
+      void (async () => {
+        try {
+          if (await this.syncCloudLinks()) await this.reconcile()
+        } catch {
+          /* 폴링 실패는 다음 주기가 만회한다 */
+        }
+      })()
+    }, LINK_POLL_MS)
+    // 이 타이머가 앱 종료를 막으면 안 된다.
+    this.linkTimer.unref?.()
+  }
+
+  /** 폴링을 멈춘다 (테스트·종료). */
+  stopLinkPoll(): void {
+    if (this.linkTimer) clearInterval(this.linkTimer)
+    this.linkTimer = null
   }
 
   private async reconcileInner(): Promise<void> {
     // 설정을 읽기 **전에** 서버와 맞춘다 — 이 라운드가 최신 목록으로 돌아야
     // 사용자가 웹에서 붙인 에이전트가 바로 드라이브에 나타난다.
     await this.syncCloudLinks()
+    this.startLinkPoll()
     const cfg = this.deps.config()
     const agents = cfg?.agents ?? []
 
