@@ -24,9 +24,6 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   // 하지 않던 원인이 예외를 잡지 않은 것이었다.
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  /** 이 PC 의 이름 — 클라우드 안에서 폴더가 된다. 비우면 기본 규칙으로 돌아간다. */
-  const [pcName, setPcName] = useState('');
-  const [pcNameSaved, setPcNameSaved] = useState(false);
 
   const refreshRoot = () => xgen.workspace.root().then(setRoot).catch(() => undefined);
 
@@ -46,7 +43,6 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   useEffect(() => {
     xgen.workspace.status().then(setWs).catch((e) => setError(String(e?.message ?? e)));
     void refreshRoot();
-    void xgen.config.get().then((c) => setPcName(c.deviceName ?? '')).catch(() => undefined);
     // 화면을 여는 순간 서버와 맞춘다. 사용자가 웹에서 에이전트를 붙이고 여기를
     // 열었을 때 옛 목록이 떠 있으면, 그게 곧 "동기화가 안 된다" 로 읽힌다.
     void xgen.workspace.refresh().catch(() => undefined);
@@ -193,62 +189,6 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   이 PC 의 클라우드 폴더: <span className="mcp-item-cmd">/{ws.homeFolder}</span>
                 </div>
               )}
-              {/*
-                PC 이름은 **기기의 속성**이라 계정과 무관하다 — 같은 PC 에서 다른
-                계정으로 로그인해도 이 PC 는 여전히 이 PC 다. 기본값은 호스트명에서
-                로컬 로그인 이름을 걷어낸 것인데, 자동 규칙은 언제나 누군가의
-                기기에서 어색하므로 직접 정할 수 있어야 한다.
-              */}
-              <div className="row" style={{ marginTop: 8, gap: 6 }}>
-                <input
-                  className="grow"
-                  value={pcName}
-                  placeholder="이 PC 의 이름 (비우면 자동)"
-                  onChange={(e) => {
-                    setPcName(e.target.value);
-                    setPcNameSaved(false);
-                  }}
-                />
-                <button
-                  className="link"
-                  disabled={!!busy}
-                  onClick={() =>
-                    void act('pcname', async () => {
-                      await xgen.config.set({ deviceName: pcName.trim() });
-                      setPcNameSaved(true);
-                      // 이름이 서버에 반영되려면 다시 연결해야 한다 — 서버는
-                      // 접속(hello)과 쓰기 요청에 실려 온 이름으로만 기기를 안다.
-                      return xgen.workspace.remount();
-                    })
-                  }
-                >
-                  {busy === 'pcname' ? '적용 중…' : pcNameSaved ? '적용됨' : '이름 변경'}
-                </button>
-              </div>
-              {pcNameSaved && (
-                <div className="small muted" style={{ marginTop: 2 }}>
-                  이름을 바꾸면 클라우드에 새 이름의 폴더가 생깁니다. 예전 폴더의
-                  파일은 그 자리에 그대로 남습니다 — 필요하면 옮겨 주세요.
-                </div>
-              )}
-              {/*
-                꺼져 있는 것은 오류가 아니다 — 오류처럼 보이면 사용자가 고치려
-                든다. 어디서 켜는지까지 알려준다.
-              */}
-              {/* 마운트를 막던 로컬 파일 — 지우지 않고 옆으로 옮겨 뒀다 */}
-              {ws?.rescued && (
-                <div className="small muted" style={{ marginTop: 4 }}>
-                  <div>폴더에 있던 파일을 다음 위치로 옮기고 연결했습니다:</div>
-                  <div className="mcp-item-cmd" style={{ marginTop: 2 }}>{ws.rescued}</div>
-                  <div style={{ marginTop: 2 }}>클라우드로 올라가면 이 폴더는 자동으로 정리됩니다.</div>
-                </div>
-              )}
-              {/* on/off 는 두 곳에 있다 — 관리자의 조직 전체 설정과 본인 설정.
-                  어느 쪽이 껐는지는 **서버가 준 사유**가 말해 준다(커넥터가
-                  게이트 판정을 흉내내면 서버와 어긋난다). 그래서 사유를 그대로
-                  보여주고, 안내는 두 경우를 모두 덮는 문구로 둔다 — 예전에는
-                  조직 전체가 꺼졌을 때도 "마이페이지에서 켜라"고 해서 사용자가
-                  이미 켜져 있는 자기 설정만 들여다보게 만들었다. */}
               {ws?.storageOff && (
                 <div className="small muted" style={{ marginTop: 4 }}>
                   <div>내 클라우드 스토리지를 쓸 수 없습니다: {ws.storageOff}</div>

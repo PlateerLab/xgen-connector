@@ -13,7 +13,9 @@
  */
 import assert from 'assert'
 import { test } from 'node:test'
-import { defaultDeviceName, resolveDeviceName } from '../src/main/device-name'
+import { readFileSync } from 'fs'
+import { join } from 'path'
+import { defaultDeviceName } from '../src/main/device-name'
 
 test('호스트명 앞의 로컬 로그인 이름을 걷어낸다', () => {
   assert.equal(
@@ -56,9 +58,11 @@ test('한쪽이 비어도 쓸 수 있는 이름을 낸다', () => {
   assert.equal(defaultDeviceName('', ''), 'PC')
 })
 
-test('사용자가 정한 이름이 자동 규칙을 이긴다', () => {
-  // 자동 규칙은 언제나 누군가의 기기에서 어색하다.
-  assert.equal(resolveDeviceName('내 노트북', 'Crosshair-17'), '내 노트북')
-  assert.equal(resolveDeviceName('   ', 'Crosshair-17'), 'Crosshair-17')
-  assert.equal(resolveDeviceName(undefined, 'Crosshair-17'), 'Crosshair-17')
+test('이름을 바꾸는 길을 열어 두지 않는다', () => {
+  // 이 이름은 클라우드 안 폴더가 되고, 폴더는 데이터의 주소다. 바꿀 수 있게
+  // 하면 주소가 따라 움직이고 그 안의 파일은 예전 자리에 남는다.
+  const src = readFileSync(join(__dirname, '..', 'src', 'main', 'device-name.ts'), 'utf-8')
+  assert.ok(!/resolveDeviceName/.test(src), '사용자 지정 이름 경로가 되살아났다')
+  const cfg = readFileSync(join(__dirname, '..', 'src', 'main', 'config.ts'), 'utf-8')
+  assert.ok(!/deviceName\?/.test(cfg), '설정에 PC 이름 칸이 되살아났다')
 })
