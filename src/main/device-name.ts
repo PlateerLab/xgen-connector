@@ -15,8 +15,12 @@
  * 그래서 기본값에서 그 접두사만 걷어낸다. 걷어내고 남는 게 없으면 원래
  * 호스트명을 쓴다 — 이름이 없는 것보다 잡음이 낫다.
  *
- * 물론 자동 규칙은 언제나 누군가의 기기에서 어색하다. 그래서 사용자가 직접
- * 정할 수 있고(설정 → PC 이름), 정해 두면 이 규칙은 관여하지 않는다.
+ * **사용자가 바꿀 수 없게 두는 이유**: 이 이름은 클라우드 안 폴더가 되고, 폴더는
+ * 데이터의 주소다. 이름을 바꿀 수 있게 하면 주소가 따라 움직이고 그 안의 파일은
+ * 예전 자리에 남는다 — 이사가 아니라 분실이다. 서버도 같은 이유로 폴더를 처음
+ * 등록될 때 한 번만 정하고 이후 어떤 이름 변경에도 움직이지 않는다.
+ *
+ * 그래서 이건 **표시 이름**을 만드는 규칙일 뿐이다. 주소는 서버가 못 박아 둔다.
  */
 
 /** 호스트명 앞에 붙은 로컬 로그인 이름을 걷어낸 기본 PC 이름. */
@@ -41,8 +45,3 @@ export function defaultDeviceName(hostname: string, localUser: string): string {
   return host
 }
 
-/** 사용자가 정한 이름이 있으면 그것, 없으면 기본 규칙. */
-export function resolveDeviceName(configured: string | undefined, fallback: string): string {
-  const picked = String(configured || '').trim()
-  return picked || fallback
-}

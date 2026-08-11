@@ -60,7 +60,7 @@ import {
 import { makeWorkspaceApi } from './workspace-api';
 import { WorkspaceWsClient } from './sync-transport';
 import { hostname, userInfo } from 'os';
-import { defaultDeviceName, resolveDeviceName } from './device-name';
+import { defaultDeviceName } from './device-name';
 import { accountKey, describeAccount, moveRoot, rootConflict, rootOf } from './workspace';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager, type McpHttpFetch } from './mcp-manager';
@@ -1016,14 +1016,17 @@ function setMcpEnabled(enabled: boolean): void {
 // ── Workspace 동기화 (에이전트 workflow ↔ 로컬 폴더, Drive형) ─────
 /** 이 설치본의 안정 디바이스 id — 최초 1회 생성 후 config 에 영속. */
 /**
- * 이 PC 의 이름 — 클라우드 폴더가 되는 그 이름.
+ * 이 PC 의 표시 이름.
  *
- * 로컬 로그인 이름은 클라우드 트리에서 아무것도 구분하지 않는다(클라우드는
- * 이미 XGEN 계정으로 갈린다). 그래서 기본값에서 호스트명 앞의 로그인 이름을
- * 걷어낸다. 사용자가 직접 정해 두면 그것을 그대로 쓴다.
+ * 로컬 로그인 이름은 클라우드 트리에서 아무것도 구분하지 않는다 — 클라우드는
+ * 이미 XGEN 계정으로 갈린다. 그래서 호스트명 앞의 로그인 이름을 걷어낸다.
+ *
+ * **바꿀 수 있게 두지 않는다.** 이 이름은 서버가 이 기기를 **처음** 볼 때
+ * 폴더 이름이 되고, 그 폴더는 이후 어떤 이름 변경에도 움직이지 않는다. 바꿀
+ * 수 있게 하면 사용자는 주소를 옮기려 하고, 파일은 예전 자리에 남는다.
  */
 function deviceNameOf(): string {
-  return resolveDeviceName(loadConfig().deviceName, defaultDeviceName(hostname(), userInfo().username));
+  return defaultDeviceName(hostname(), userInfo().username);
 }
 
 function ensureDeviceId(): string {

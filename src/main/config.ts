@@ -106,16 +106,6 @@ export interface ConnectorConfig {
   /** Workspace 동기화 페어링 (에이전트 workflow ↔ 로컬 폴더). */
   /** 이 설치본의 안정 디바이스 id (최초 1회 생성) — 동기화 텔레메트리/충돌 사본 이름. */
   deviceId?: string;
-  /**
-   * 이 PC 의 표시 이름 — 클라우드 안에서 폴더가 된다.
-   *
-   * **계정이 아니라 기기의 속성**이라 계정별로 나누지 않는다. 같은 PC 에서
-   * 다른 계정으로 로그인해도 이 PC 는 여전히 이 PC 다.
-   *
-   * 비어 있으면 호스트명에서 로컬 로그인 이름을 걷어낸 기본값을 쓴다
-   * (:func:`defaultDeviceName`).
-   */
-  deviceName?: string;
   /** Linux 전용: 오버레이 클릭 통과 옵트인 ({forward:true} 미지원 플랫폼 안전장치). */
   linuxClickThrough?: boolean;
 }
