@@ -59,7 +59,8 @@ import {
 } from './workspace-manager';
 import { makeWorkspaceApi } from './workspace-api';
 import { WorkspaceWsClient } from './sync-transport';
-import { hostname } from 'os';
+import { hostname, userInfo } from 'os';
+import { defaultDeviceName, resolveDeviceName } from './device-name';
 import { accountKey, describeAccount, moveRoot, rootConflict, rootOf } from './workspace';
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager, type McpHttpFetch } from './mcp-manager';
@@ -1014,6 +1015,17 @@ function setMcpEnabled(enabled: boolean): void {
 
 // ── Workspace 동기화 (에이전트 workflow ↔ 로컬 폴더, Drive형) ─────
 /** 이 설치본의 안정 디바이스 id — 최초 1회 생성 후 config 에 영속. */
+/**
+ * 이 PC 의 이름 — 클라우드 폴더가 되는 그 이름.
+ *
+ * 로컬 로그인 이름은 클라우드 트리에서 아무것도 구분하지 않는다(클라우드는
+ * 이미 XGEN 계정으로 갈린다). 그래서 기본값에서 호스트명 앞의 로그인 이름을
+ * 걷어낸다. 사용자가 직접 정해 두면 그것을 그대로 쓴다.
+ */
+function deviceNameOf(): string {
+  return resolveDeviceName(loadConfig().deviceName, defaultDeviceName(hostname(), userInfo().username));
+}
+
 function ensureDeviceId(): string {
   const cfg = loadConfig();
   if (cfg.deviceId) return cfg.deviceId;
@@ -1036,9 +1048,12 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     normalizeServerUrl(patch.serverUrl) !== prevServer;
   if (serverChanged) {
     getMcpBridge().stop();
-    void getWorkspaceManager()?.reconcile();
     void client?.logout().catch(() => undefined); // 구 서버 세션 무효화 (rebind 전 호출)
     client = null; // in-memory user/token 을 남기지 않도록 새 인스턴스로
+    // ⚠ **client 를 비운 뒤에** 걷는다. 앞에서 부르면 아직 살아 있는
+    // `client.user` 때문에 리컨사일이 "로그인 중" 으로 판단해 구 서버의
+    // 마운트를 그대로 남긴다 (로그아웃 경로와 같은 함정).
+    await getWorkspaceManager()?.reconcile();
     await tokenStore.clear();
     await credentialStore.clear();
     patch = { ...patch, autoLogin: false }; // 저장된 자동 로그인은 구 서버 계정
@@ -1254,10 +1269,15 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
 
 ipcMain.handle(CHANNELS.authLogout, async () => {
   getMcpBridge().stop();
-  // 가상 드라이브는 로그인 상태에서만 존재한다 — 로그아웃하면 걷어낸다.
-  void getWorkspaceManager()?.reconcile();
   if (client) await client.logout();
   await tokenStore.clear();
+  // 가상 드라이브는 로그인 상태에서만 존재한다 — 로그아웃하면 걷어낸다.
+  //
+  // ⚠ **반드시 logout 뒤에.** 앞에서 부르면 그 시점의 `client.user` 가 아직
+  // 살아 있어 리컨사일이 "로그인 중" 으로 판단하고 마운트를 그대로 둔다.
+  // 그러면 로그아웃했는데 이전 계정의 파일이 드라이브에 남고, 같은 PC 에서
+  // 다른 계정으로 갈아탈 때 그 잔상 위에 새 계정이 얹힌다.
+  await getWorkspaceManager()?.reconcile();
   // An explicit logout also disables auto-login (else next launch signs right back in).
   await credentialStore.clear();
   saveConfig({ autoLogin: false });
@@ -1681,11 +1701,11 @@ function wireWorkspaceManager(): void {
           workflowId: owner,
           deviceId: ensureDeviceId(),
           // 이름이 쓰기 요청에도 실려야 서버가 이 PC 의 홈 폴더를 만든다.
-          deviceName: hostname(),
+          deviceName: deviceNameOf(),
           fetch: (input, init) => net.fetch(input, init),
           allowPrivateCertificate: loadConfig().allowPrivateCertificate === true,
         },
-        hostname(),
+        deviceNameOf(),
         () => onChanged(),
         () => undefined,
       ),

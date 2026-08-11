@@ -24,12 +24,19 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   // 하지 않던 원인이 예외를 잡지 않은 것이었다.
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  /** 이 PC 의 이름 — 클라우드 안에서 폴더가 된다. 비우면 기본 규칙으로 돌아간다. */
+  const [pcName, setPcName] = useState('');
+  const [pcNameSaved, setPcNameSaved] = useState(false);
 
   const refreshRoot = () => xgen.workspace.root().then(setRoot).catch(() => undefined);
 
   useEffect(() => {
     xgen.workspace.status().then(setWs).catch((e) => setError(String(e?.message ?? e)));
     void refreshRoot();
+    void xgen.config.get().then((c) => setPcName(c.deviceName ?? '')).catch(() => undefined);
+    // 화면을 여는 순간 서버와 맞춘다. 사용자가 웹에서 에이전트를 붙이고 여기를
+    // 열었을 때 옛 목록이 떠 있으면, 그게 곧 "동기화가 안 된다" 로 읽힌다.
+    void xgen.workspace.refresh().catch(() => undefined);
     // **내 에이전트만** 고를 수 있다. 공유받은 에이전트의 workspace 는 서버가
     // 소유자에게만 열어 주므로(check_owner_access), 목록에 넣으면 고를 수는
     // 있는데 추가가 404 로 거절돼 사용자는 이유를 알 수 없는 실패를 본다.
@@ -177,6 +184,44 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               {ws?.homeFolder && !ws?.needsReconnect && (
                 <div className="small muted" style={{ marginTop: 4 }}>
                   이 PC 의 클라우드 폴더: <span className="mcp-item-cmd">/{ws.homeFolder}</span>
+                </div>
+              )}
+              {/*
+                PC 이름은 **기기의 속성**이라 계정과 무관하다 — 같은 PC 에서 다른
+                계정으로 로그인해도 이 PC 는 여전히 이 PC 다. 기본값은 호스트명에서
+                로컬 로그인 이름을 걷어낸 것인데, 자동 규칙은 언제나 누군가의
+                기기에서 어색하므로 직접 정할 수 있어야 한다.
+              */}
+              <div className="row" style={{ marginTop: 8, gap: 6 }}>
+                <input
+                  className="grow"
+                  value={pcName}
+                  placeholder="이 PC 의 이름 (비우면 자동)"
+                  onChange={(e) => {
+                    setPcName(e.target.value);
+                    setPcNameSaved(false);
+                  }}
+                />
+                <button
+                  className="link"
+                  disabled={!!busy}
+                  onClick={() =>
+                    void act('pcname', async () => {
+                      await xgen.config.set({ deviceName: pcName.trim() });
+                      setPcNameSaved(true);
+                      // 이름이 서버에 반영되려면 다시 연결해야 한다 — 서버는
+                      // 접속(hello)과 쓰기 요청에 실려 온 이름으로만 기기를 안다.
+                      return xgen.workspace.remount();
+                    })
+                  }
+                >
+                  {busy === 'pcname' ? '적용 중…' : pcNameSaved ? '적용됨' : '이름 변경'}
+                </button>
+              </div>
+              {pcNameSaved && (
+                <div className="small muted" style={{ marginTop: 2 }}>
+                  이름을 바꾸면 클라우드에 새 이름의 폴더가 생깁니다. 예전 폴더의
+                  파일은 그 자리에 그대로 남습니다 — 필요하면 옮겨 주세요.
                 </div>
               )}
               {/*
