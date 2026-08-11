@@ -30,6 +30,19 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
   const refreshRoot = () => xgen.workspace.root().then(setRoot).catch(() => undefined);
 
+  /**
+   * 고를 수 있는 에이전트 목록.
+   *
+   * **내 에이전트만** 담는다. 공유받은 에이전트의 workspace 는 서버가 소유자에게만
+   * 열어 주므로(check_owner_access), 목록에 넣으면 고를 수는 있는데 추가가 404 로
+   * 거절돼 사용자는 이유를 알 수 없는 실패를 본다.
+   */
+  const refreshAgentOptions = () =>
+    xgen.agents
+      .list({ page: 1, pageSize: 200, owner: 'personal' })
+      .then((r) => setAgents((r.items ?? []).map((a) => ({ id: a.workflowId, name: a.workflowName }))))
+      .catch(() => undefined);
+
   useEffect(() => {
     xgen.workspace.status().then(setWs).catch((e) => setError(String(e?.message ?? e)));
     void refreshRoot();
@@ -37,13 +50,7 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     // 화면을 여는 순간 서버와 맞춘다. 사용자가 웹에서 에이전트를 붙이고 여기를
     // 열었을 때 옛 목록이 떠 있으면, 그게 곧 "동기화가 안 된다" 로 읽힌다.
     void xgen.workspace.refresh().catch(() => undefined);
-    // **내 에이전트만** 고를 수 있다. 공유받은 에이전트의 workspace 는 서버가
-    // 소유자에게만 열어 주므로(check_owner_access), 목록에 넣으면 고를 수는
-    // 있는데 추가가 404 로 거절돼 사용자는 이유를 알 수 없는 실패를 본다.
-    xgen.agents
-      .list({ page: 1, pageSize: 200, owner: 'personal' })
-      .then((r) => setAgents((r.items ?? []).map((a) => ({ id: a.workflowId, name: a.workflowName }))))
-      .catch(() => undefined);
+    void refreshAgentOptions();
     return xgen.workspace.onStatus(setWs);
   }, []);
 
@@ -266,8 +273,27 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
             {/* 에이전트 */}
             <div className="mcp-form">
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                이 워크스페이스의 에이전트
+              <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontWeight: 600 }}>이 워크스페이스의 에이전트</span>
+                {/*
+                  목록의 원본은 서버다 — 웹에서 붙이거나 뗀 것이 여기 그대로
+                  나타나야 한다. 화면을 열 때 한 번 읽고, 그 사이가 궁금하면
+                  누른다. 주기적으로 두드리지 않는다: 연결은 거의 바뀌지 않는데
+                  타이머를 두면 앱이 켜져 있는 내내 서버를 부른다.
+                */}
+                <button
+                  className="link"
+                  disabled={!!busy}
+                  onClick={() =>
+                    void act('agents', async () => {
+                      const next = await xgen.workspace.refreshAgents();
+                      await refreshAgentOptions();
+                      return next;
+                    })
+                  }
+                >
+                  {busy === 'agents' ? '새로고침 중…' : '새로고침'}
+                </button>
               </div>
 
               {attached.length === 0 ? (

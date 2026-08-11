@@ -19,6 +19,8 @@
  */
 import assert from 'assert'
 import { test } from 'node:test'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { applyCloudLinks, sameAgents, type WorkspaceConfig } from '../src/main/workspace'
 import { WorkspaceManager, type WorkspaceManagerDeps } from '../src/main/workspace-manager'
 
@@ -148,4 +150,26 @@ test('로그아웃 상태에서는 서버에 묻지 않는다', async () => {
   const m = new WorkspaceManager(deps)
   await (m as unknown as { syncCloudLinks: () => Promise<void> }).syncCloudLinks.call(m)
   assert.equal(asked, 0)
+})
+
+test('연결 목록을 타이머로 다시 읽지 않는다', () => {
+  // 연결은 거의 바뀌지 않는다. 타이머를 두면 앱이 켜져 있는 내내 서버를
+  // 두드리게 되고, 그 비용은 사용자 수만큼 곱해진다. 갱신 지점은 셋으로 족하다:
+  // 리컨사일(로그인·설정 변경·[다시 연결]), 화면을 열 때, [새로고침].
+  const src = readFileSync(join(__dirname, '..', 'src', 'main', 'workspace-manager.ts'), 'utf-8')
+  assert.ok(
+    !/setInterval/.test(src),
+    'workspace-manager 에 타이머가 생겼다 — 연결 목록 폴링이 되살아났는지 확인하라',
+  )
+})
+
+test('화면을 열면 서버와 맞춘다', () => {
+  // 웹에서 붙이고 커넥터를 열었을 때 옛 목록이 떠 있으면, 그게 곧
+  // "동기화가 안 된다" 로 읽힌다.
+  const ui = readFileSync(
+    join(__dirname, '..', 'src', 'renderer', 'src', 'views', 'SyncSettings.tsx'),
+    'utf-8',
+  )
+  assert.ok(ui.includes('xgen.workspace.refresh()'), '열 때 갱신이 빠졌다')
+  assert.ok(ui.includes('xgen.workspace.refreshAgents()'), '[새로고침] 버튼이 빠졌다')
 })

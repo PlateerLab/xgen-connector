@@ -1861,6 +1861,10 @@ ipcMain.handle(CHANNELS.workspaceRefresh, async () => {
   await getWorkspaceManager()?.refreshNow();
   return getWorkspaceManager()?.status();
 });
+ipcMain.handle(CHANNELS.workspaceRefreshAgents, async () => {
+  await getWorkspaceManager()?.refreshLinks();
+  return getWorkspaceManager()?.status();
+});
 ipcMain.handle(CHANNELS.workspaceOpen, () => {
   const p = getWorkspaceManager()?.status()?.path;
   if (p) openInFileManager(p);
