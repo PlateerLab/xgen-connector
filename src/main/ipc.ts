@@ -103,6 +103,8 @@ export const CHANNELS = {
   workspaceSetEnabled: 'workspace:setEnabled',
   workspaceRemount: 'workspace:remount',
   workspaceRefresh: 'workspace:refresh',
+  /** 연결된 에이전트 목록만 서버에서 다시 읽는다 (파일 캐시는 건드리지 않는다). */
+  workspaceRefreshAgents: 'workspace:refresh-agents',
   mcpStatus: 'mcp:status',
   mcpStatusEvent: 'mcp:statusEvent',
 

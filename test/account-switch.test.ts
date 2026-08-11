@@ -86,6 +86,5 @@ test('로그인하지 않았으면 서버에 연결 목록을 묻지도 않는�
   }
   const m = new WorkspaceManager(deps)
   await (m as unknown as { syncCloudLinks: () => Promise<boolean> }).syncCloudLinks.call(m)
-  m.stopLinkPoll()
   assert.equal(asked, 0, '로그아웃 상태에서 남의 계정 목록을 물으면 안 된다')
 })

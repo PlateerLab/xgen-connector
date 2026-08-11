@@ -313,6 +313,9 @@ const api = {
     remount: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceRemount),
     /** 서버 상태를 지금 다시 읽는다 (캐시 폐기 + 보류 업로드 재시도). */
     refresh: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceRefresh),
+    /** 연결된 에이전트 목록만 다시 읽는다 — 파일 캐시는 건드리지 않는다. */
+    refreshAgents: (): Promise<WorkspaceStatusLike> =>
+      ipcRenderer.invoke(CHANNELS.workspaceRefreshAgents),
     onStatus: (cb: (s: WorkspaceStatusLike) => void): (() => void) => {
       const h = (_e: unknown, s: WorkspaceStatusLike) => cb(s);
       ipcRenderer.on(CHANNELS.workspaceStatusEvent, h);
