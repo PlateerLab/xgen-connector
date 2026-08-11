@@ -90,6 +90,18 @@ export interface BackendAgent {
   api: WorkspaceApi
 }
 
+/**
+ * 드라이브 루트의 **예약 이름 두 개**.
+ *
+ * 이 둘이 예약되어 있으므로 클라우드의 어떤 폴더도 가려지지 않고, 드라이브
+ * 경로가 웹 화면과 1:1 로 대응한다:
+ *
+ *     클라우드/…            ↔  마이페이지 → 스토리지
+ *     에이전트/<이름>/…      ↔  Agent 작업실 → 스토리지
+ */
+const CLOUD_DIR = '클라우드'
+const AGENTS_DIR = '에이전트'
+
 interface Entry {
   isDir: boolean
   size: number
@@ -164,21 +176,42 @@ export class WorkspaceDavBackend implements WebdavBackend {
   /**
    * 경로 → [스페이스, 그 안의 상대 경로].
    *
-   * 첫 조각이 연결된 에이전트 폴더면 그 에이전트, 아니면 사용자 스토리지다
-   * (= 에이전트가 같은 이름의 사용자 폴더를 가린다).
+   * 드라이브 루트에는 **두 가지만** 있다:
+   *
+   *     XGEN-Workspace/
+   *       +-- 클라우드/            ← 내 클라우드 스토리지 (웹: 마이페이지 → 스토리지)
+   *       +-- 에이전트/<이름>/      ← 에이전트 workspace (웹: Agent 작업실 → 스토리지)
+   *
+   * 예전에는 루트가 곧 클라우드였고 에이전트 폴더를 그 위에 겹쳐 놨다. 두 가지가
+   * 망가졌다:
+   *
+   *   1. **이름이 겹치면 조용히 가려졌다.** 클라우드에 에이전트와 같은 이름의
+   *      폴더를 만들면 영영 열 수 없었다 — 사용자에게는 "폴더가 사라졌다" 다.
+   *   2. **웹과 경로가 어긋났다.** 웹은 클라우드와 에이전트를 서로 다른 화면으로
+   *      나눠 보여주는데 드라이브만 한 트리에 섞어 놨다. 그래서 같은 파일을
+   *      가리키는 경로가 화면마다 달랐고, 사용자는 동기화가 안 된다고 읽었다.
+   *
+   * 이제 두 이름이 예약되어 있으므로 어떤 클라우드 폴더도 가려지지 않고,
+   * 드라이브 경로가 웹 화면과 1:1 로 대응한다.
    */
   private resolve(p: string): [Space | null, string] {
     const parts = p.split('/').filter(Boolean)
-    if (parts.length === 0) return [this.userSpace(), '']
-    const agent = this.agents.get(parts[0])
-    if (agent) return [{ key: agent.folder, api: agent.api, isUser: false }, parts.slice(1).join('/')]
-    return [this.userSpace(), parts.join('/')]
+    if (parts.length === 0) return [null, '']          // 루트는 가상 — 스페이스가 없다
+    if (parts[0] === CLOUD_DIR) return [this.userSpace(), parts.slice(1).join('/')]
+    if (parts[0] === AGENTS_DIR) {
+      const agent = parts.length > 1 ? this.agents.get(parts[1]) : undefined
+      if (!agent) return [null, '']
+      return [{ key: agent.folder, api: agent.api, isUser: false }, parts.slice(2).join('/')]
+    }
+    return [null, '']
   }
 
-  /** 이 경로의 첫 조각이 에이전트 폴더인가 (드라이브에서 만들거나 지울 수 없다). */
-  private isAgentRoot(p: string): boolean {
+  /** 드라이브가 만드는 가상 폴더인가 — 사용자가 만들거나 지울 수 없다. */
+  private isVirtualDir(p: string): boolean {
     const parts = p.split('/').filter(Boolean)
-    return parts.length === 1 && this.agents.has(parts[0])
+    if (parts.length === 0) return true
+    if (parts.length === 1) return parts[0] === CLOUD_DIR || parts[0] === AGENTS_DIR
+    return parts.length === 2 && parts[0] === AGENTS_DIR && this.agents.has(parts[1])
   }
 
   private async tree(space: Space): Promise<Map<string, Entry>> {
@@ -238,7 +271,10 @@ export class WorkspaceDavBackend implements WebdavBackend {
 
   async stat(p: string): Promise<DavNode | null> {
     if (p === '/') return this.dirNode('')
-    if (this.isAgentRoot(p)) return this.dirNode(p.slice(1))
+    if (this.isVirtualDir(p)) {
+      const parts = p.split('/').filter(Boolean)
+      return this.dirNode(parts[parts.length - 1])
+    }
     const [space, rel] = this.resolve(p)
     if (!space || !rel) return null
     const e = (await this.tree(space)).get(rel)
@@ -246,25 +282,29 @@ export class WorkspaceDavBackend implements WebdavBackend {
   }
 
   async readdir(p: string): Promise<DavNode[]> {
-    const out: DavNode[] = []
-    const seen = new Set<string>()
+    const parts = p.split('/').filter(Boolean)
 
-    // 루트에서는 연결된 에이전트가 먼저다 (같은 이름의 사용자 폴더를 가린다).
-    if (p === '/') {
-      for (const folder of this.agents.keys()) {
-        out.push(this.dirNode(folder))
-        seen.add(folder)
-      }
+    // 루트: 두 가지만 보인다. 클라우드가 없으면(로그아웃·게이트 꺼짐)
+    // 그 폴더도 내놓지 않는다 — 열리지 않는 폴더는 고장으로 보인다.
+    if (parts.length === 0) {
+      const out: DavNode[] = []
+      if (this.userApi) out.push(this.dirNode(CLOUD_DIR))
+      if (this.agents.size) out.push(this.dirNode(AGENTS_DIR))
+      return out
+    }
+    // 에이전트 목록.
+    if (parts.length === 1 && parts[0] === AGENTS_DIR) {
+      return [...this.agents.keys()].map((folder) => this.dirNode(folder))
     }
 
     const [space, rel] = this.resolve(p)
-    if (!space) return out
+    if (!space) return []
+    const out: DavNode[] = []
     const prefix = rel ? `${rel}/` : ''
     for (const [path, e] of await this.tree(space)) {
       if (!path.startsWith(prefix)) continue
       const tail = path.slice(prefix.length)
       if (!tail || tail.includes('/')) continue // 직계 자식만
-      if (seen.has(tail)) continue
       out.push(this.node(tail, e))
     }
     return out
@@ -409,7 +449,7 @@ export class WorkspaceDavBackend implements WebdavBackend {
   async mkdir(p: string): Promise<void> {
     // 에이전트 폴더는 앱에서 연결/해제한다 — 드라이브에서 만들면 그게 연결이
     // 되는 것처럼 보여 실제와 어긋난다.
-    if (this.isAgentRoot(p)) throw new Error('에이전트 폴더는 앱에서 연결/해제합니다')
+    if (this.isVirtualDir(p)) throw new Error('드라이브가 만드는 폴더입니다 — 앱에서 관리합니다')
     const [space, rel] = this.resolve(p)
     if (!space) throw new Error('클라우드 스토리지가 연결되어 있지 않습니다')
     if (!rel) throw new Error('루트는 만들 수 없습니다')
@@ -418,7 +458,7 @@ export class WorkspaceDavBackend implements WebdavBackend {
   }
 
   async remove(p: string): Promise<void> {
-    if (this.isAgentRoot(p)) throw new Error('에이전트 폴더는 앱에서 연결/해제합니다')
+    if (this.isVirtualDir(p)) throw new Error('드라이브가 만드는 폴더입니다 — 앱에서 관리합니다')
     const [space, rel] = this.resolve(p)
     if (!space) throw new Error('클라우드 스토리지가 연결되어 있지 않습니다')
     if (!rel) throw new Error('루트는 지울 수 없습니다')
@@ -456,7 +496,7 @@ export class WorkspaceDavBackend implements WebdavBackend {
   }
 
   async move(from: string, to: string): Promise<void> {
-    if (this.isAgentRoot(from) || this.isAgentRoot(to)) {
+    if (this.isVirtualDir(from) || this.isVirtualDir(to)) {
       throw new Error('에이전트 폴더는 앱에서 연결/해제합니다')
     }
     const [sFrom, relFrom] = this.resolve(from)
