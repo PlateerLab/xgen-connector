@@ -187,36 +187,36 @@ function backend(): { be: WorkspaceDavBackend; api: Api } {
 
 test('0바이트 파일도 캐시가 처리한다 (sha 가 비어도)', async () => {
   const { be } = backend()
-  assert.equal((await be.read('/빈파일.bin')).length, 0)
-  assert.equal((await be.readRange('/빈파일.bin', 0, 10)).length, 0)
+  assert.equal((await be.read('/클라우드/빈파일.bin')).length, 0)
+  assert.equal((await be.readRange('/클라우드/빈파일.bin', 0, 10)).length, 0)
 })
 
 test('파일 끝을 넘는 조각 요청은 있는 만큼만 준다', async () => {
   const { be } = backend()
-  const part = await be.readRange('/큰파일.bin', 995, 2000)
+  const part = await be.readRange('/클라우드/큰파일.bin', 995, 2000)
   assert.equal(part.length, 5, `${part.length}B 를 돌려줬다`)
 })
 
 test('없는 파일 읽기는 빈 버퍼 (예외로 마운트를 죽이지 않는다)', async () => {
   const { be } = backend()
-  assert.equal((await be.read('/없는파일.bin')).length, 0)
-  assert.equal((await be.readRange('/없는파일.bin', 0, 10)).length, 0)
+  assert.equal((await be.read('/클라우드/없는파일.bin')).length, 0)
+  assert.equal((await be.readRange('/클라우드/없는파일.bin', 0, 10)).length, 0)
 })
 
 test('캐시가 다른 파일끼리 섞이지 않는다', async () => {
   const { be, api } = backend()
   api.files.set('다른파일.bin', Buffer.from('XXXX'))
-  const a = await be.read('/큰파일.bin')
-  const b = await be.read('/다른파일.bin')
+  const a = await be.read('/클라우드/큰파일.bin')
+  const b = await be.read('/클라우드/다른파일.bin')
   assert.equal(b.toString(), 'XXXX')
   assert.equal(a.length, 1000)
 })
 
 test('dispose 뒤에도 앱이 죽지 않는다', async () => {
   const { be } = backend()
-  await be.read('/큰파일.bin')
+  await be.read('/클라우드/큰파일.bin')
   be.dispose()
   // 캐시 파일이 사라졌으므로 다시 내려받아야 한다 — 던지면 안 된다.
-  const again = await be.read('/큰파일.bin')
+  const again = await be.read('/클라우드/큰파일.bin')
   assert.equal(again.length, 1000, '캐시 디렉터리가 사라지자 읽기가 깨졌다')
 })
