@@ -2508,3 +2508,218 @@ button {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* ── 전체 도구 로그 ────────────────────────────────────────────────────
+   흐름의 도구 칩은 하나씩 지나간다. 무언가 잘못됐을 때는 정반대가 필요하다 —
+   전부, 순서대로, 인자와 결과까지. 그래서 필요할 때만 펼친다. */
+
+/* 답변 아래의 작은 회색 버튼 — 대화를 읽는 데 방해가 되지 않아야 한다. */
+.toollog-open {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim, #8a8f98);
+  font-size: 11px;
+  cursor: pointer;
+}
+.toollog-open:hover {
+  background: var(--panel-2, rgba(0, 0, 0, 0.04));
+  color: var(--text);
+}
+
+.toollog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.42);
+  padding: 24px;
+}
+.toollog {
+  width: min(880px, 100%);
+  max-height: min(78vh, 900px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.toollog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.toollog-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.toollog-count {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-dim, #8a8f98);
+}
+.toollog-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+.toollog-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.toollog-btn:hover {
+  background: var(--panel-2);
+}
+.toollog-btn.icon {
+  padding: 4px 6px;
+}
+.toollog-btn.small {
+  margin-top: 8px;
+  font-size: 11px;
+  padding: 3px 7px;
+}
+.toollog-copyerr {
+  padding: 6px 14px;
+  background: color-mix(in srgb, #ef4444 10%, transparent);
+  color: #b91c1c;
+  font-size: 12px;
+}
+.toollog-body {
+  overflow: auto;
+  padding: 8px;
+}
+.toollog-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--text-dim, #8a8f98);
+  font-size: 13px;
+}
+.toollog-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+.toollog-item.err {
+  border-color: color-mix(in srgb, #ef4444 40%, var(--border));
+}
+.toollog-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.toollog-row:hover {
+  background: var(--panel-2);
+}
+.toollog-idx {
+  flex: none;
+  width: 20px;
+  color: var(--text-dim, #8a8f98);
+  font-variant-numeric: tabular-nums;
+}
+.toollog-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.toollog-phase {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+.toollog-phase.ok {
+  background: color-mix(in srgb, #10b981 14%, transparent);
+  color: #047857;
+}
+.toollog-phase.err {
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  color: #b91c1c;
+}
+.toollog-phase.run {
+  background: var(--panel-2);
+  color: var(--text-dim, #8a8f98);
+}
+.toollog-ms {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-dim, #8a8f98);
+  font-variant-numeric: tabular-nums;
+}
+.toollog-caret {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--text-dim, #8a8f98);
+}
+.toollog-detail {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.toollog-full {
+  margin-bottom: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-dim, #8a8f98);
+  word-break: break-all;
+}
+.toollog-label {
+  margin: 6px 0 3px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim, #8a8f98);
+}
+.toollog-label.err {
+  color: #b91c1c;
+}
+.toollog-detail pre {
+  margin: 0;
+  padding: 8px;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.toollog-detail pre.err {
+  color: #b91c1c;
+}

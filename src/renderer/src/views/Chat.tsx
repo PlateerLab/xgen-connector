@@ -14,6 +14,7 @@ import type { Agent, ChatEvent, ToolEvent, Citation, VoiceConfig } from '../../.
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
 import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
 import { mcpChatStatus } from './mcp-status-model';
+import { ToolLogModal } from './ToolLogModal';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
 import { ChatIcon, DocIcon, MicIcon, MonitorIcon, PanelLeftIcon, PlusIcon, SendIcon, SpeakerIcon, SpeakerOffIcon, StopIcon } from '../brand/icons';
@@ -185,6 +186,8 @@ export const Chat: React.FC<{
   // 있을 수 있어서, 서버로 보내는 것은 사용자가 명시적으로 골라야 한다.
   const [screenCaptureOn, setScreenCaptureOn] = useState(false);
   const [captureNotice, setCaptureNotice] = useState('');
+  // 전체 도구 로그 — 흐름에는 하나씩 지나가게 두고, 필요할 때 여기서 펼친다.
+  const [logFor, setLogFor] = useState<ToolEvent[] | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
   const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
@@ -816,6 +819,14 @@ export const Chat: React.FC<{
                     <span>화면 첨부 · {m.screenshot.sourceName}</span>
                   </div>
                 )}
+                {/* 전체 도구 로그 — 흐름의 도구 칩은 하나씩 지나가므로,
+                    무엇이 있었는지 되짚으려면 펼칠 곳이 필요하다. 답변이
+                    끝난 뒤에만 보인다 (진행 중에는 아직 늘어난다). */}
+                {m.role === 'assistant' && !m.streaming && m.tools && m.tools.length > 0 && (
+                  <button className="toollog-open" onClick={() => setLogFor(m.tools ?? [])}>
+                    전체 로그 보기 · {m.tools.length}건
+                  </button>
+                )}
                 {m.citations && m.citations.length > 0 && (
                   <div className="citations">
                     <span className="label">출처</span>
@@ -842,6 +853,7 @@ export const Chat: React.FC<{
             음성 재생 실패: {voiceError}
           </div>
         )}
+        {logFor && <ToolLogModal events={logFor} onClose={() => setLogFor(null)} />}
         {captureNotice && (
           <div className="voice-error small" title={captureNotice}>
             화면을 첨부하지 못했습니다: {captureNotice}
