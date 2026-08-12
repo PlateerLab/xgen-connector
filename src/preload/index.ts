@@ -299,6 +299,28 @@ const api = {
     },
   },
 
+  /** 화면 캡처 — 채팅을 보낼 때 지금 화면을 함께 보낸다.
+   *
+   *  기본 꺼짐이고, main 이 설정을 다시 확인한다 — 렌더러가 실수로 불러도
+   *  화면이 나가지 않는다. */
+  capture: {
+    /** 고를 수 있는 화면/창 목록 (설정 화면). */
+    listSources: (): Promise<
+      { id: string; name: string; displayId: string; kind: 'screen' | 'window' }[]
+    > => ipcRenderer.invoke(CHANNELS.captureListSources),
+    /** macOS 화면 기록 권한 상태 (다른 OS 는 항상 granted). */
+    accessStatus: (): Promise<string> => ipcRenderer.invoke(CHANNELS.captureAccessStatus),
+    /** 한 장 찍는다. 실패는 이유를 담아 돌아온다 — 조용히 넘어가지 않는다. */
+    screen: (): Promise<{
+      ok: boolean;
+      dataUrl?: string;
+      width?: number;
+      height?: number;
+      sourceName?: string;
+      error?: string;
+    }> => ipcRenderer.invoke(CHANNELS.captureScreen),
+  },
+
   /** App/window management (tray-style controls). */
   appctl: {
     /** Main window: fired when the tray/overlay asks to open the settings modal. */

@@ -73,6 +73,11 @@ export const CHANNELS = {
   overlayChipSize: 'overlay:chipSize', // chip → main (실측 크기)
   overlayChipInset: 'overlay:chipInset', // main → overlay (자막을 들어 올릴 높이)
 
+  // 화면 캡처 — 채팅을 보낼 때 지금 화면을 함께 보낸다.
+  captureListSources: 'capture:listSources', // 설정 화면의 대상 선택
+  captureScreen: 'capture:screen', // 한 장 찍기
+  captureAccessStatus: 'capture:accessStatus', // macOS 화면 기록 권한 상태
+
   // Window / app management (tray, autostart, reset, restart)
   openSettingsModal: 'app:openSettingsModal', // main → main-window (open settings modal)
   autostartGet: 'app:autostartGet',

@@ -557,7 +557,9 @@ let overlayLocked = true;
 
 /** 컨트롤 창 크기. 렌더러가 실제 내용 폭을 재서 알려 준다 (버튼 수는
  *  STT/TTS 사용 가능 여부에 따라 달라진다). */
-let chipSize = { w: 148, h: 40 };
+// 첫 보고 전 기본값은 **작게** 잡는다. 크게 잡으면 그 남는 영역이 잠깐
+// 보이고, 투명해도 그만큼 데스크톱 클릭을 먹는다.
+let chipSize = { w: 46, h: 38 };
 
 /** 컨트롤 창 아래 여백 — 아바타 창 바닥에서 이만큼 띄운다. */
 const CHIP_MARGIN = 6;
@@ -1604,6 +1606,26 @@ ipcMain.on(CHANNELS.overlaySetIgnoreMouse, (_e, ignore: boolean) => {
   // 남아 있는 호출자(구버전 페이지)를 위한 호환 경로. 잠금은 이제 main 이
   // 소유하므로 이 채널로 임시로 바꾼 값은 다음 잠금 변경에 덮인다.
   applyOverlayIgnoreMouse(overlayWindow, !!ignore);
+});
+
+// ── 화면 캡처 ──
+ipcMain.handle(CHANNELS.captureListSources, async () => {
+  const { listSources } = await import('./screen-capture');
+  return listSources();
+});
+
+ipcMain.handle(CHANNELS.captureAccessStatus, async () => {
+  const { screenAccessStatus } = await import('./screen-capture');
+  return screenAccessStatus();
+});
+
+ipcMain.handle(CHANNELS.captureScreen, async () => {
+  const cfg = loadConfig();
+  // 설정이 꺼져 있으면 **찍지 않는다.** 렌더러가 실수로 불러도 화면이 나가지
+  // 않아야 한다 — 이 게이트는 서버가 아니라 사용자의 기기에 있어야 의미가 있다.
+  if (!cfg.screenCapture) return { ok: false, error: '화면 캡처가 꺼져 있습니다.' };
+  const { captureScreen } = await import('./screen-capture');
+  return captureScreen(cfg.screenCaptureSource || undefined);
 });
 
 ipcMain.handle(CHANNELS.overlayGetLocked, () => overlayLocked);

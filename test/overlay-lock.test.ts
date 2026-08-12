@@ -47,6 +47,26 @@ test('hover 로 입력을 되살리는 방식이 되살아나지 않는다', () 
   );
 });
 
+test('컨트롤 창은 앱 전역 스타일을 끌어오지 않는다', () => {
+  // styles.css 에는 `body { background: var(--app-bg) }` 가 있고 라이트
+  // 테마에서 #f7f8fa 다. 창이 내용보다 크면 그 흰색이 알약처럼 보인다 —
+  // 실제로 잠금 칩이 토글 스위치처럼 보였다.
+  const entry = readFileSync(join(ROOT, 'src/renderer/src/chip.tsx'), 'utf8');
+  // import 만 본다 — 주석에서 이 파일을 언급하는 것은 정상이다.
+  assert.ok(
+    !/^\s*import\s+['"][^'"]*styles\.css['"]/m.test(entry),
+    '컨트롤 창이 공용 스타일시트를 싣는다',
+  );
+  assert.match(entry, /background = 'transparent'/);
+});
+
+test('컨트롤 창의 껍데기는 창 전체를 투명하게 덮는다', () => {
+  // 껍데기가 내용만큼만 차지하면 남는 영역에 페이지 배경이 드러난다.
+  assert.match(CHIP, /width: '100vw'/);
+  assert.match(CHIP, /height: '100vh'/);
+  assert.match(CHIP, /background: 'transparent'/);
+});
+
 test('컨트롤 창에는 아바타 런타임이 실리지 않는다', () => {
   // 버튼 몇 개를 위해 두 번째 WebGL 컨텍스트를 띄우면 앱이 죽는다.
   assert.ok(!/Live2D|cubism|AvatarSlot/.test(CHIP), '컨트롤 창이 아바타를 싣는다');
@@ -130,6 +150,8 @@ test('컨트롤 창 크기는 내용에 맞춘다', () => {
   // 남는 투명 영역이 데스크톱 클릭을 먹는다.
   assert.match(CHIP, /reportChipSize/);
   assert.match(MAIN, /ipcMain\.on\(CHANNELS\.overlayChipSize/);
+  // 테마/배율 변경은 리사이즈 이벤트를 주지 않는다 — 주기적으로도 다시 잰다.
+  assert.match(CHIP, /setInterval\(report/);
 });
 
 test('잠긴 채로도 위치를 옮길 수 있다', () => {
@@ -144,9 +166,19 @@ test('트레이에 비상 복구가 있다', () => {
   assert.match(MAIN, /function forceOverlayInteractive\(/);
 });
 
-test('컨트롤과 아바타 상단 바가 같은 버튼 집합을 쓴다', () => {
+test('컨트롤과 아바타 상단 바가 같은 상태·같은 토글을 쓴다', () => {
   // 갈리면 "잠갔을 때만 없는 버튼" 이 생기고, 사용자는 그게 의도인지
   // 버그인지 알 수 없다.
-  assert.match(CHIP, /VoiceButtons/);
-  assert.match(OVERLAY, /VoiceButtons/);
+  //
+  // 마크업까지 공유하지는 **못한다** — 컨트롤 창은 공용 스타일시트를 쓸 수
+  // 없어서(위 테스트 참조) 버튼을 인라인 스타일로 든다. 그래서 공유하는 것은
+  // 가용성 판정과 토글 동작(useVoiceControls)이고, 그게 갈리지 않을 부분이다.
+  assert.match(CHIP, /useVoiceControls/);
+  assert.match(OVERLAY, /useVoiceControls/);
+  for (const toggle of ['toggleVoiceInput', 'toggleVoiceOutput', 'toggleHandsfree']) {
+    assert.match(CHIP, new RegExp(toggle), `컨트롤 창에 ${toggle} 이 없다`);
+  }
+  // 가용성 게이트도 같아야 한다 — 서버가 끈 기능을 한쪽만 광고하면 안 된다.
+  assert.match(CHIP, /sttAvailable/);
+  assert.match(CHIP, /ttsAvailable/);
 });

@@ -16,7 +16,7 @@ import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
 import { mcpChatStatus } from './mcp-status-model';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
-import { SendIcon, StopIcon, PlusIcon, ChatIcon, DocIcon, PanelLeftIcon, MicIcon, SpeakerIcon, SpeakerOffIcon } from '../brand/icons';
+import { ChatIcon, DocIcon, MicIcon, MonitorIcon, PanelLeftIcon, PlusIcon, SendIcon, SpeakerIcon, SpeakerOffIcon, StopIcon } from '../brand/icons';
 
 /** An open chat: a fresh agent chat, or a resumed past conversation. */
 export interface ChatSession {
@@ -34,6 +34,9 @@ interface Msg {
   citations?: Citation[];
   streaming?: boolean;
   error?: boolean;
+  /** 이 메시지와 함께 보낸 화면 캡처 — 무엇을 찍었는지(창 이름). 사용자가
+   *  자기 화면이 언제 나갔는지 대화 기록에서 확인할 수 있어야 한다. */
+  screenshot?: { sourceName: string; width: number; height: number };
 }
 
 /** 도구 활동 표시 — **한 번에 하나**만 보여주고 다음 것으로 스르륵 교체된다.
@@ -178,6 +181,10 @@ export const Chat: React.FC<{
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  // 화면 캡처 — 기본 꺼짐. 화면에는 다른 사람의 메시지·비밀번호·미공개 문서가
+  // 있을 수 있어서, 서버로 보내는 것은 사용자가 명시적으로 골라야 한다.
+  const [screenCaptureOn, setScreenCaptureOn] = useState(false);
+  const [captureNotice, setCaptureNotice] = useState('');
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
   const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
@@ -400,13 +407,53 @@ export const Chat: React.FC<{
     playingRef.current = false;
   }, []);
 
-  const send = useCallback((override?: string) => {
+  useEffect(() => {
+    const apply = (c: { screenCapture?: boolean }): void => setScreenCaptureOn(!!c.screenCapture);
+    void xgen.config.get().then(apply);
+    return xgen.config.onChange(apply);
+  }, []);
+
+  // 캡처 실패 안내는 잠깐만 — 다음 전송이 성공하면 지워진다.
+  useEffect(() => {
+    if (!captureNotice) return;
+    const t = setTimeout(() => setCaptureNotice(''), 8000);
+    return () => clearTimeout(t);
+  }, [captureNotice]);
+
+  const send = useCallback(async (override?: string) => {
     const text = (override ?? input).trim();
     if (!text || streaming) return;
     if (override === undefined) setInput('');
+
+    // 화면 캡처가 켜져 있으면 **보내기 직전** 한 장 찍는다. 주기적으로 올리지
+    // 않는 이유: 사용자가 언제 무엇이 나갔는지 알 수 있어야 한다.
+    //
+    // 실패해도 대화를 막지 않는다 — 캡처는 덤이고, 못 찍었다고 사용자의 질문이
+    // 사라지면 그게 더 나쁘다. 대신 **조용히 넘어가지 않고** 이유를 남긴다.
+    let shot: { dataUrl?: string; sourceName?: string; width?: number; height?: number } | null = null;
+    if (screenCaptureOn) {
+      try {
+        const r = await xgen.capture.screen();
+        if (r.ok && r.dataUrl) shot = r;
+        else if (r.error) setCaptureNotice(r.error);
+      } catch (e) {
+        setCaptureNotice(e instanceof Error ? e.message : '화면을 캡처하지 못했습니다');
+      }
+    }
+
     setMessages((m) => [
       ...m,
-      { role: 'user', text },
+      {
+        role: 'user',
+        text,
+        screenshot: shot
+          ? {
+              sourceName: shot.sourceName ?? '화면',
+              width: shot.width ?? 0,
+              height: shot.height ?? 0,
+            }
+          : undefined,
+      },
       { role: 'assistant', text: '', tools: [], citations: [], streaming: true },
     ]);
     setStreaming(true);
@@ -438,7 +485,14 @@ export const Chat: React.FC<{
       {
         workflowId: agent.workflowId,
         workflowName: agent.workflowName,
-        input: text,
+        // 캡처가 있으면 멀티모달 content 로 보낸다 — 백엔드가 받는 형식이
+        // [{type:'text'},{type:'image_url'}] 이다. 없으면 예전처럼 문자열.
+        input: shot?.dataUrl
+          ? [
+              { type: 'text', text },
+              { type: 'image_url', image_url: { url: shot.dataUrl } },
+            ]
+          : text,
         interactionId,
       },
       (ev: ChatEvent) => {
@@ -480,7 +534,7 @@ export const Chat: React.FC<{
       },
     );
     cancelRef.current = handle;
-  }, [input, streaming, agent, interactionId, enqueueTts]);
+  }, [input, streaming, agent, interactionId, enqueueTts, screenCaptureOn]);
 
   const stop = useCallback(() => {
     cancelRef.current?.cancel();
@@ -754,6 +808,14 @@ export const Chat: React.FC<{
                   {m.text || (m.streaming ? <span className="cursor" /> : '')}
                   {m.text && m.streaming && <span className="cursor" />}
                 </div>
+                {/* 이 메시지와 함께 화면이 나갔다는 사실을 남긴다. 대화 기록만
+                    봐도 언제 무엇을 보냈는지 알 수 있어야 한다. */}
+                {m.screenshot && (
+                  <div className="shot-note" title={`${m.screenshot.width}×${m.screenshot.height}`}>
+                    <MonitorIcon size={11} />
+                    <span>화면 첨부 · {m.screenshot.sourceName}</span>
+                  </div>
+                )}
                 {m.citations && m.citations.length > 0 && (
                   <div className="citations">
                     <span className="label">출처</span>
@@ -780,6 +842,11 @@ export const Chat: React.FC<{
             음성 재생 실패: {voiceError}
           </div>
         )}
+        {captureNotice && (
+          <div className="voice-error small" title={captureNotice}>
+            화면을 첨부하지 못했습니다: {captureNotice}
+          </div>
+        )}
         <div className="composer">
           <textarea
             ref={taRef}
@@ -796,6 +863,23 @@ export const Chat: React.FC<{
             rows={1}
             spellCheck={false}
           />
+          {/* 화면 캡처 토글 — 켜져 있으면 보낼 때마다 지금 화면이 함께 간다.
+              그 사실이 항상 보여야 한다: 켜 둔 것을 잊고 민감한 화면을 보내는
+              것이 이 기능의 유일한 위험이다. */}
+          <button
+            className={`composer-shot${screenCaptureOn ? ' on' : ''}`}
+            onClick={() => void xgen.config.set({ screenCapture: !screenCaptureOn })}
+            disabled={streaming}
+            title={
+              screenCaptureOn
+                ? '화면 첨부 켜짐 — 보낼 때마다 지금 화면이 함께 전송됩니다. 눌러서 끄기'
+                : '화면 첨부 — 메시지를 보낼 때 지금 화면을 함께 보냅니다'
+            }
+            aria-label="화면 첨부"
+            aria-pressed={screenCaptureOn}
+          >
+            <MonitorIcon size={16} />
+          </button>
           {sttOn && (
             <button
               className={`composer-mic${recording ? ' recording' : ''}`}
