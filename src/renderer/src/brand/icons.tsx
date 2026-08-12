@@ -190,3 +190,18 @@ export const MonitorIcon: React.FC<P> = ({ size = 16, className }) => (
     <path d="M8 21h8M12 17v4" />
   </svg>
 );
+
+/** 닫기 — 모달/패널 공용. */
+export const CloseIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M18 6 6 18M6 6l12 12" />
+  </svg>
+);
+
+/** 복사 — 로그·코드처럼 다른 곳으로 옮겨 갈 내용에 붙는다. */
+export const CopyIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+  </svg>
+);

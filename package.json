@@ -1,6 +1,6 @@
 {
   "name": "xgen-connector",
-  "version": "1.33.0",
+  "version": "1.34.0",
   "description": "XGEN Connector - desktop client to log in to an XGEN instance, browse your agents, and chat (SSE streaming). Works with agent_geny / agent_xgen / agent_harness agents.",
   "author": "PlateerLab",
   "license": "Apache-2.0",
@@ -11,7 +11,7 @@
     "url": "https://github.com/PlateerLab/xgen-connector.git"
   },
   "scripts": {
-    "test": "tsx --test test/client.test.ts test/connection-security.test.ts test/diag-log.test.ts test/exec-resolve.test.ts test/drive-crossplatform.test.ts test/fuse-host.test.ts test/fuse-mount.test.ts test/harness.test.ts test/mcp-debug.test.ts test/mcp-import.test.ts test/mcp-progress.test.ts test/mcp-runtime-log.test.ts test/mcp-spawn.test.ts test/mcp-status.test.ts test/no-sync-io-on-mount.test.ts test/settings-reset.test.ts test/server-reason.test.ts test/sse.test.ts test/sso-preload.test.ts test/sso-window-options.test.ts test/tool-activity.test.ts test/upload-transport.test.ts test/update-source.test.ts test/webdav-server.test.ts test/workspace-accounts.test.ts test/workspace-backend.test.ts test/workspace-gate.test.ts test/workspace-home-folder.test.ts test/workspace-agent-links.test.ts test/device-name.test.ts test/account-switch.test.ts test/workspace-recovery.test.ts test/workspace-mounts.test.ts test/workspace.test.ts test/overlay-lock.test.ts test/screen-capture.test.ts",
+    "test": "tsx --test test/client.test.ts test/connection-security.test.ts test/diag-log.test.ts test/exec-resolve.test.ts test/drive-crossplatform.test.ts test/fuse-host.test.ts test/fuse-mount.test.ts test/harness.test.ts test/mcp-debug.test.ts test/mcp-import.test.ts test/mcp-progress.test.ts test/mcp-runtime-log.test.ts test/mcp-spawn.test.ts test/mcp-status.test.ts test/no-sync-io-on-mount.test.ts test/settings-reset.test.ts test/server-reason.test.ts test/sse.test.ts test/sso-preload.test.ts test/sso-window-options.test.ts test/tool-activity.test.ts test/upload-transport.test.ts test/update-source.test.ts test/webdav-server.test.ts test/workspace-accounts.test.ts test/workspace-backend.test.ts test/workspace-gate.test.ts test/workspace-home-folder.test.ts test/workspace-agent-links.test.ts test/device-name.test.ts test/account-switch.test.ts test/workspace-recovery.test.ts test/workspace-mounts.test.ts test/workspace.test.ts test/overlay-lock.test.ts test/screen-capture.test.ts test/tool-log.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"test/**/*.ts\"",
