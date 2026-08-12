@@ -97,6 +97,17 @@ export interface ConnectorConfig {
   voiceVolume?: number;
   /** Device-local voice OUTPUT (TTS) toggle. Default true. Server gate applies. */
   voiceOutput?: boolean;
+  // ── 화면 캡처 ──
+  //
+  // 채팅을 보낼 때 지금 화면을 함께 보낸다. 에이전트가 "지금 뭐가 보이냐" 를
+  // 물을 필요 없이 답할 수 있게 하는 기능이다.
+  //
+  // 기본 **꺼짐**이다. 화면에는 다른 사람의 메시지·비밀번호·미공개 문서가
+  // 있을 수 있고, 그걸 서버로 보내는 것은 사용자가 명시적으로 골라야 하는
+  // 종류의 일이다. (음성처럼 '안 쓰려면 꺼라' 로 둘 수 없다.)
+  screenCapture?: boolean;
+  /** 캡처할 화면/창의 id. 비우면 주 디스플레이. */
+  screenCaptureSource?: string;
   /** Enable hosting local MCP servers + bridging their tools to your agents. */
   mcp?: boolean;
   /** 채팅창 로컬 MCP 상태·실행 로그 디버그 UI. connector.json 직접 설정, 기본 false. */

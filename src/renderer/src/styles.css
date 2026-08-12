@@ -1290,6 +1290,45 @@ button {
   border: 1px solid var(--error-border);
   box-shadow: none;
 }
+/* 화면 첨부 토글 — 켜져 있으면 한눈에 보여야 한다. 켜 둔 것을 잊고
+   민감한 화면을 보내는 것이 이 기능의 유일한 위험이다. */
+.composer-shot {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim, var(--text));
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer-shot:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+.composer-shot:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.composer-shot.on {
+  border-color: var(--accent, #3b82f6);
+  color: var(--accent, #3b82f6);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent);
+}
+
+/* 메시지에 붙는 "화면 첨부" 표시 — 대화 기록만 봐도 언제 무엇이 나갔는지
+   알 수 있어야 한다. */
+.shot-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim, #8a8f98);
+}
+
 .composer-mic {
   flex: none;
   width: 36px;
@@ -1834,18 +1873,6 @@ button {
 .ov-rh.se { bottom: 0; right: 0; width: 18px; height: 18px; cursor: nwse-resize; }
 
 /* Control chrome (lock chip / bar) */
-/* 컨트롤 창 (chip.html) — 창 전체가 버튼 바 하나다.
-   여백을 두면 그 투명한 부분이 데스크톱 클릭을 먹으므로 딱 맞춘다. */
-.ov-chipwin {
-  display: inline-flex;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-}
-.ov-chipwin .ov-lockchip {
-  margin: 0;
-}
-
 .ov-lockchip {
   align-self: center;
   display: flex;

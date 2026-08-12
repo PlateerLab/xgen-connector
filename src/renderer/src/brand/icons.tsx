@@ -182,3 +182,11 @@ export const BotIcon: React.FC<P> = ({ size = 18, className }) => (
     <path d="M22 14v2" />
   </svg>
 );
+
+/** 화면 캡처 — 채팅에 화면을 함께 보낼 때의 표시. */
+export const MonitorIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <rect x="2" y="3" width="20" height="14" rx="2" />
+    <path d="M8 21h8M12 17v4" />
+  </svg>
+);
