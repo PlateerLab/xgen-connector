@@ -273,6 +273,30 @@ const api = {
     openSettings: (): void => ipcRenderer.send(CHANNELS.overlayOpenSettings),
     /** Overlay window: close the floating space. */
     hide: (): void => ipcRenderer.send(CHANNELS.overlayHide),
+
+    // ── 잠금 ──
+    //
+    // 상태는 **main 이 소유한다.** 아바타 창과 컨트롤 창이 각자 들고 있으면
+    // 둘이 어긋나고, 그때 사용자는 "잠겼다는데 잠기지 않은" 상태를 본다.
+    /** 첫 렌더용 초기값. */
+    getLocked: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.overlayGetLocked),
+    /** 잠금 토글 — 아바타 창의 입력과 컨트롤 창의 가시성이 함께 바뀐다. */
+    setLocked: (locked: boolean): void => ipcRenderer.send(CHANNELS.overlaySetLocked, locked),
+    /** main → 두 창: 잠금이 바뀌었다. */
+    onLocked: (h: (locked: boolean) => void): (() => void) => {
+      const fn = (_e: unknown, locked: boolean): void => h(!!locked);
+      ipcRenderer.on(CHANNELS.overlayLocked, fn);
+      return () => ipcRenderer.removeListener(CHANNELS.overlayLocked, fn);
+    },
+    /** 컨트롤 창: 실제 내용 크기를 알려 창을 맞춘다 (버튼 수가 가변이다). */
+    reportChipSize: (w: number, h: number): void =>
+      ipcRenderer.send(CHANNELS.overlayChipSize, w, h),
+    /** 아바타 창: 컨트롤 창이 바닥을 덮는 높이 — 자막을 그만큼 들어 올린다. */
+    onChipInset: (h: (px: number) => void): (() => void) => {
+      const fn = (_e: unknown, px: number): void => h(Number(px) || 0);
+      ipcRenderer.on(CHANNELS.overlayChipInset, fn);
+      return () => ipcRenderer.removeListener(CHANNELS.overlayChipInset, fn);
+    },
   },
 
   /** App/window management (tray-style controls). */

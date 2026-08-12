@@ -65,6 +65,13 @@ export const CHANNELS = {
   overlayFocusMain: 'overlay:focusMain', // overlay → main (raise chat window)
   overlayOpenSettings: 'overlay:openSettings', // overlay → main (raise + open settings modal)
   overlayHide: 'overlay:hide', // overlay → main (close the space)
+  // 잠금은 **main 이 소유한다** — 아바타 창과 컨트롤 창이 서로 다르게 알고
+  // 있으면 안 된다. 두 창 모두 여기서 상태를 받고, 토글도 여기로 보낸다.
+  overlaySetLocked: 'overlay:setLocked', // chip/overlay → main (잠금 토글)
+  overlayGetLocked: 'overlay:getLocked', // 창 → main (첫 렌더용 초기값)
+  overlayLocked: 'overlay:locked', // main → 두 창 (broadcast)
+  overlayChipSize: 'overlay:chipSize', // chip → main (실측 크기)
+  overlayChipInset: 'overlay:chipInset', // main → overlay (자막을 들어 올릴 높이)
 
   // Window / app management (tray, autostart, reset, restart)
   openSettingsModal: 'app:openSettingsModal', // main → main-window (open settings modal)

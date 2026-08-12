@@ -1834,8 +1834,23 @@ button {
 .ov-rh.se { bottom: 0; right: 0; width: 18px; height: 18px; cursor: nwse-resize; }
 
 /* Control chrome (lock chip / bar) */
+/* 컨트롤 창 (chip.html) — 창 전체가 버튼 바 하나다.
+   여백을 두면 그 투명한 부분이 데스크톱 클릭을 먹으므로 딱 맞춘다. */
+.ov-chipwin {
+  display: inline-flex;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+.ov-chipwin .ov-lockchip {
+  margin: 0;
+}
+
 .ov-lockchip {
   align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin: 0 auto 10px;
   border-radius: 999px;
   background: rgba(18, 18, 24, 0.7);

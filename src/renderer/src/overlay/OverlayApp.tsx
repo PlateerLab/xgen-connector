@@ -6,13 +6,16 @@
  * extension point via AvatarSlot; a branded placeholder until one is registered)
  * with a visual-novel SPEECH BUBBLE that types out what the agent is saying.
  *
- * Lock model (default LOCKED):
- *   • Locked   → the OS window is click-through (setClickThrough(true)); only the
- *     small lock chip is interactive (hover re-enables input). The avatar can't
- *     be moved/resized — clicks pass through to the desktop behind.
- *   • Unlocked → the whole window captures input; a dashed resize frame (8
- *     edge/corner handles + "크기 조절") appears, and dragging the bar moves the
- *     window. Only lock + delete buttons live on the bar ("삭제 버튼만").
+ * 잠금 모델 (기본 잠김) — 상태는 **main 이 소유한다**:
+ *   • 잠김   → 이 창은 입력을 통과시킨다. 아바타를 옮기거나 크기를 바꿀 수
+ *     없고 클릭은 뒤의 데스크톱으로 간다. 컨트롤 버튼은 **별도 창**
+ *     (chip.html)에 있어 언제나 눌린다 — 입력이 통과하는 창은 자기 잠금
+ *     해제 버튼을 담을 수 없기 때문이다. 예전에는 여기서 hover 로 입력을
+ *     되살렸는데, 리눅스에서는 이벤트가 아예 안 오고 darwin/win32 에서도
+ *     클릭이 IPC 왕복 사이에 사라져 "버튼이 보이는데 눌리지 않는" 상태가
+ *     됐다 (geny-connector 가 같은 버그를 별도 창으로 해결했다).
+ *   • 풀림   → 이 창이 입력을 잡는다. 점선 리사이즈 프레임(8방향)이 나타나고
+ *     바를 끌면 창이 움직인다. 컨트롤은 이 창 안의 상단 바로 돌아온다.
  *
  * Drag uses movementX/movementY → moveBy, and main uses setPosition (not
  * setBounds) so the window never grows on fractional-DPI displays (150% scaling).
@@ -22,20 +25,14 @@ import { xgen } from '../bridge';
 import type { OverlayState } from '../../../preload/index';
 import { AvatarSlot, hasAvatarRenderer, type AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
-import { EyeIcon, EyeOffIcon, MicIcon, MicOffIcon, SpeakerIcon, SpeakerOffIcon, HandsfreeIcon } from '../brand/icons';
-import { useHandsfree } from './handsfree';
+import { EyeIcon, EyeOffIcon } from '../brand/icons';
+// 컨트롤 버튼은 잠금 창(chip)과 **같은 컴포넌트**를 쓴다 — 두 곳이 갈리면
+// "잠갔을 때만 없는 버튼" 이 생기고 사용자는 의도인지 버그인지 알 수 없다.
+import { LockIcon, VoiceButtons, useVoiceControls } from './ActionBar';
 
 const EMPTY: OverlayState = { workflowId: '', workflowName: '', streamingText: '', speaking: false };
 const SUBTITLE_DISMISS_MS = 4000;
 
-function LockIcon({ open }: { open: boolean }): React.ReactElement {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="3" y="11" width="18" height="11" rx="2" />
-      <path d={open ? 'M7 11V7a5 5 0 0 1 9.9-1' : 'M7 11V7a5 5 0 0 1 10 0v4'} />
-    </svg>
-  );
-}
 function GripIcon(): React.ReactElement {
   return (
     <svg width="13" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -218,22 +215,21 @@ function ResizeFrame(): React.ReactElement {
 
 export function OverlayApp(): React.ReactElement {
   const [state, setState] = useState<OverlayState>(EMPTY);
-  const [locked, setLocked] = useState(true);
+  // 잠금은 **main 이 소유한다** — 아바타 창과 컨트롤 창이 서로 다르게 알고
+  // 있으면 "잠겼다는데 잠기지 않은" 상태가 보인다.
+  const [locked, setLockedLocal] = useState(true);
+  //: 컨트롤 창이 이 창의 바닥을 덮는 높이. 자막을 그만큼 들어 올린다 —
+  //: 별도 창이라 페이지는 그 존재를 알 수 없고, 그대로 두면 마지막 대사 위에
+  //: 버튼이 겹쳐 그려진다.
+  const [chipInset, setChipInset] = useState(0);
   const [subtitles, setSubtitles] = useState(true);
   const [charMs, setCharMs] = useState(50);
   const [subtitleSize, setSubtitleSize] = useState<'sm' | 'md' | 'lg'>('sm');
   const [avatarHidden, setAvatarHidden] = useState(false);
   // 핸즈프리 음성 대화 (Geny 방식): 로컬 토글 + 서버 STT 게이트
-  const [handsfreeOn, setHandsfreeOn] = useState(false);
-  const [sttAvailable, setSttAvailable] = useState(false);
-  const [ttsAvailable, setTtsAvailable] = useState(false);
-  const [voiceInputOn, setVoiceInputOn] = useState(true);
-  const [voiceOutputOn, setVoiceOutputOn] = useState(true);
+  const voice = useVoiceControls();
   const dragging = useRef(false);
   const hasAvatar = hasAvatarRenderer();
-
-  const handsfreeActive = handsfreeOn && sttAvailable && voiceInputOn;
-  const { state: hfState } = useHandsfree(handsfreeActive);
 
   useEffect(() => xgen.overlay.onState((s) => setState(s)), []);
 
@@ -243,60 +239,26 @@ export function OverlayApp(): React.ReactElement {
       subtitleCharMs?: number;
       subtitleSize?: 'sm' | 'md' | 'lg';
       avatarHidden?: boolean;
-      voiceHandsfree?: boolean;
-      voiceInput?: boolean;
-      voiceOutput?: boolean;
     }) => {
       setSubtitles(c.subtitles !== false);
       setCharMs(typeof c.subtitleCharMs === 'number' ? c.subtitleCharMs : 50);
       setSubtitleSize(c.subtitleSize ?? 'sm');
       setAvatarHidden(!!c.avatarHidden);
-      setHandsfreeOn(!!c.voiceHandsfree);
-      setVoiceInputOn(c.voiceInput !== false);
-      setVoiceOutputOn(c.voiceOutput !== false);
     };
     xgen.config.get().then(apply);
     return xgen.config.onChange(apply);
   }, []);
 
-  // 서버 STT 게이트 — 켜져 있어야 핸즈프리 버튼 노출. 인증 준비/설정 변경 시 재조회.
+  // 잠금은 main 이 정한다 — 이 창은 따라갈 뿐이다. 여기서 직접
+  // setClickThrough 를 부르면 두 창의 상태가 어긋난다.
   useEffect(() => {
-    let alive = true;
-    const check = () => {
-      xgen.voice
-        ?.getConfig?.()
-        ?.then((c) => {
-          if (!alive) return;
-          setSttAvailable(!!c?.stt?.enabled);
-          setTtsAvailable(!!c?.tts?.enabled);
-        })
-        ?.catch(() => undefined);
-    };
-    check();
-    const off = xgen.user?.onAvatarRefresh?.(() => check());
-    return () => {
-      alive = false;
-      off?.();
-    };
+    void xgen.overlay.getLocked().then(setLockedLocal);
+    return xgen.overlay.onLocked(setLockedLocal);
   }, []);
 
-  const toggleHandsfree = () => void xgen.config.set({ voiceHandsfree: !handsfreeOn });
-  const toggleVoiceInput = () => void xgen.config.set({ voiceInput: !voiceInputOn });
-  const toggleVoiceOutput = () => void xgen.config.set({ voiceOutput: !voiceOutputOn });
+  useEffect(() => xgen.overlay.onChipInset(setChipInset), []);
 
-  // Apply the lock state to the OS window: locked → click-through, unlocked →
-  // the whole window captures input (so it can be dragged / resized).
-  useEffect(() => {
-    xgen.overlay.setClickThrough(locked);
-  }, [locked]);
-
-  // While locked, hovering the control re-enables input so it's clickable.
-  const onBarEnter = () => {
-    if (locked) xgen.overlay.setClickThrough(false);
-  };
-  const onBarLeave = () => {
-    if (locked && !dragging.current) xgen.overlay.setClickThrough(true);
-  };
+  const setLocked = (next: boolean): void => xgen.overlay.setLocked(next);
   const onDrag = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
     // Stop the browser from starting a text selection / native drag on the
@@ -309,7 +271,6 @@ export function OverlayApp(): React.ReactElement {
       dragging.current = false;
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      onBarLeave();
       xgen.overlay.commitBounds(); // drag end → persist position immediately
     };
     window.addEventListener('mousemove', onMove);
@@ -328,7 +289,9 @@ export function OverlayApp(): React.ReactElement {
 
   return (
     <div className={`ov-root ${avatarHidden ? 'avatar-hidden' : ''}`}>
-      <div className="ov-stage">
+      {/* 컨트롤 창이 바닥을 덮는 만큼 무대를 들어 올린다. 별도 창이라
+          페이지는 그 존재를 알 수 없고, 0 이면(잠금 해제) 레이아웃은 그대로다. */}
+      <div className="ov-stage" style={chipInset ? { paddingBottom: chipInset } : undefined}>
         {!avatarHidden &&
           (hasAvatar ? (
             <AvatarSlot state={avatarState} />
@@ -347,74 +310,18 @@ export function OverlayApp(): React.ReactElement {
 
       {!locked && <ResizeFrame />}
 
-      {locked ? (
-        <div className="ov-lockchip" onMouseEnter={onBarEnter} onMouseLeave={onBarLeave} onMouseDown={onDrag} title="드래그하여 이동">
-          {sttAvailable && (
-            <button
-              className={`ov-icon-btn ov-voice ${voiceInputOn ? 'stt-on' : ''}`}
-              onClick={toggleVoiceInput}
-              title={voiceInputOn ? '음성 입력(STT) 끄기' : '음성 입력(STT) 켜기'}
-            >
-              {voiceInputOn ? <MicIcon size={15} /> : <MicOffIcon size={15} />}
-            </button>
-          )}
-          {ttsAvailable && (
-            <button
-              className={`ov-icon-btn ov-voice ${voiceOutputOn ? 'tts-on' : ''}`}
-              onClick={toggleVoiceOutput}
-              title={voiceOutputOn ? '음성 출력(TTS) 끄기' : '음성 출력(TTS) 켜기'}
-            >
-              {voiceOutputOn ? <SpeakerIcon size={15} /> : <SpeakerOffIcon size={15} />}
-            </button>
-          )}
-          {sttAvailable && (
-            <button
-              className={`ov-icon-btn ov-mic ${handsfreeActive ? `on ${hfState}` : ''}`}
-              onClick={toggleHandsfree}
-              title={handsfreeActive ? '핸즈프리 음성 대화 끄기' : '핸즈프리 음성 대화 켜기 — 말하면 자동으로 채팅에 입력됩니다'}
-            >
-              <HandsfreeIcon size={15} />
-            </button>
-          )}
-          <button className="ov-icon-btn" onClick={() => setLocked(false)} title="잠금 해제">
-            <LockIcon open={false} />
-          </button>
-        </div>
-      ) : (
-        <div className="ov-bar" onMouseEnter={onBarEnter} onMouseLeave={onBarLeave} onMouseDown={onDrag}>
+      {/* 잠김: 이 창에는 아무 컨트롤도 두지 않는다. 입력이 통과하므로 어차피
+          누를 수 없고, 눌리는 척하는 UI 는 사용자를 헤매게 만든다. 컨트롤은
+          chip.html 창이 담당한다 (main 이 위치·가시성을 관리). */}
+      {locked ? null : (
+        <div className="ov-bar" onMouseDown={onDrag}>
           <span className="ov-grip" title="드래그하여 이동">
             <GripIcon />
           </span>
           <button className="ov-icon-btn" onClick={() => xgen.overlay.focusMain()} title="채팅 창 열기">
             <ChatBubbleIcon />
           </button>
-          {sttAvailable && (
-            <button
-              className={`ov-icon-btn ov-voice ${voiceInputOn ? 'stt-on' : ''}`}
-              onClick={toggleVoiceInput}
-              title={voiceInputOn ? '음성 입력(STT) 끄기' : '음성 입력(STT) 켜기'}
-            >
-              {voiceInputOn ? <MicIcon size={15} /> : <MicOffIcon size={15} />}
-            </button>
-          )}
-          {ttsAvailable && (
-            <button
-              className={`ov-icon-btn ov-voice ${voiceOutputOn ? 'tts-on' : ''}`}
-              onClick={toggleVoiceOutput}
-              title={voiceOutputOn ? '음성 출력(TTS) 끄기' : '음성 출력(TTS) 켜기'}
-            >
-              {voiceOutputOn ? <SpeakerIcon size={15} /> : <SpeakerOffIcon size={15} />}
-            </button>
-          )}
-          {sttAvailable && (
-            <button
-              className={`ov-icon-btn ov-mic ${handsfreeActive ? `on ${hfState}` : ''}`}
-              onClick={toggleHandsfree}
-              title={handsfreeActive ? '핸즈프리 음성 대화 끄기' : '핸즈프리 음성 대화 켜기 — 말하면 자동으로 채팅에 입력됩니다'}
-            >
-              <HandsfreeIcon size={15} />
-            </button>
-          )}
+          <VoiceButtons voice={voice} />
           <button className="ov-icon-btn" onClick={() => xgen.overlay.openSettings()} title="설정 열기">
             <GearIcon />
           </button>

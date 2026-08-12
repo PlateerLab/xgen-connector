@@ -509,8 +509,9 @@ function createOverlay(): void {
   attachContentResilience(overlayWindow, () => {
     if (overlayWindow) loadRendererPage(overlayWindow, 'overlay.html');
   });
-  // Click-through by default; the renderer flips this off over interactive regions.
-  applyOverlayIgnoreMouse(overlayWindow, true);
+  // 기본은 잠금 = 클릭 통과. 컨트롤은 별도 창이라 이 창이 통과여도 눌린다.
+  applyOverlayInput();
+  createOverlayChip();
 
   overlayWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -522,33 +523,209 @@ function createOverlay(): void {
   // renderer also sends overlay:commitBounds on pointer-up as a cross-platform
   // guarantee (Linux doesn't emit them for programmatic bounds changes).
   restoreOverlayGeometry();
-  overlayWindow.on('moved', onOverlayMoved);
-  overlayWindow.on('resized', () => saveOverlayGeometry());
+  overlayWindow.on('moved', () => {
+    onOverlayMoved();
+    syncChipBounds();
+  });
+  overlayWindow.on('resized', () => {
+    saveOverlayGeometry();
+    syncChipBounds();
+  });
+  // 아바타가 숨거나 다시 보이면 컨트롤도 같이 — 잠긴 채 숨은 아바타 위에
+  // 버튼만 떠 있으면 사용자는 그게 무엇의 컨트롤인지 알 수 없다.
+  overlayWindow.on('show', () => applyChipVisibility());
+  overlayWindow.on('hide', () => applyChipVisibility());
   overlayWindow.on('closed', () => {
     overlayWindow = null;
+    destroyOverlayChip();
   });
   overlayWindow.once('ready-to-show', () => {
     overlayWindow?.show();
+    applyChipVisibility();
     if (lastOverlayState) overlayWindow?.webContents.send(CHANNELS.overlayState, lastOverlayState);
   });
 
   loadRendererPage(overlayWindow, 'overlay.html');
 }
 
-/** 오버레이 클릭 통과 정책 (geny-connector 리눅스 강건성 이식).
+// ── 컨트롤 창 (잠금 시 액션바) ────────────────────────────────────────
+//
+// 아바타 창 바깥에 있으므로 아바타의 입력 상태와 무관하게 항상 눌린다.
+// 아바타를 따라다니고, 아바타가 안 보이면 같이 숨는다.
+let overlayChip: BrowserWindow | null = null;
+let overlayLocked = true;
+
+/** 컨트롤 창 크기. 렌더러가 실제 내용 폭을 재서 알려 준다 (버튼 수는
+ *  STT/TTS 사용 가능 여부에 따라 달라진다). */
+let chipSize = { w: 148, h: 40 };
+
+/** 컨트롤 창 아래 여백 — 아바타 창 바닥에서 이만큼 띄운다. */
+const CHIP_MARGIN = 6;
+
+function chipBoundsFor(b: Electron.Rectangle): Electron.Rectangle {
+  return {
+    x: Math.round(b.x + (b.width - chipSize.w) / 2),
+    y: Math.round(b.y + b.height - chipSize.h - CHIP_MARGIN),
+    width: chipSize.w,
+    height: chipSize.h,
+  };
+}
+
+/** 컨트롤 창이 아바타 창 바닥을 얼마나 덮고 있는가.
  *
- * `setIgnoreMouseEvents(true, {forward:true})` 의 forward 는 darwin/win32
- * 전용이다 — 리눅스에서 클릭 통과를 켜면 마우스 이벤트가 **전혀** 오지 않아
- * 렌더러의 hover 기반 인터랙션 복귀가 영원히 불가능하다 (오버레이 영구
- * 입력 불능). 리눅스 기본값은 '항상 인터랙티브'; 사용자가 설정의
- * linuxClickThrough 로 옵트인하면 완전 클릭 통과(상호작용 불가)를 감수한다. */
+ * 컨트롤은 별도 창이라 아바타 페이지는 그 존재를 알 수 없다. 그대로 두면
+ * 자막 말풍선 위에 버튼이 겹쳐 그려진다 — 마지막 대사가 가려진다. 메인만이
+ * 두 사각형을 모두 아는 쪽이므로 여기서 알려 주고, 페이지가 바닥 기준
+ * 요소들을 그만큼 들어 올린다. 잠금이 풀려 컨트롤이 숨으면 0 이다. */
+function chipInsetPx(): number {
+  const visible = !!overlayChip && !overlayChip.isDestroyed() && overlayChip.isVisible();
+  return visible ? chipSize.h + CHIP_MARGIN * 2 : 0;
+}
+
+function publishChipInset(): void {
+  try {
+    overlayWindow?.webContents.send(CHANNELS.overlayChipInset, chipInsetPx());
+  } catch {
+    /* 창이 사라졌다 */
+  }
+}
+
+/** 컨트롤을 아바타 위로 다시 올린다. 싸고 멱등하다. */
+function raiseChip(): void {
+  if (!overlayChip || overlayChip.isDestroyed() || !overlayChip.isVisible()) return;
+  try {
+    overlayChip.setAlwaysOnTop(true, 'screen-saver');
+    overlayChip.moveTop();
+  } catch {
+    /* 정리 중 */
+  }
+}
+
+function syncChipBounds(): void {
+  if (!overlayChip || overlayChip.isDestroyed()) return;
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  try {
+    overlayChip.setBounds(chipBoundsFor(overlayWindow.getBounds()));
+    raiseChip();
+  } catch {
+    /* 정리 중 */
+  }
+}
+
+function applyChipVisibility(): void {
+  if (!overlayChip || overlayChip.isDestroyed()) return;
+  const shouldShow =
+    overlayLocked && !!overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible();
+  if (shouldShow) {
+    syncChipBounds();
+    // showInactive: 포커스를 가져가면 아바타가 다시 잠길 때마다 사용자가
+    // 하던 일에서 끌려 나온다.
+    if (!overlayChip.isVisible()) overlayChip.showInactive();
+    raiseChip();
+  } else if (overlayChip.isVisible()) {
+    overlayChip.hide();
+  }
+  // 위의 show/hide 뒤에 알린다 — 화면에 실제로 있는 것을 알려야 한다.
+  publishChipInset();
+}
+
+function createOverlayChip(): void {
+  if (overlayChip && !overlayChip.isDestroyed()) return;
+  overlayChip = new BrowserWindow({
+    width: chipSize.w,
+    height: chipSize.h,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  // armAlwaysOnTop 은 쓰지 않는다: blur/show 훅과 재선점 타이머를 건다.
+  // 아바타 옆의 **두 번째** 최상위 창에 그걸 돌리면 z-order 트래픽만 늘고
+  // 얻는 것이 없다 — 컨트롤은 작고, 아바타와 함께 만들어지고 사라진다.
+  overlayChip.on('closed', () => {
+    overlayChip = null;
+  });
+  overlayChip.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  // 페이지가 그려진 뒤에 띄운다 — 그 전에 show 하면 투명한 빈 사각형이
+  // 잠깐 떠서 데스크톱 클릭을 먹는다.
+  overlayChip.once('ready-to-show', () => applyChipVisibility());
+  loadRendererPage(overlayChip, 'chip.html');
+}
+
+function destroyOverlayChip(): void {
+  if (overlayChip && !overlayChip.isDestroyed()) overlayChip.destroy();
+  overlayChip = null;
+}
+
+
+// ── 잠금과 입력: 컨트롤은 **자기 창**에 산다 ─────────────────────────
+//
+// 잠긴 아바타는 모든 플랫폼에서 클릭을 데스크톱으로 흘려보내야 한다. 그런데
+// 입력이 통과하는 창은 **자기 잠금 해제 버튼을 담을 수 없다.**
+//
+// 예전에는 한 창 안에서 hover 로 입력을 되살렸다 (`setIgnoreMouseEvents(true,
+// {forward:true})` → 마우스가 컨트롤 위에 오면 ignore 를 끈다). 그 방식은
+// 무너진다:
+//
+//   * `forward` 는 darwin/win32 전용이다. 리눅스에서는 이벤트가 아예 안 와서
+//     hover 복귀가 영원히 불가능하다 — 잠그면 되돌릴 방법이 없다.
+//   * darwin/win32 에서도 forward 되는 것은 **이동 이벤트뿐**이고, hover 감지
+//     → IPC 왕복 → ignore 해제 사이에 누른 클릭은 사라진다. 사용자에게는
+//     "버튼이 보이는데 눌리지 않는다" 로 보인다.
+//
+// 그래서 컨트롤을 **작은 별도 창**으로 뺀다. 그 창은 언제나 인터랙티브고
+// 아바타를 따라다닌다. 아바타 창은 잠금 여부만으로 입력을 정하면 된다 —
+// 플랫폼 분기도, hover 곡예도 없다. (geny-connector 가 같은 버그를 이렇게
+// 해결했고, 그 구조를 그대로 가져온다.)
 function applyOverlayIgnoreMouse(win: BrowserWindow | null, ignore: boolean): void {
   if (!win || win.isDestroyed()) return;
-  if (IS_LINUX) {
-    win.setIgnoreMouseEvents(ignore && !!loadConfig().linuxClickThrough);
-    return;
+  // 모든 플랫폼에서 같은 규칙. forward 는 미지원 플랫폼에서 무시된다.
+  win.setIgnoreMouseEvents(ignore, IS_LINUX ? undefined : { forward: true });
+}
+
+/** 잠금 상태는 **여기가** 소유한다 — 두 창(아바타 + 컨트롤)이 서로 다르게
+ *  알고 있으면 안 된다. */
+function setOverlayLocked(locked: boolean): void {
+  overlayLocked = locked;
+  applyOverlayInput();
+  applyChipVisibility();
+  try {
+    overlayWindow?.webContents.send(CHANNELS.overlayLocked, locked);
+    overlayChip?.webContents.send(CHANNELS.overlayLocked, locked);
+  } catch {
+    /* 창이 사라졌다 */
   }
-  win.setIgnoreMouseEvents(ignore, { forward: true });
+}
+
+/** 오버레이의 입력 상태를 정하는 **유일한** 곳. */
+function applyOverlayInput(): void {
+  applyOverlayIgnoreMouse(overlayWindow, overlayLocked);
+}
+
+/** 무슨 상태에 빠졌든 사용자에게 통제권을 돌려준다 (트레이).
+ *  대가는 아바타에 잘못 닿는 클릭 하나; 통제권을 잃는 것보다 싸다. */
+function forceOverlayInteractive(): void {
+  setOverlayLocked(false);
+  try {
+    overlayWindow?.setIgnoreMouseEvents(false);
+    overlayWindow?.showInactive();
+  } catch {
+    /* ignore */
+  }
 }
 
 function setOverlayEnabled(enabled: boolean): void {
@@ -558,6 +735,7 @@ function setOverlayEnabled(enabled: boolean): void {
     saveOverlayGeometry(true); // persist last move/resize before tearing the window down
     overlayWindow.destroy();
     overlayWindow = null;
+    destroyOverlayChip();
   }
   // Keep the main window's toggle in sync (e.g. when closed via the overlay ✕).
   broadcastConfig(next);
@@ -935,6 +1113,12 @@ function rebuildTrayMenu(): void {
         saveConfig({ autoLaunch: effective });
         rebuildTrayMenu();
       },
+    },
+    {
+      // 비상구. 오버레이가 어떤 상태에 빠졌든 통제권을 돌려준다 — 대가는
+      // 아바타에 잘못 닿는 클릭 하나이고, 통제권을 잃는 것보다 싸다.
+      label: '아바타 조작 복구',
+      click: () => forceOverlayInteractive(),
     },
     { label: '위치 초기화', click: () => resetPositions() },
     { type: 'separator' },
@@ -1417,7 +1601,26 @@ ipcMain.on(CHANNELS.overlayPushState, (_e, state: unknown) => {
 });
 // Overlay renderer → native window controls.
 ipcMain.on(CHANNELS.overlaySetIgnoreMouse, (_e, ignore: boolean) => {
+  // 남아 있는 호출자(구버전 페이지)를 위한 호환 경로. 잠금은 이제 main 이
+  // 소유하므로 이 채널로 임시로 바꾼 값은 다음 잠금 변경에 덮인다.
   applyOverlayIgnoreMouse(overlayWindow, !!ignore);
+});
+
+ipcMain.handle(CHANNELS.overlayGetLocked, () => overlayLocked);
+
+ipcMain.on(CHANNELS.overlaySetLocked, (_e, locked: boolean) => {
+  setOverlayLocked(!!locked);
+});
+
+ipcMain.on(CHANNELS.overlayChipSize, (_e, w: number, h: number) => {
+  // 컨트롤 창은 내용에 맞춰야 한다 — 버튼 수가 STT/TTS 가용성에 따라 다르다.
+  // 창이 내용보다 작으면 버튼이 잘리고, 크면 투명 영역이 클릭을 먹는다.
+  const nw = Math.max(48, Math.round(Number(w) || 0));
+  const nh = Math.max(28, Math.round(Number(h) || 0));
+  if (nw === chipSize.w && nh === chipSize.h) return;
+  chipSize = { w: nw, h: nh };
+  syncChipBounds();
+  publishChipInset();
 });
 ipcMain.on(CHANNELS.overlayMoveBy, (_e, dx: number, dy: number) => {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;

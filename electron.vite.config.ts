@@ -65,6 +65,8 @@ export default defineConfig({
           index: resolve('src/renderer/index.html'),
           overlay: resolve('src/renderer/overlay.html'),
           quickchat: resolve('src/renderer/quickchat.html'),
+          // 잠긴 아바타의 컨트롤 창 (별도 창이라 별도 진입점).
+          chip: resolve('src/renderer/chip.html'),
         },
       },
     },
