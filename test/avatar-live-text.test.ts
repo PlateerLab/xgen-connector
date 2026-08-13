@@ -15,7 +15,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-const CHAT = readFileSync(join(__dirname, '..', 'src/renderer/src/views/Chat.tsx'), 'utf8');
+// Windows 러너는 CRLF 로 체크아웃한다 — \n 고정 검색이 빈 슬라이스를 만들어
+// 이 파일의 검사가 윈도우에서만 실패했다 (CI 실증). 줄바꿈을 정규화한다.
+const CHAT = readFileSync(join(__dirname, '..', 'src/renderer/src/views/Chat.tsx'), 'utf8')
+  .replace(/\r\n/g, '\n');
 
 test('아바타 상태는 messages 가 아니라 liveText 에서 나온다', () => {
   assert.match(CHAT, /streamingText:\s*liveText/, '아바타가 liveText 를 쓰지 않는다');
