@@ -189,15 +189,22 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   이 PC 의 클라우드 폴더: <span className="mcp-item-cmd">/{ws.homeFolder}</span>
                 </div>
               )}
+              {/*
+                  예전에는 "내 클라우드가 꺼져 있습니다 — 마이페이지에서 켜세요"
+                  를 안내했다. 그런데 켜고 끄는 개념 자체가 없어졌고(파일 클라우드는
+                  기본 제공), 안내가 가리키던 메뉴도 사라져서 **켤 방법이 없는
+                  안내**만 남았다. 커넥터가 결정하는 것은 연결 여부 하나다.
+
+                  그래도 서버가 막으면 그 사실은 말해야 한다 — 조용히 빈 폴더를
+                  보여주면 사용자는 파일이 사라진 줄 안다. 다만 "켜라"고 하지
+                  않는다. 지금 막히는 경우는 권한 문제이고, 그건 관리자의 일이다.
+              */}
               {ws?.storageOff && (
                 <div className="small muted" style={{ marginTop: 4 }}>
-                  <div>내 클라우드 스토리지를 쓸 수 없습니다: {ws.storageOff}</div>
+                  <div>내 클라우드 폴더를 열 수 없습니다: {ws.storageOff}</div>
                   <div style={{ marginTop: 2 }}>
-                    본인 설정은 XGEN 웹의 [마이페이지 → 클라우드 스토리지] 에서 켤 수 있습니다.
-                    조직 전체가 꺼져 있으면 관리자만 켤 수 있습니다.
-                  </div>
-                  <div style={{ marginTop: 2 }}>
-                    에이전트 폴더는 이 설정과 무관하게 그대로 동작합니다.
+                    계정에 파일 클라우드 권한이 있는지 관리자에게 확인해 주세요.
+                    에이전트 폴더는 이와 무관하게 그대로 동작합니다.
                   </div>
                 </div>
               )}
