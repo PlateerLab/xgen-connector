@@ -180,6 +180,14 @@ export const Chat: React.FC<{
 }> = ({ session, collapsed, mcpDebug = false, onExpandSidebar }) => {
   const { agent } = session;
   const [messages, setMessages] = useState<Msg[]>([]);
+  // 아바타에게는 **이 세션에서 라이브로 흐른 텍스트만** 준다.
+  //
+  // 예전에는 "마지막 assistant 메시지"를 messages 변경마다 밀어 넣었다.
+  // 그러면 대화 기록을 열기만 해도 그 대화의 마지막 답변이 아바타 말풍선에
+  // 떠서, 아바타가 방금 말한 것처럼 보였다 (사용자 신고). 기록을 읽는 것과
+  // 말하는 것은 다른 일이다 — 책장을 펼쳤다고 배우가 대사를 치면 안 된다.
+  const [liveText, setLiveText] = useState('');
+
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   // 화면 캡처 — 기본 꺼짐. 화면에는 다른 사람의 메시지·비밀번호·미공개 문서가
@@ -278,6 +286,7 @@ export const Chat: React.FC<{
     const iid = session.interactionId ?? newInteractionId(agent.workflowId);
     setInteractionId(iid);
 
+    setLiveText('');
     if (session.resume && session.interactionId) {
       setMessages([]);
       setLoadingHistory(true);
@@ -460,6 +469,7 @@ export const Chat: React.FC<{
       { role: 'assistant', text: '', tools: [], citations: [], streaming: true },
     ]);
     setStreaming(true);
+    setLiveText('');
 
     const tools: ToolEvent[] = [];
     let citations: Citation[] = [];
@@ -501,9 +511,11 @@ export const Chat: React.FC<{
       (ev: ChatEvent) => {
         if (ev.kind === 'text') {
           assistantText += ev.content;
+          setLiveText(assistantText);
           flushSpeech(false);
         } else if (ev.kind === 'summary' && !assistantText) {
           assistantText = ev.text;
+          setLiveText(assistantText);
         }
         setMessages((m) => {
           const copy = [...m];
@@ -667,15 +679,15 @@ export const Chat: React.FC<{
     [stopRecording, stopTts],
   );
 
-  const avatarState: AvatarState = useMemo(() => {
-    const last = messages[messages.length - 1];
-    return {
+  const avatarState: AvatarState = useMemo(
+    () => ({
       workflowId: agent.workflowId,
       workflowName: agent.workflowName,
-      streamingText: last?.role === 'assistant' ? last.text : '',
+      streamingText: liveText,
       speaking: streaming,
-    };
-  }, [messages, streaming, agent]);
+    }),
+    [liveText, streaming, agent],
+  );
 
   // Feed the live state to the floating avatar overlay (a no-op if it's closed).
   useEffect(() => {
