@@ -24,6 +24,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import type { OverlayState } from '../../../preload/index';
 import { AvatarSlot, hasAvatarRenderer, type AvatarState } from '../avatar/AvatarSlot';
+import { SubtitleMarkdown } from '../views/Markdown';
 import { XgenMark } from '../brand/Logo';
 import { EyeIcon, EyeOffIcon } from '../brand/icons';
 // 컨트롤 버튼은 잠금 창(chip)과 **같은 컴포넌트**를 쓴다 — 두 곳이 갈리면
@@ -161,7 +162,9 @@ function Subtitle({
   return (
     <div className="ov-subtitle-wrap">
       <div className={`ov-subtitle sz-${size} ${visible ? 'show' : ''}`} ref={bodyRef}>
-        {revealed}
+        {/* 타자기 reveal 된 프리픽스를 인라인 마크다운으로 — 말풍선에 표/코드
+            블록은 어울리지 않으니 인라인(볼드/코드) + 블록마커 정리만 한다. */}
+        <SubtitleMarkdown text={revealed} />
         {showCursor && <span className="cursor" />}
       </div>
     </div>

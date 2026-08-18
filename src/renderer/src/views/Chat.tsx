@@ -20,6 +20,7 @@ import type { ToolEvent, Citation, VoiceConfig } from '../../../core/index';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
 import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
 import { mcpChatStatus } from './mcp-status-model';
+import { Markdown } from './Markdown';
 import { ToolLogModal } from './ToolLogModal';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
@@ -700,8 +701,19 @@ export const Chat: React.FC<{
                   <ToolActivity events={m.tools} streaming={!!m.streaming} />
                 )}
                 <div className={`bubble ${m.role} ${m.error ? 'error' : ''}`}>
-                  {m.text || (m.streaming ? <span className="cursor" /> : '')}
-                  {m.text && m.streaming && <span className="cursor" />}
+                  {/* 어시스턴트 답변은 웹 채팅과 동일하게 마크다운 렌더 —
+                      볼드/리스트/표/코드블록/링크. 사용자가 입력한 메시지는
+                      리터럴 텍스트라 평문(pre-wrap)으로 둔다. */}
+                  {m.role === 'assistant' ? (
+                    m.text ? (
+                      <Markdown text={m.text} />
+                    ) : (
+                      m.streaming && <span className="cursor" />
+                    )
+                  ) : (
+                    <span className="bubble-plain">{m.text}</span>
+                  )}
+                  {m.role === 'assistant' && m.text && m.streaming && <span className="cursor" />}
                 </div>
                 {/* 이 메시지와 함께 화면이 나갔다는 사실을 남긴다. 대화 기록만
                     봐도 언제 무엇을 보냈는지 알 수 있어야 한다. */}
