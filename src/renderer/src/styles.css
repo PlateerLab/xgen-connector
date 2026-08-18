@@ -240,6 +240,12 @@ button {
 .secondary:hover:not(:disabled) {
   background: var(--panel-2);
 }
+/* 채팅 종료 — 평소엔 조용한 secondary, hover 에서만 위험색으로 (파괴적 확인 아님). */
+.secondary.end-chat:hover:not(:disabled) {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+  color: var(--error);
+}
 /* 파괴적 확인 버튼 (예: 서버 변경 → 로그아웃) — .secondary 의 위험색 변형 */
 .danger {
   display: inline-flex;
@@ -790,6 +796,171 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ─── Unified session sidebar ─── */
+
+/* Small uppercase section label (진행 중인 대화 / 이전 대화). */
+.list-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 10px 8px 4px;
+}
+
+/* Level-2 header: back button + agent name. */
+.drill-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 4px;
+}
+.drill-title {
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Prominent "새 대화 시작" action. */
+.new-chat-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  margin: 4px 0 2px;
+  padding: 11px 12px;
+  border: 1px solid var(--primary-soft-border);
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.new-chat-btn:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/* "진행 중인 대화" strip on the agent list (level 1). */
+.open-sessions {
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+.open-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 8px 9px;
+  cursor: pointer;
+  color: var(--text);
+  background: none;
+  transition: background-color 0.12s ease;
+}
+.open-item:hover {
+  background: var(--panel-2);
+}
+.open-item.active {
+  background: var(--primary-soft);
+}
+.open-body {
+  min-width: 0;
+  flex: 1;
+}
+.open-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.open-meta {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.open-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--gray-300, #cbd2dc);
+  flex-shrink: 0;
+}
+.open-dot.live {
+  background: var(--success);
+  animation: livePulse 1.4s ease-in-out infinite;
+}
+
+/* Streaming/open marker (live-dot inside a name, agent-live on the agent row). */
+.live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--success);
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: livePulse 1.4s ease-in-out infinite;
+}
+.agent-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--primary);
+  flex-shrink: 0;
+}
+.agent-live.streaming {
+  background: var(--success);
+  animation: livePulse 1.4s ease-in-out infinite;
+}
+@keyframes livePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Per-row 채팅 종료 (✕) — subtle until the row is hovered. */
+.conv-end {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+.open-item:hover .conv-end,
+.conv-item:hover .conv-end {
+  opacity: 1;
+}
+.conv-end:hover {
+  background: var(--error-bg);
+  color: var(--error);
 }
 
 .pager {

@@ -1,23 +1,25 @@
 /**
- * Workspace — the main screen: sidebar (agents / conversation history) + chat.
+ * Workspace — the main screen: a unified agent sidebar + the chat pane.
  *
- * The sidebar has two tabs:
- *   - 에이전트: the user's agents (paged, searchable), like the XGEN "Agent 목록".
- *   - 대화 기록: past conversations (interaction list) — click to reopen and
- *     continue that conversation.
- * The sidebar can be collapsed. Includes a settings modal and logout.
+ * The sidebar is ONE list of agents (no more separate 에이전트 / 대화 기록 tabs).
+ *   · Click an agent with no history and no open session → a fresh chat opens.
+ *   · Click an agent that has past conversations or a live session → drill into
+ *     that agent's session chooser (새 대화 시작 · 진행 중인 대화 · 이전 대화 이어보기).
+ * Open sessions are held in the SessionStore and listed in a "진행 중인 대화" strip
+ * at the top, so switching agents never drops a conversation whose answer is
+ * still streaming — its connector stays alive in the background.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
+import { sessionStore, useSessions } from '../session';
+import { agentSessions, isKeepable, openSessions, type SessionState } from '../session-store';
 import type { Agent, Conversation, CurrentUser } from '../../../core/index';
 import type { ConnectorConfig } from '../../../main/config';
-import { Chat, type ChatSession } from './Chat';
+import { Chat } from './Chat';
 import { Settings } from './Settings';
 import { AvatarSettings } from './AvatarSettings';
 import { XgenWordmark, XgenMark } from '../brand/Logo';
-import { SettingsIcon, RefreshIcon, LogoutIcon, PanelLeftIcon, ChatIcon, BotIcon, AvatarIcon } from '../brand/icons';
-
-type Tab = 'agents' | 'history';
+import { SettingsIcon, RefreshIcon, LogoutIcon, PanelLeftIcon, ChatIcon, BotIcon, AvatarIcon, BackIcon, HistoryIcon, CloseIcon, PlusIcon } from '../brand/icons';
 
 function relativeTime(iso: string): string {
   if (!iso) return '';
@@ -34,16 +36,45 @@ function relativeTime(iso: string): string {
   return new Date(t).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
 }
 
+/** A short preview of a session's latest content for the open-sessions strip. */
+function sessionPreview(s: SessionState): string {
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    const t = s.messages[i].text?.trim();
+    if (t) return t.length > 42 ? `${t.slice(0, 42)}…` : t;
+  }
+  return '새 대화';
+}
+
+/** Reuse a loaded agent for richer header meta; otherwise synthesize from the conversation. */
+function synthAgent(c: Conversation, agents: Agent[]): Agent {
+  return (
+    agents.find((a) => a.workflowId === c.workflowId) ?? {
+      id: c.id,
+      workflowId: c.workflowId,
+      workflowName: c.workflowName,
+      nodeCount: 0,
+      isShared: false,
+      isDeployed: false,
+      isCompleted: true,
+      workflowType: 'canvas',
+      description: '',
+      username: '',
+      fullName: '',
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+    }
+  );
+}
+
 export const Workspace: React.FC<{
   user: CurrentUser;
   config: ConnectorConfig;
   onLogout: () => void;
   onConfigChange: () => Promise<ConnectorConfig>;
 }> = ({ user, config, onLogout, onConfigChange }) => {
-  const [tab, setTab] = useState<Tab>('agents');
   const [collapsed, setCollapsed] = useState(false);
 
-  // agents tab
+  // agents list
   const [agents, setAgents] = useState<Agent[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -52,13 +83,18 @@ export const Workspace: React.FC<{
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // history tab
+  // past conversations (for the per-agent chooser) — loaded once, refreshable
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [convLoading, setConvLoading] = useState(false);
-  const [convError, setConvError] = useState<string | null>(null);
 
-  // the open chat session
-  const [session, setSession] = useState<ChatSession | null>(null);
+  // sidebar drill-down: null = agent list (level 1), agent = its session chooser (level 2)
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+
+  // durable session runtime (lives outside React)
+  const { sessions, activeKey } = useSessions();
+  const activeSession = activeKey ? sessions.find((s) => s.key === activeKey) ?? null : null;
+  const open = useMemo(() => openSessions(sessions), [sessions]);
+
   const [showSettings, setShowSettings] = useState(false);
   // 메인 페인 전환: 채팅 ↔ 아바타 설정 (채팅 세션은 뒤에 유지)
   const [showAvatarSettings, setShowAvatarSettings] = useState(false);
@@ -91,11 +127,6 @@ export const Workspace: React.FC<{
         setAgents(res.items);
         setTotalPages(res.pagination.totalPages);
         setPage(res.pagination.page);
-        if (!session && res.items.length) {
-          const last = res.items.find((a) => a.workflowId === config.lastWorkflowId);
-          const a = last ?? res.items[0];
-          setSession({ agent: a });
-        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -113,53 +144,84 @@ export const Workspace: React.FC<{
 
   const loadConversations = useCallback(async () => {
     setConvLoading(true);
-    setConvError(null);
     try {
       setConversations(await xgen.history.conversations());
-    } catch (e) {
-      setConvError(e instanceof Error ? e.message : String(e));
+    } catch {
+      /* 조용히 실패 — 이어보기 목록이 없을 뿐 새 대화는 가능하다 */
     } finally {
       setConvLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (tab === 'history') void loadConversations();
-  }, [tab, loadConversations]);
+    void loadConversations();
+  }, [loadConversations]);
 
-  const pickAgent = useCallback((a: Agent) => {
-    setSession({ agent: a });
+  // Landing: on first load, drop the user straight into a ready chat with the
+  // last-used (or first) agent — but only if nothing is already open. Runs once.
+  const landedRef = useRef(false);
+  useEffect(() => {
+    if (landedRef.current || loading || agents.length === 0) return;
+    landedRef.current = true;
+    if (activeKey || sessions.some(isKeepable)) return;
+    const last = agents.find((a) => a.workflowId === config.lastWorkflowId);
+    sessionStore.openNew(last ?? agents[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agents, loading]);
+
+  const rememberAgent = useCallback((a: Agent) => {
     void xgen.config.set({ lastWorkflowId: a.workflowId });
   }, []);
 
-  const openConversation = useCallback(
-    (c: Conversation) => {
-      // Reuse a matching loaded agent for richer header meta; otherwise synthesize.
-      const match = agents.find((a) => a.workflowId === c.workflowId);
-      const agent: Agent =
-        match ?? {
-          id: c.id,
-          workflowId: c.workflowId,
-          workflowName: c.workflowName,
-          nodeCount: 0,
-          isShared: false,
-          isDeployed: false,
-          isCompleted: true,
-          workflowType: 'canvas',
-          description: '',
-          username: '',
-          fullName: '',
-          createdAt: c.createdAt,
-          updatedAt: c.updatedAt,
-        };
-      setSession({ agent, interactionId: c.interactionId, resume: true });
+  const clickAgent = useCallback(
+    (a: Agent) => {
+      rememberAgent(a);
+      const live = agentSessions(sessions, a.workflowId);
+      const past = conversations.filter((c) => c.workflowId === a.workflowId);
+      if (live.length > 0 || past.length > 0) {
+        setSelectedAgent(a); // drill into the chooser
+      } else {
+        sessionStore.openNew(a); // no history → straight to a new chat
+      }
     },
-    [agents],
+    [sessions, conversations, rememberAgent],
   );
+
+  const startNew = useCallback(
+    (a: Agent) => {
+      rememberAgent(a);
+      sessionStore.openNew(a);
+      setSelectedAgent(null);
+    },
+    [rememberAgent],
+  );
+
+  const resumeConversation = useCallback(
+    (c: Conversation) => {
+      const agent = synthAgent(c, agents);
+      rememberAgent(agent);
+      sessionStore.openResume(agent, c.interactionId, c.workflowName);
+      setSelectedAgent(null);
+    },
+    [agents, rememberAgent],
+  );
+
+  const focusSession = useCallback((key: string) => {
+    sessionStore.setActive(key);
+    setSelectedAgent(null);
+  }, []);
 
   const displayName = user.username || '사용자';
   const initial = displayName.trim().charAt(0) || 'U';
-  const activeConvId = session?.resume ? session.interactionId : undefined;
+
+  // Level-2 chooser data for the selected agent.
+  const selectedLive = selectedAgent ? agentSessions(sessions, selectedAgent.workflowId) : [];
+  const selectedLiveIds = new Set(selectedLive.map((s) => s.interactionId));
+  const selectedPast = selectedAgent
+    ? conversations.filter(
+        (c) => c.workflowId === selectedAgent.workflowId && !selectedLiveIds.has(c.interactionId),
+      )
+    : [];
 
   return (
     <div className={`workspace ${collapsed ? 'collapsed' : ''}`}>
@@ -194,23 +256,125 @@ export const Workspace: React.FC<{
             </div>
           </div>
 
-          <div className="side-tabs">
-            <button
-              className={`side-tab ${tab === 'agents' ? 'active' : ''}`}
-              onClick={() => setTab('agents')}
-            >
-              에이전트
-            </button>
-            <button
-              className={`side-tab ${tab === 'history' ? 'active' : ''}`}
-              onClick={() => setTab('history')}
-            >
-              대화 기록
-            </button>
-          </div>
-
-          {tab === 'agents' ? (
+          {selectedAgent ? (
+            // ── Level 2: one agent's session chooser ──
             <>
+              <div className="drill-head">
+                <button className="icon-btn" title="목록으로" onClick={() => setSelectedAgent(null)}>
+                  <BackIcon size={18} />
+                </button>
+                <div className="drill-title" title={selectedAgent.workflowName}>
+                  {selectedAgent.workflowName}
+                </div>
+              </div>
+
+              <div className="agent-list">
+                <button className="new-chat-btn" onClick={() => startNew(selectedAgent)}>
+                  <PlusIcon size={16} /> 새 대화 시작
+                </button>
+
+                {selectedLive.length > 0 && (
+                  <>
+                    <div className="list-label">진행 중인 대화</div>
+                    {selectedLive.map((s) => (
+                      <div
+                        key={s.key}
+                        className={`conv-item ${activeKey === s.key ? 'active' : ''}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => focusSession(s.key)}
+                        onKeyDown={(e) => e.key === 'Enter' && focusSession(s.key)}
+                      >
+                        <span className="conv-icon">
+                          <ChatIcon size={15} />
+                        </span>
+                        <span className="conv-body">
+                          <div className="conv-name">
+                            {s.streaming && <span className="live-dot" />}
+                            {sessionPreview(s)}
+                          </div>
+                          <div className="conv-meta">{s.streaming ? '응답 중…' : '열려 있음'}</div>
+                        </span>
+                        <button
+                          className="conv-end"
+                          title="채팅 종료"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            sessionStore.endChat(s.key);
+                          }}
+                        >
+                          <CloseIcon size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {selectedPast.length > 0 && (
+                  <>
+                    <div className="list-label">이전 대화</div>
+                    {selectedPast.map((c) => (
+                      <button
+                        key={c.interactionId}
+                        className="conv-item"
+                        onClick={() => resumeConversation(c)}
+                      >
+                        <span className="conv-icon">
+                          <HistoryIcon size={15} />
+                        </span>
+                        <span className="conv-body">
+                          <div className="conv-name">{c.workflowName || '대화'}</div>
+                          <div className="conv-meta">
+                            {relativeTime(c.updatedAt || c.createdAt)}
+                            {c.interactionCount ? ` · ${c.interactionCount}개 대화` : ''}
+                          </div>
+                        </span>
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {convLoading && selectedPast.length === 0 && selectedLive.length === 0 && (
+                  <div className="muted small pad">불러오는 중…</div>
+                )}
+              </div>
+            </>
+          ) : (
+            // ── Level 1: agent list (+ open-sessions strip) ──
+            <>
+              {open.length > 0 && (
+                <div className="open-sessions">
+                  <div className="list-label">진행 중인 대화</div>
+                  {open.map((s) => (
+                    <div
+                      key={s.key}
+                      className={`open-item ${activeKey === s.key ? 'active' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => focusSession(s.key)}
+                      onKeyDown={(e) => e.key === 'Enter' && focusSession(s.key)}
+                      title={sessionPreview(s)}
+                    >
+                      <span className={`open-dot ${s.streaming ? 'live' : ''}`} />
+                      <span className="open-body">
+                        <div className="open-name">{s.agent.workflowName}</div>
+                        <div className="open-meta">{s.streaming ? '응답 중…' : sessionPreview(s)}</div>
+                      </span>
+                      <button
+                        className="conv-end"
+                        title="채팅 종료"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          sessionStore.endChat(s.key);
+                        }}
+                      >
+                        <CloseIcon size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="sidebar-search">
                 <input
                   className="search"
@@ -229,7 +393,14 @@ export const Workspace: React.FC<{
                     {o === 'all' ? '전체' : o === 'personal' ? '개인' : '공유'}
                   </button>
                 ))}
-                <button className="chip ghost" onClick={() => void load(page)} title="새로고침">
+                <button
+                  className="chip ghost"
+                  onClick={() => {
+                    void load(page);
+                    void loadConversations();
+                  }}
+                  title="새로고침"
+                >
                   <RefreshIcon size={13} />
                 </button>
               </div>
@@ -238,26 +409,32 @@ export const Workspace: React.FC<{
                 {loading && <div className="muted small pad">불러오는 중…</div>}
                 {error && <div className="error small pad">{error}</div>}
                 {!loading &&
-                  agents.map((a) => (
-                    <button
-                      key={a.workflowId}
-                      className={`agent-item ${
-                        session && !session.resume && session.agent.workflowId === a.workflowId
-                          ? 'active'
-                          : ''
-                      }`}
-                      onClick={() => pickAgent(a)}
-                    >
-                      <span className="agent-body">
-                        <div className="agent-name">{a.workflowName}</div>
-                        <div className="agent-meta">
-                          {a.isDeployed && <span className="dot" />}
-                          {a.isShared ? '공유' : '개인'} · 노드 {a.nodeCount}개
-                          {a.isDeployed ? ' · 배포됨' : ''}
-                        </div>
-                      </span>
-                    </button>
-                  ))}
+                  agents.map((a) => {
+                    const live = agentSessions(sessions, a.workflowId);
+                    const isActive = activeSession?.agent.workflowId === a.workflowId;
+                    return (
+                      <button
+                        key={a.workflowId}
+                        className={`agent-item ${isActive ? 'active' : ''}`}
+                        onClick={() => clickAgent(a)}
+                      >
+                        <span className="agent-body">
+                          <div className="agent-name">{a.workflowName}</div>
+                          <div className="agent-meta">
+                            {a.isDeployed && <span className="dot" />}
+                            {a.isShared ? '공유' : '개인'} · 노드 {a.nodeCount}개
+                            {a.isDeployed ? ' · 배포됨' : ''}
+                          </div>
+                        </span>
+                        {live.length > 0 && (
+                          <span
+                            className={`agent-live ${live.some((s) => s.streaming) ? 'streaming' : ''}`}
+                            title={live.some((s) => s.streaming) ? '응답 중' : '열린 대화 있음'}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
                 {!loading && !error && agents.length === 0 && (
                   <div className="muted small pad">에이전트가 없습니다.</div>
                 )}
@@ -277,33 +454,6 @@ export const Workspace: React.FC<{
                 </div>
               )}
             </>
-          ) : (
-            <div className="agent-list">
-              {convLoading && <div className="muted small pad">불러오는 중…</div>}
-              {convError && <div className="error small pad">{convError}</div>}
-              {!convLoading &&
-                conversations.map((c) => (
-                  <button
-                    key={c.interactionId}
-                    className={`conv-item ${activeConvId === c.interactionId ? 'active' : ''}`}
-                    onClick={() => openConversation(c)}
-                  >
-                    <span className="conv-icon">
-                      <ChatIcon size={15} />
-                    </span>
-                    <span className="conv-body">
-                      <div className="conv-name">{c.workflowName || '대화'}</div>
-                      <div className="conv-meta">
-                        {relativeTime(c.updatedAt || c.createdAt)}
-                        {c.interactionCount ? ` · ${c.interactionCount}개 대화` : ''}
-                      </div>
-                    </span>
-                  </button>
-                ))}
-              {!convLoading && !convError && conversations.length === 0 && (
-                <div className="muted small pad">저장된 대화가 없습니다.</div>
-              )}
-            </div>
           )}
 
           <div className="sidebar-foot">
@@ -323,9 +473,10 @@ export const Workspace: React.FC<{
       <main className="main-pane">
         {showAvatarSettings ? (
           <AvatarSettings user={user} serverUrl={config.serverUrl} onBack={() => setShowAvatarSettings(false)} />
-        ) : session ? (
+        ) : activeSession ? (
           <Chat
-            session={session}
+            key={activeSession.key}
+            session={activeSession}
             collapsed={collapsed}
             mcpDebug={config.mcpDebug === true}
             onExpandSidebar={() => setCollapsed(false)}
