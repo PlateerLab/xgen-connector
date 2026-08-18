@@ -21,6 +21,7 @@
  */
 import WebSocket from 'ws';
 import { getMcpManager, type McpServerAdvert } from './mcp-manager';
+import { getLocalToolProvider, LOCAL_SERVER } from './local-tools';
 import { appendMcpRuntimeLog } from './mcp-runtime-log';
 import { xgenWebSocketTlsOptions } from './connection-security';
 
@@ -289,6 +290,19 @@ export class McpBridge {
             inputSchema: t.inputSchema,
           })),
         );
+      // Connector-hosted built-ins (local shell, …) ride the SAME catalog as
+      // configured MCP servers — the backend/agent can't tell them apart, so
+      // local machine control needs no server-side wiring. Prepended so they
+      // are stable and visible even before any external server connects.
+      const builtins = getLocalToolProvider()
+        .advertise()
+        .map((t) => ({
+          server: LOCAL_SERVER,
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+        }));
+      tools.unshift(...builtins);
       if (this.ws?.readyState === WebSocket.OPEN) {
         const catalogId = `${Date.now()}-${++this.catalogSeq}`;
         this.pendingCatalogId = catalogId;
@@ -350,7 +364,12 @@ export class McpBridge {
       });
       let payload: Record<string, unknown>;
       try {
-        const result = await getMcpManager().callTool(String(server), String(tool), args ?? {});
+        // Built-in (connector-hosted) tools dispatch locally; everything else
+        // goes to the configured MCP server via MCPManager. Same wire contract.
+        const local = getLocalToolProvider();
+        const result = local.owns(String(server))
+          ? await local.callTool(String(tool), args ?? {})
+          : await getMcpManager().callTool(String(server), String(tool), args ?? {});
         payload = { request_id, ok: true, result };
       } catch (e) {
         payload = { request_id, ok: false, error: e instanceof Error ? e.message : String(e) };

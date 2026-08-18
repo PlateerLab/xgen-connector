@@ -65,6 +65,7 @@ import { accountKey, describeAccount, moveRoot, rootConflict, rootOf } from './w
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager, type McpHttpFetch } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
+import { getLocalToolProvider } from './local-tools';
 import {
   clearMcpRuntimeLogs,
   mcpRuntimeLogs,
@@ -1169,6 +1170,8 @@ function syncMcp(): void {
     httpFetch: mcpHttpFetch,
     allowPrivateCertificate: cfg.allowPrivateCertificate === true,
   });
+  // Connector-hosted built-ins (local shell) share the bridge catalog.
+  getLocalToolProvider().configure(cfg.localShell);
   const bridge = getMcpBridge();
   if (!mcpStatusWired) {
     mcpStatusWired = true;
@@ -1179,7 +1182,12 @@ function syncMcp(): void {
     onMcpRuntimeLog((entry) => safeSend(mainWindow, CHANNELS.mcpRuntimeLogEvent, entry));
   }
   const userId = currentUserId();
-  if (cfg.mcp && userId) {
+  // The bridge is the single conduit for BOTH external MCP servers and the
+  // connector's built-in local tools. Start it when EITHER is on — the local
+  // shell capability must reach the agent even if the user configured no MCP
+  // servers (it is the out-of-the-box default).
+  const shellOn = getLocalToolProvider().advertise().length > 0;
+  if ((cfg.mcp || shellOn) && userId) {
     // start() is idempotent for the same target: it refreshes the catalog on a
     // live socket instead of tearing it down, so repeated syncMcp() (e.g. on
     // token refresh / restore) never flaps the connection status.
@@ -1263,6 +1271,9 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
   }
   if (patch.autoUpdate !== undefined) setAutoUpdate(!!patch.autoUpdate);
   if (patch.updateServer !== undefined) setUpdateServer(patch.updateServer);
+  // 로컬 셸 접근 토글/설정: 프로바이더를 재구성하고 카탈로그를 다시 광고한다
+  // (켜면 브릿지가 없던 경우 뜨고, 끄면 도구가 카탈로그에서 빠진다).
+  if (patch.localShell !== undefined) syncMcp();
   if (patch.theme) nativeTheme.themeSource = patch.theme;
   if (patch.linuxClickThrough !== undefined) {
     // 즉시 재적용: 클릭 통과가 켜진 오버레이는 마우스 이벤트를 못 받아
