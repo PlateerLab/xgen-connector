@@ -13,9 +13,50 @@ interface RawIoLog {
   interaction_id: string;
   workflow_id: string;
   workflow_name: string;
-  input_data: string;
-  output_data: string;
+  // ⚠ 서버는 `result` 를 그대로 싣는다 — 구조화 출력(Schema Provider) 턴은
+  // dict, 멀티모달 입력은 [{type,text},{type,image_url}] 배열이라 **문자열이
+  // 아니다.** 타입만 string 이라 믿고 그대로 렌더하면 React 가
+  // "Objects are not valid as a React child" 로 죽어 화면이 통째로 검게 된다
+  // (기존 채팅 불러오기 크래시의 근본 원인). ``toDisplayText`` 로 항상 문자열화.
+  input_data: unknown;
+  output_data: unknown;
   updated_at: string;
+}
+
+/** 서버가 준 turn 값(문자열/멀티모달 배열/구조화 dict)을 **표시용 문자열**로.
+ *
+ *  - 문자열: 그대로.
+ *  - 멀티모달 content 배열: text 블록만 이어 붙이고, 이미지 등은 표식으로.
+ *  - 그 외(dict/number/…): JSON 으로. (렌더가 절대 non-string 을 받지 않게.)
+ */
+export function toDisplayText(v: unknown): string {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) {
+    const parts = v.map((b) => {
+      if (b == null) return '';
+      if (typeof b === 'string') return b;
+      if (typeof b === 'object') {
+        const o = b as Record<string, unknown>;
+        if (typeof o.text === 'string') return o.text;
+        const t = typeof o.type === 'string' ? o.type : '';
+        if (t.includes('image')) return '[이미지]';
+        try {
+          return JSON.stringify(b);
+        } catch {
+          return String(b);
+        }
+      }
+      return String(b);
+    });
+    return parts.filter(Boolean).join('\n');
+  }
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
 }
 
 interface RawInteraction {
@@ -43,8 +84,8 @@ export class HistoryApi {
       interactionId: r.interaction_id,
       workflowId: r.workflow_id,
       workflowName: r.workflow_name,
-      input: r.input_data,
-      output: r.output_data,
+      input: toDisplayText(r.input_data),
+      output: toDisplayText(r.output_data),
       updatedAt: r.updated_at,
     }));
   }

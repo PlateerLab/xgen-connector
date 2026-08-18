@@ -36,10 +36,13 @@ function relativeTime(iso: string): string {
   return new Date(t).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
 }
 
-/** A short preview of a session's latest content for the open-sessions strip. */
+/** A short preview of a session's latest content for the open-sessions strip.
+ *  Defensive: message text should always be a string (history is coerced at the
+ *  transport), but a non-string here must degrade to a preview, never throw. */
 function sessionPreview(s: SessionState): string {
   for (let i = s.messages.length - 1; i >= 0; i--) {
-    const t = s.messages[i].text?.trim();
+    const raw = s.messages[i].text;
+    const t = (typeof raw === 'string' ? raw : raw == null ? '' : String(raw)).trim();
     if (t) return t.length > 42 ? `${t.slice(0, 42)}…` : t;
   }
   return '새 대화';
