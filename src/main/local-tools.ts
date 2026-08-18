@@ -9,18 +9,26 @@
  * changes — a built-in tool is indistinguishable from an MCP-server tool in the
  * catalog. The reserved server namespace is {@link LOCAL_SERVER}.
  *
- * The headline tool is {@link SHELL_TOOL} `Shell`: run a command in the machine's
- * NATIVE shell (PowerShell on Windows, the login shell / bash / sh elsewhere).
- * That single primitive is what lets an agent do "내 컴퓨터에서 메모장 켜줘"
- * (`notepad` / `open -a TextEdit` / `xdg-open`). Everything is GATED by config
- * and OFF unless the user turned the capability on — running arbitrary local
- * commands driven from a chat is powerful, so it must be visible and revocable.
+ * Two tools, both operating the USER'S OWN PHYSICAL COMPUTER (not the cloud
+ * workspace / sandbox):
+ *   · {@link SHELL_TOOL} `Shell` — run ONE command in the native shell
+ *     (PowerShell on Windows, the user's `$SHELL`/bash elsewhere). Robustness
+ *     is the whole game here (2026-08 field report — the tool "worked then
+ *     stopped"): stdin is CLOSED so interactive programs get EOF instead of
+ *     hanging to the timeout; `background:true` launches GUI apps / long-running
+ *     processes detached and returns immediately (so they aren't SIGKILLed at
+ *     the timeout); a foreground timeout kills the whole process TREE.
+ *   · {@link OPEN_TOOL} `Open` — open a file / URL / folder with the OS default
+ *     app (Windows `start`, macOS `open`, Linux `xdg-open`), non-blocking. This
+ *     is the unambiguous "열어줘" primitive so the agent doesn't have to guess
+ *     xdg-open vs gedit vs kate.
  *
- * Lives in the MAIN process (only main may spawn subprocesses). Pure helpers
- * (shell resolution, result shaping, arg coercion) are exported for unit tests
- * that never touch a real process.
+ * Everything is GATED by config and hidden unless the user turned the capability
+ * on — running arbitrary local commands from a chat is powerful, so it must be
+ * visible and revocable. Lives in the MAIN process (only main may spawn
+ * subprocesses). Pure helpers are exported for unit tests that never spawn.
  */
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir, platform } from 'node:os';
 import { augmentedPath, buildChildEnv } from './exec-resolve';
 
@@ -28,10 +36,11 @@ import { augmentedPath, buildChildEnv } from './exec-resolve';
  *  tool as `mcp_local_<Tool>` after backend sanitization — keep it stable. */
 export const LOCAL_SERVER = 'local';
 export const SHELL_TOOL = 'Shell';
+export const OPEN_TOOL = 'Open';
 
 /** Device-local shell capability config (persisted under ConnectorConfig.localShell). */
 export interface LocalShellConfig {
-  /** Master switch for the built-in Shell tool. Default ON (opt-out). */
+  /** Master switch for the built-in local tools. Default ON (opt-out). */
   enabled?: boolean;
   /** Default working directory for commands. Empty → the user's home. */
   cwd?: string;
@@ -61,6 +70,10 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 60 * 60_000;
 const OUTPUT_CAP = 200_000; // chars kept from stdout+stderr
+/** Grace we wait for a background launch to fail (ENOENT) before reporting success. */
+const BG_SETTLE_MS = 350;
+/** The OS opener (start/open/xdg-open) returns fast; bound it modestly. */
+const OPEN_TIMEOUT_MS = 15_000;
 
 const IS_WIN = platform() === 'win32';
 const IS_MAC = platform() === 'darwin';
@@ -122,11 +135,19 @@ export function shellInvocation(
   return { file, args: ['-lc', command] };
 }
 
+/** Argv that opens a file / URL / folder with the OS default handler. Returns
+ *  fast — the opener forks the real app and exits. */
+export function openerInvocation(target: string): { file: string; args: string[] } {
+  const t = String(target || '').trim();
+  if (IS_WIN) return { file: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '', t] };
+  if (IS_MAC) return { file: 'open', args: [t] };
+  return { file: 'xdg-open', args: [t] };
+}
+
 /** First program token of a command line (for the blocklist check). */
 export function firstToken(command: string): string {
   const m = String(command || '').trim().match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
   const raw = (m && (m[1] || m[2] || m[3])) || '';
-  // strip a path prefix and a Windows extension so "C:\\…\\rm.exe" → "rm".
   const base = raw.split(/[\\/]/).pop() || raw;
   return base.replace(/\.(exe|cmd|bat|com|ps1)$/i, '').toLowerCase();
 }
@@ -163,15 +184,28 @@ export function shellToolSchema(): LocalToolSchema {
   return {
     name: SHELL_TOOL,
     description:
-      `Run a command on the user's OWN computer through its native shell (${nativeShellLabel()}), ` +
-      `as the logged-in desktop user. Use this to operate the local machine — launch apps ` +
-      `(e.g. Windows: "notepad"; macOS: "open -a TextEdit"; Linux: "xdg-open <path>"), read/write ` +
-      `local files, run scripts, inspect the system. Returns combined stdout/stderr and the exit ` +
-      `code. Prefer non-interactive commands; long-running ones are stopped at the timeout.`,
+      `Run ONE command on the USER'S OWN COMPUTER (the local desktop where this connector runs), ` +
+      `through its native shell (${nativeShellLabel()}), as the logged-in user. This is the ` +
+      `physical machine — NOT the cloud workspace/sandbox. Use it to operate that computer: run ` +
+      `scripts, read/write local files, inspect the system, launch apps.\n` +
+      `IMPORTANT for reliability:\n` +
+      `• Non-interactive only — stdin is closed, so REPLs/prompts (bash, python with no args, ` +
+      `\`read\`, pagers) return immediately instead of hanging. Pass the full command each call.\n` +
+      `• To launch a GUI app or a long-running/never-exiting process (editors like notepad/gedit, ` +
+      `servers, watchers), set background:true — it starts detached and returns at once, and is ` +
+      `NOT killed at the timeout. Without it, a foreground app is terminated when the timeout hits.\n` +
+      `• To just open a file/URL/folder with its default app, prefer the Open tool.\n` +
+      `Returns combined stdout/stderr and the exit code (foreground only).`,
     inputSchema: {
       type: 'object',
       properties: {
         command: { type: 'string', description: 'The shell command line to execute.' },
+        background: {
+          type: 'boolean',
+          description:
+            'Launch detached and return immediately (no output captured). Use for GUI apps and ' +
+            'long-running processes so they keep running and are not killed at the timeout.',
+        },
         cwd: {
           type: 'string',
           description: 'Working directory (absolute). Defaults to the configured directory or home.',
@@ -183,10 +217,32 @@ export function shellToolSchema(): LocalToolSchema {
         },
         timeout_ms: {
           type: 'integer',
-          description: 'Optional per-command timeout override (ms).',
+          description: 'Optional per-command timeout override (ms). Ignored when background=true.',
         },
       },
       required: ['command'],
+    },
+  };
+}
+
+/** The Open tool schema. */
+export function openToolSchema(): LocalToolSchema {
+  return {
+    name: OPEN_TOOL,
+    description:
+      `Open a file, folder, or URL on the USER'S OWN COMPUTER with its default application ` +
+      `(Windows start / macOS open / Linux xdg-open). Non-blocking — the app launches and this ` +
+      `returns immediately. Use this for "open <file>", "show me <folder>", "open <url>". To launch ` +
+      `an app by name or run a command, use the Shell tool with background:true instead.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: {
+          type: 'string',
+          description: 'Absolute file path, folder path, or URL to open with the default handler.',
+        },
+      },
+      required: ['target'],
     },
   };
 }
@@ -197,6 +253,7 @@ export function coerceShellArgs(args: unknown): {
   cwd?: string;
   shell?: string;
   timeoutMs?: number;
+  background: boolean;
 } {
   const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
   const command = typeof a.command === 'string' ? a.command : String(a.command ?? '');
@@ -204,14 +261,47 @@ export function coerceShellArgs(args: unknown): {
   const shell = typeof a.shell === 'string' ? a.shell : undefined;
   const t = a.timeout_ms ?? a.timeoutMs;
   const timeoutMs = typeof t === 'number' && t > 0 ? t : undefined;
-  return { command, cwd, shell, timeoutMs };
+  const bg = a.background ?? a.detach ?? a.detached;
+  const background = bg === true || bg === 'true' || bg === 1;
+  return { command, cwd, shell, timeoutMs, background };
 }
 
-/**
- * The connector-hosted local tool provider. One instance in main; the bridge
- * reads {@link configure} each time config changes and asks {@link advertise}
- * for the catalog + {@link callTool} to dispatch a call.
- */
+export function coerceOpenArgs(args: unknown): { target: string } {
+  const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+  const raw = a.target ?? a.path ?? a.url ?? a.file;
+  return { target: typeof raw === 'string' ? raw : String(raw ?? '') };
+}
+
+interface SpawnCaptured {
+  code: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+  timedOut?: boolean;
+}
+
+/** Kill a child and, on POSIX, its whole process group (so a shell's children —
+ *  a foreground GUI, a subprocess tree — go with it and don't orphan). */
+function killTree(child: ChildProcess, detachedGroup: boolean): void {
+  try {
+    if (IS_WIN) {
+      if (child.pid) spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
+      else child.kill('SIGKILL');
+    } else if (detachedGroup && child.pid) {
+      process.kill(-child.pid, 'SIGKILL'); // negative pid = the process group
+    } else {
+      child.kill('SIGKILL');
+    }
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
 export class LocalToolProvider {
   private cfg: Required<LocalShellConfig> = shellConfig(undefined);
 
@@ -226,76 +316,117 @@ export class LocalToolProvider {
 
   /** Tools advertised into the catalog. Empty when the capability is off. */
   advertise(): LocalToolSchema[] {
-    return this.cfg.enabled ? [shellToolSchema()] : [];
+    return this.cfg.enabled ? [shellToolSchema(), openToolSchema()] : [];
   }
 
   async callTool(tool: string, args: unknown): Promise<LocalToolResult> {
-    if (tool !== SHELL_TOOL) throw new Error(`unknown local tool: ${tool}`);
-    if (!this.cfg.enabled) throw new Error('로컬 셸 접근이 꺼져 있습니다 (설정 > 로컬 도구).');
-    const { command, cwd, shell, timeoutMs } = coerceShellArgs(args);
+    if (!this.cfg.enabled) throw new Error('로컬 도구 접근이 꺼져 있습니다 (설정 > 로컬 도구).');
+    if (tool === SHELL_TOOL) return this.shell(args);
+    if (tool === OPEN_TOOL) return this.open(args);
+    throw new Error(`unknown local tool: ${tool}`);
+  }
+
+  private async shell(args: unknown): Promise<LocalToolResult> {
+    const { command, cwd, shell, timeoutMs, background } = coerceShellArgs(args);
     if (!command.trim()) throw new Error('command must not be empty');
     if (isBlocked(command, this.cfg.blocked)) {
       throw new Error(`명령 '${firstToken(command)}' 은(는) 차단 목록에 있어 실행할 수 없습니다.`);
     }
-    return this.runShell(command, {
-      cwd: cwd || this.cfg.cwd || homedir(),
-      shell,
-      timeoutMs: Math.max(
-        MIN_TIMEOUT_MS,
-        Math.min(MAX_TIMEOUT_MS, Math.round(timeoutMs || this.cfg.timeoutMs)),
-      ),
-    });
-  }
-
-  private async runShell(
-    command: string,
-    opts: { cwd: string; shell?: string; timeoutMs: number },
-  ): Promise<LocalToolResult> {
-    // GUI-launched apps don't inherit the login-shell PATH; augment it so
-    // `open`/`xdg-open`/brew paths are visible. The shell binary itself is the
-    // user's own `$SHELL` (a path like /bin/zsh), not the PATH string.
     const pathStr = await augmentedPath();
     const userShellBin = IS_WIN ? null : process.env.SHELL || null;
-    const { file, args } = shellInvocation(command, userShellBin, opts.shell);
+    const { file, args: argv } = shellInvocation(command, userShellBin, shell);
     const env = buildChildEnv(pathStr);
+    const runCwd = cwd || this.cfg.cwd || homedir();
 
-    return await new Promise<LocalToolResult>((resolve) => {
-      let child: ReturnType<typeof spawn>;
+    if (background) return this.spawnBackground(file, argv, env, runCwd);
+
+    const timeout = Math.max(
+      MIN_TIMEOUT_MS,
+      Math.min(MAX_TIMEOUT_MS, Math.round(timeoutMs || this.cfg.timeoutMs)),
+    );
+    const r = await this.spawnCapture(file, argv, env, runCwd, timeout);
+    if (r.error) return { content: [{ type: 'text', text: `셸 실행 실패: ${r.error.message}` }], isError: true };
+    if (r.timedOut) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              `명령이 ${Math.round(timeout / 1000)}초 안에 끝나지 않아 중단했습니다. ` +
+              `대화형 명령이거나 종료되지 않는 프로그램(에디터·서버 등)이면 background:true 로 실행하세요.` +
+              (r.stdout || r.stderr ? `\n\n--- 중단 전 출력 ---\n${(r.stdout + '\n' + r.stderr).trim().slice(-2000)}` : ''),
+          },
+        ],
+        isError: true,
+      };
+    }
+    return shapeResult(r.stdout, r.stderr, r.code, r.signal);
+  }
+
+  private async open(args: unknown): Promise<LocalToolResult> {
+    const { target } = coerceOpenArgs(args);
+    if (!target.trim()) throw new Error('target must not be empty');
+    const pathStr = await augmentedPath();
+    const env = buildChildEnv(pathStr);
+    const { file, args: argv } = openerInvocation(target);
+    const r = await this.spawnCapture(file, argv, env, homedir(), OPEN_TIMEOUT_MS);
+    if (r.error) {
+      return {
+        content: [{ type: 'text', text: `열기 실패: ${r.error.message} (opener: ${file})` }],
+        isError: true,
+      };
+    }
+    // Openers fork the app and exit 0. A non-zero exit is a real failure
+    // (no handler, bad path); a timeout means the opener itself hung (rare) —
+    // treat as launched since the app is likely up.
+    if (r.timedOut || r.code === 0 || r.code == null) {
+      return { content: [{ type: 'text', text: `열었습니다: ${target}` }] };
+    }
+    return {
+      content: [{ type: 'text', text: `열기 실패 (${file} exit ${r.code}): ${(r.stderr || r.stdout || '(no output)').trim()}` }],
+      isError: true,
+    };
+  }
+
+  /** Foreground: capture output, close stdin (no interactive hang), tree-kill on timeout. */
+  private spawnCapture(
+    file: string,
+    argv: string[],
+    env: Record<string, string>,
+    cwd: string,
+    timeoutMs: number,
+  ): Promise<SpawnCaptured> {
+    // POSIX: run in its own process group so the timeout can reap the whole tree.
+    const detachedGroup = !IS_WIN;
+    return new Promise<SpawnCaptured>((resolve) => {
+      let child: ChildProcess;
       try {
-        child = spawn(file, args, {
-          cwd: opts.cwd || homedir(),
+        child = spawn(file, argv, {
+          cwd: cwd || homedir(),
           env,
           windowsHide: true,
-          // No shell:true — we ARE the shell (file is powershell/bash); this
-          // avoids a double parse and keeps `command` a single opaque string.
+          detached: detachedGroup,
+          // stdin IGNORED → interactive programs get EOF immediately instead of
+          // blocking to the timeout (the "대화형 쉘 타임아웃" report).
+          stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (e) {
-        resolve({
-          content: [{ type: 'text', text: `셸 실행 실패: ${e instanceof Error ? e.message : String(e)}` }],
-          isError: true,
-        });
+        resolve({ code: null, signal: null, stdout: '', stderr: '', error: e as Error });
         return;
       }
       let out = '';
       let err = '';
       let done = false;
-      const finish = (r: LocalToolResult) => {
+      const finish = (r: SpawnCaptured) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         resolve(r);
       };
       const timer = setTimeout(() => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          /* already gone */
-        }
-        finish({
-          content: [{ type: 'text', text: `명령이 ${Math.round(opts.timeoutMs / 1000)}초 안에 끝나지 않아 중단했습니다.` }],
-          isError: true,
-        });
-      }, opts.timeoutMs);
+        killTree(child, detachedGroup);
+        finish({ code: null, signal: 'SIGKILL', stdout: out, stderr: err, timedOut: true });
+      }, timeoutMs);
       child.stdout?.on('data', (d) => {
         out += String(d);
         if (out.length > OUTPUT_CAP * 2) out = out.slice(-OUTPUT_CAP * 2);
@@ -304,13 +435,60 @@ export class LocalToolProvider {
         err += String(d);
         if (err.length > OUTPUT_CAP * 2) err = err.slice(-OUTPUT_CAP * 2);
       });
-      child.on('error', (e) => {
-        finish({
-          content: [{ type: 'text', text: `셸 실행 실패: ${e instanceof Error ? e.message : String(e)}` }],
+      child.on('error', (e) => finish({ code: null, signal: null, stdout: out, stderr: err, error: e }));
+      child.on('close', (code, signal) => finish({ code, signal, stdout: out, stderr: err }));
+    });
+  }
+
+  /** Background: detached + unref, return immediately. The launched app survives
+   *  this connector and is never killed at a timeout. */
+  private spawnBackground(
+    file: string,
+    argv: string[],
+    env: Record<string, string>,
+    cwd: string,
+  ): Promise<LocalToolResult> {
+    return new Promise<LocalToolResult>((resolve) => {
+      let child: ChildProcess;
+      try {
+        child = spawn(file, argv, {
+          cwd: cwd || homedir(),
+          env,
+          windowsHide: true,
+          detached: true,
+          stdio: 'ignore',
+        });
+      } catch (e) {
+        resolve({
+          content: [{ type: 'text', text: `백그라운드 실행 실패: ${e instanceof Error ? e.message : String(e)}` }],
           isError: true,
         });
-      });
-      child.on('close', (code, signal) => finish(shapeResult(out, err, code, signal)));
+        return;
+      }
+      let settled = false;
+      const done = (r: LocalToolResult) => {
+        if (settled) return;
+        settled = true;
+        resolve(r);
+      };
+      // A launch that can't even start (ENOENT) fires 'error' synchronously-ish;
+      // give it a brief grace so we report the failure instead of a false success.
+      child.on('error', (e) =>
+        done({ content: [{ type: 'text', text: `백그라운드 실행 실패: ${e.message}` }], isError: true }),
+      );
+      child.unref();
+      setTimeout(
+        () =>
+          done({
+            content: [
+              {
+                type: 'text',
+                text: `백그라운드로 시작했습니다 (pid ${child.pid ?? '?'}). 계속 실행되며, 출력은 캡처하지 않습니다.`,
+              },
+            ],
+          }),
+        BG_SETTLE_MS,
+      );
     });
   }
 }
