@@ -5,16 +5,18 @@ import { HotkeyCapture } from './HotkeyCapture';
 import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
+import { MonitorIcon, ServerIcon, RefreshIcon, SpeakerIcon } from '../brand/icons';
 
 type Theme = NonNullable<ConnectorConfig['theme']>;
 
 // 비슷한 기능끼리 탭으로 묶는다 — 세로로만 길어지던 설정을 폭을 넓혀 분류한다.
-type Tab = 'connection' | 'general' | 'avatar' | 'local' | 'updates';
+type Tab = 'connection' | 'general' | 'avatar' | 'local' | 'storage' | 'updates';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'connection', label: '연결' },
   { id: 'general', label: '일반' },
-  { id: 'avatar', label: '아바타·자막' },
+  { id: 'avatar', label: '아바타' },
   { id: 'local', label: '로컬 도구' },
+  { id: 'storage', label: '스토리지' },
   { id: 'updates', label: '업데이트' },
 ];
 
@@ -406,92 +408,126 @@ export const Settings: React.FC<{
                   ))}
                 </div>
               </div>
+
+              {/* 음성 — 아바타가 말하고 듣는 통로라 아바타 탭에 둔다. */}
+              <div className="tool-card">
+                <div className="tool-card-main">
+                  <span className="tool-card-icon"><SpeakerIcon size={18} /></span>
+                  <div className="tool-card-text">
+                    <div className="tool-card-title">음성 (STT/TTS)</div>
+                    <div className="tool-card-desc">
+                      마이크 음성 입력과 답변 음성 출력. 입·출력 장치와 음성 프로필을 관리합니다.
+                    </div>
+                  </div>
+                  <button className="secondary" onClick={() => setShowVoice(true)}>
+                    관리
+                  </button>
+                </div>
+              </div>
             </>
           )}
 
           {/* ─── 로컬 도구 ─── */}
           {tab === 'local' && (
             <>
-              <div className="field-row">
-                <span>
-                  로컬 셸 접근
-                  <span className="small muted" style={{ marginLeft: 8, display: 'block', marginTop: 2 }}>
-                    에이전트가 이 PC 의 셸(PowerShell/bash)로 명령을 실행할 수 있게 합니다.
-                    앱 실행·파일 조작 등 "내 컴퓨터"를 직접 다루는 요청이 가능해집니다.
-                  </span>
-                </span>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={shellOn}
-                    onChange={(e) => {
-                      setShellOn(e.target.checked);
-                      commitShell({ enabled: e.target.checked });
-                    }}
-                  />
-                  <span className="track" />
-                </label>
-              </div>
-
-              {shellOn && (
-                <div className="settings-subsection">
-                  <label className="field">
-                    <span>기본 작업 폴더 <span className="small muted">(비우면 홈 디렉터리)</span></span>
-                    <input
-                      value={shellCwd}
-                      placeholder="예: /home/me/projects 또는 C:\\Users\\me"
-                      onChange={(e) => setShellCwd(e.target.value)}
-                      onBlur={() => commitShell()}
-                    />
-                  </label>
-                  <div className="field-row">
-                    <span>명령 시간 제한 <span className="small muted">(초)</span></span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={3600}
-                      className="num-input"
-                      value={shellTimeoutS}
-                      onChange={(e) => setShellTimeoutS(Number(e.target.value) || 120)}
-                      onBlur={() => commitShell()}
-                    />
+              <div className="tool-card">
+                <div className="tool-card-main">
+                  <span className="tool-card-icon"><MonitorIcon size={18} /></span>
+                  <div className="tool-card-text">
+                    <div className="tool-card-title">로컬 셸 접근</div>
+                    <div className="tool-card-desc">
+                      에이전트가 이 PC 의 셸(PowerShell/bash)로 명령을 실행할 수 있게 합니다.
+                      앱 실행·파일 조작 등 "내 컴퓨터"를 직접 다루는 요청이 가능해집니다.
+                    </div>
                   </div>
-                  <label className="field">
-                    <span>차단할 명령 <span className="small muted">(쉼표로 구분, 첫 단어 기준)</span></span>
+                  <label className="switch">
                     <input
-                      value={shellBlocked}
-                      placeholder="예: rm, shutdown, format"
-                      onChange={(e) => setShellBlocked(e.target.value)}
-                      onBlur={() => commitShell()}
+                      type="checkbox"
+                      checked={shellOn}
+                      onChange={(e) => {
+                        setShellOn(e.target.checked);
+                        commitShell({ enabled: e.target.checked });
+                      }}
                     />
+                    <span className="track" />
                   </label>
-                  <p className="settings-hint warn">
-                    ⚠ 이 도구는 로그인한 사용자 권한으로 명령을 실행합니다. 실행 내역은
-                    채팅의 도구 로그에 남으며, 위 차단 목록은 편의를 위한 가드일 뿐
-                    보안 경계가 아닙니다.
-                  </p>
                 </div>
-              )}
 
-              <div className="field-row">
-                <span>음성 (STT/TTS)</span>
-                <button className="secondary" onClick={() => setShowVoice(true)}>
-                  관리
-                </button>
+                {shellOn && (
+                  <div className="tool-card-body">
+                    <label className="field">
+                      <span>기본 작업 폴더 <span className="small muted">(비우면 홈 디렉터리)</span></span>
+                      <input
+                        value={shellCwd}
+                        placeholder="예: /home/me/projects 또는 C:\\Users\\me"
+                        onChange={(e) => setShellCwd(e.target.value)}
+                        onBlur={() => commitShell()}
+                      />
+                    </label>
+                    <div className="field-row">
+                      <span>명령 시간 제한 <span className="small muted">(초)</span></span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={3600}
+                        className="num-input"
+                        value={shellTimeoutS}
+                        onChange={(e) => setShellTimeoutS(Number(e.target.value) || 120)}
+                        onBlur={() => commitShell()}
+                      />
+                    </div>
+                    <label className="field">
+                      <span>차단할 명령 <span className="small muted">(쉼표로 구분, 첫 단어 기준)</span></span>
+                      <input
+                        value={shellBlocked}
+                        placeholder="예: rm, shutdown, format"
+                        onChange={(e) => setShellBlocked(e.target.value)}
+                        onBlur={() => commitShell()}
+                      />
+                    </label>
+                    <p className="settings-hint warn">
+                      ⚠ 이 도구는 로그인한 사용자 권한으로 명령을 실행합니다. 실행 내역은
+                      채팅의 도구 로그에 남으며, 위 차단 목록은 편의를 위한 가드일 뿐
+                      보안 경계가 아닙니다.
+                    </p>
+                  </div>
+                )}
               </div>
 
-              <div className="field-row">
-                <span>로컬 MCP (내 PC 도구 연결)</span>
-                <button className="secondary" onClick={() => setShowMcp(true)}>
-                  관리
-                </button>
+              <div className="tool-card">
+                <div className="tool-card-main">
+                  <span className="tool-card-icon"><ServerIcon size={18} /></span>
+                  <div className="tool-card-text">
+                    <div className="tool-card-title">로컬 MCP</div>
+                    <div className="tool-card-desc">
+                      내 PC 에서 호스팅하는 MCP 서버의 도구를 에이전트에 연결합니다.
+                    </div>
+                  </div>
+                  <button className="secondary" onClick={() => setShowMcp(true)}>
+                    관리
+                  </button>
+                </div>
               </div>
+            </>
+          )}
 
-              <div className="field-row">
-                <span>워크스페이스 동기화 (로컬 폴더 ↔ 에이전트)</span>
-                <button className="secondary" onClick={() => setShowSync(true)}>
-                  관리
-                </button>
+          {/* ─── 스토리지 ─── */}
+          {tab === 'storage' && (
+            <>
+              <div className="tool-card">
+                <div className="tool-card-main">
+                  <span className="tool-card-icon"><RefreshIcon size={18} /></span>
+                  <div className="tool-card-text">
+                    <div className="tool-card-title">워크스페이스 동기화</div>
+                    <div className="tool-card-desc">
+                      로컬 폴더와 에이전트 워크스페이스를 양방향으로 동기화합니다
+                      (Drive 형). 페어링·경로·동기화 상태를 관리합니다.
+                    </div>
+                  </div>
+                  <button className="secondary" onClick={() => setShowSync(true)}>
+                    관리
+                  </button>
+                </div>
               </div>
             </>
           )}

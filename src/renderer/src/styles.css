@@ -1792,6 +1792,73 @@ button {
   width: 90px;
   text-align: right;
 }
+
+/* ─── Tool cards (로컬 도구 · 스토리지 · 음성) ─── */
+.tool-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-2);
+  margin: 10px 0;
+  overflow: hidden;
+  transition: border-color 0.12s ease;
+}
+.tool-card:hover {
+  border-color: var(--gray-300, var(--border));
+}
+.tool-card-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.tool-card-icon {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid var(--primary-soft-border);
+}
+.tool-card-text {
+  flex: 1;
+  min-width: 0;
+}
+.tool-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.tool-card-desc {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+/* Right-aligned control (toggle / 관리 button) — vertically centered to the title row. */
+.tool-card-main > .switch,
+.tool-card-main > .secondary {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+/* Dependent controls revealed under a card's toggle. */
+.tool-card-body {
+  padding: 4px 16px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel);
+}
+.tool-card-body .field-row {
+  padding: 6px 0;
+}
+.tool-card-body .field-row:first-of-type {
+  border-top: none;
+}
 .modal-head h2 {
   margin: 0;
   font-size: 17px;
