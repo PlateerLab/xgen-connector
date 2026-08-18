@@ -11,6 +11,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { xgen } from './bridge';
+import { sessionStore } from './session';
 import type { CurrentUser } from '../../core/index';
 import type { ConnectorConfig } from '../../main/config';
 import { ServerSetup } from './views/ServerSetup';
@@ -67,6 +68,7 @@ export const App: React.FC = () => {
       }
     })();
     const off = xgen.auth.onAuthFailed(() => {
+      sessionStore.reset();
       setUser(null);
       setStage('login');
     });
@@ -84,6 +86,7 @@ export const App: React.FC = () => {
   }, []);
 
   const handleLogout = useCallback(async () => {
+    sessionStore.reset();
     await xgen.auth.logout();
     setUser(null);
     setStage('login');

@@ -20,6 +20,9 @@ const CAPTURE = readFileSync(join(ROOT, 'src/main/screen-capture.ts'), 'utf8');
 const MAIN = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8');
 const PRELOAD = readFileSync(join(ROOT, 'src/preload/index.ts'), 'utf8');
 const CHAT = readFileSync(join(ROOT, 'src/renderer/src/views/Chat.tsx'), 'utf8');
+// 전송 페이로드(멀티모달 구성)와 메시지 타입은 SessionStore 가 소유한다 —
+// 화면 캡처 트리거·표시는 Chat 에 남는다.
+const STORE = readFileSync(join(ROOT, 'src/renderer/src/session-store.ts'), 'utf8');
 const CONFIG = readFileSync(join(ROOT, 'src/main/config.ts'), 'utf8');
 
 // ── 1. 기본은 꺼짐, 게이트는 기기에 ────────────────────────────────────
@@ -92,23 +95,26 @@ test('디스플레이 배율을 반영한다', () => {
 
 test('전송 직전에 찍는다', () => {
   // 주기적으로 올리지 않는다 — 사용자가 언제 무엇이 나갔는지 알아야 한다.
-  const send = CHAT.slice(CHAT.indexOf('const send = useCallback'), CHAT.indexOf('const handle = xgen.chat.stream'));
+  const send = CHAT.slice(CHAT.indexOf('const send = useCallback'), CHAT.indexOf('sessionStore.send(session.key'));
   assert.match(send, /if \(screenCaptureOn\)/);
   assert.match(send, /await xgen\.capture\.screen\(\)/);
 });
 
 test('캡처 실패가 대화를 막지 않는다', () => {
   // 캡처는 덤이다. 못 찍었다고 사용자의 질문이 사라지면 그게 더 나쁘다.
-  const send = CHAT.slice(CHAT.indexOf('const send = useCallback'), CHAT.indexOf('const handle = xgen.chat.stream'));
+  // 실패해도 setCaptureNotice 로 알릴 뿐 return 하지 않고 sessionStore.send 로 이어진다.
+  const send = CHAT.slice(CHAT.indexOf('const send = useCallback'), CHAT.indexOf('sessionStore.send(session.key'));
   assert.match(send, /setCaptureNotice/, '실패를 알리지 않는다');
-  assert.ok(!/return;\s*\}\s*setMessages/.test(send.slice(send.indexOf('screenCaptureOn'))), '실패 시 전송을 중단한다');
+  assert.ok(!/\breturn;/.test(send.slice(send.indexOf('if (screenCaptureOn)'))), '캡처 실패 시 전송을 중단한다');
 });
 
 test('백엔드가 받는 멀티모달 형식으로 보낸다', () => {
-  assert.match(CHAT, /type: 'image_url'/);
-  assert.match(CHAT, /image_url: \{ url: shot\.dataUrl \}/);
-  // 캡처가 없으면 예전처럼 문자열 — 형식이 바뀌면 기존 경로가 깨진다.
-  assert.match(CHAT, /: text,/);
+  // 페이로드 구성은 스토어(send)로 옮겨졌다.
+  assert.match(STORE, /type: 'image_url'/);
+  assert.match(STORE, /image_url: \{ url: shot\.dataUrl \}/);
+  // 캡처가 없으면 예전처럼 문자열 — shot?.dataUrl 삼항의 else 는 text.
+  assert.match(STORE, /shot\?\.dataUrl/);
+  assert.match(STORE, /: text;/);
 });
 
 test('켜져 있다는 사실이 항상 보인다', () => {
@@ -118,7 +124,9 @@ test('켜져 있다는 사실이 항상 보인다', () => {
 
 test('나간 기록이 대화에 남는다', () => {
   // 대화 기록만 봐도 언제 무엇을 보냈는지 알 수 있어야 한다.
-  assert.match(CHAT, /screenshot\?: \{ sourceName: string/);
+  // 메시지 타입(전사 보존)은 스토어의 ChatMsg, 표시는 Chat.
+  assert.match(STORE, /screenshot\?: \{ sourceName: string/);
+  assert.match(STORE, /screenshot: shot/, '보낸 스크린샷을 사용자 메시지에 기록하지 않는다');
   assert.match(CHAT, /화면 첨부 · \{m\.screenshot\.sourceName\}/);
 });
 

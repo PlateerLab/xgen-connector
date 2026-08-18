@@ -1,44 +1,29 @@
 /**
- * Chat view — streams a conversation with the selected agent.
+ * Chat view — renders ONE open session and streams turns with its agent.
  *
- * Node-agnostic: works for agent_geny / agent_xgen / agent_harness because it
- * uses the single execute-stream endpoint. A session is either a fresh chat with
- * an agent or a resumed past conversation (loads its turns via history.turns).
- * Reuses one `interactionId` for the session so follow-ups continue it. Renders
- * streamed text live, tool activity as chips, RAG sources as citation pills, and
- * exposes the streaming state to the avatar slot.
+ * The durable session runtime (transcript, interactionId, the in-flight stream
+ * handle) lives in the SessionStore, NOT here — so switching away keeps this
+ * session's connector alive and its answer still arriving in the background.
+ * This component is a disposable view over the active `SessionState`: it is
+ * remounted (via `key={session.key}`) when the foreground session changes, and
+ * owns only foreground concerns — the composer, TTS/STT, screen capture, the
+ * avatar overlay feed, and the tool-activity animation.
+ *
+ * Node-agnostic: works for agent_geny / agent_xgen / agent_harness because the
+ * store drives the single execute-stream endpoint.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
-import type { Agent, ChatEvent, ToolEvent, Citation, VoiceConfig } from '../../../core/index';
+import { sessionStore } from '../session';
+import type { SessionState } from '../session-store';
+import type { ToolEvent, Citation, VoiceConfig } from '../../../core/index';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
 import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
 import { mcpChatStatus } from './mcp-status-model';
 import { ToolLogModal } from './ToolLogModal';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
-import { ChatIcon, DocIcon, MicIcon, MonitorIcon, PanelLeftIcon, PlusIcon, SendIcon, SpeakerIcon, SpeakerOffIcon, StopIcon } from '../brand/icons';
-
-/** An open chat: a fresh agent chat, or a resumed past conversation. */
-export interface ChatSession {
-  agent: Agent;
-  /** Present when resuming a past conversation. */
-  interactionId?: string;
-  /** True → load this conversation's history on open. */
-  resume?: boolean;
-}
-
-interface Msg {
-  role: 'user' | 'assistant';
-  text: string;
-  tools?: ToolEvent[];
-  citations?: Citation[];
-  streaming?: boolean;
-  error?: boolean;
-  /** 이 메시지와 함께 보낸 화면 캡처 — 무엇을 찍었는지(창 이름). 사용자가
-   *  자기 화면이 언제 나갔는지 대화 기록에서 확인할 수 있어야 한다. */
-  screenshot?: { sourceName: string; width: number; height: number };
-}
+import { ChatIcon, CloseIcon, DocIcon, MicIcon, MonitorIcon, PanelLeftIcon, PlusIcon, SendIcon, SpeakerIcon, SpeakerOffIcon, StopIcon } from '../brand/icons';
 
 /** 도구 활동 표시 — **한 번에 하나**만 보여주고 다음 것으로 스르륵 교체된다.
  *
@@ -153,57 +138,29 @@ function sentenceCut(pending: string): number {
   return cut;
 }
 
-function newInteractionId(workflowId: string): string {
-  return `conn-${workflowId}-${Date.now()}`;
-}
-
-function mergeCitations(into: Citation[], add?: Citation[]): Citation[] {
-  if (!add?.length) return into;
-  const seen = new Set(into.map((c) => `${c.fileName ?? ''}#${c.pageNumber ?? ''}`));
-  for (const c of add) {
-    const key = `${c.fileName ?? ''}#${c.pageNumber ?? ''}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      into.push(c);
-    }
-  }
-  return [...into];
-}
-
 const AGENT_KIND: Record<string, string> = { canvas: 'Canvas', harness: 'Harness' };
 
 export const Chat: React.FC<{
-  session: ChatSession;
+  session: SessionState;
   collapsed?: boolean;
   mcpDebug?: boolean;
   onExpandSidebar?: () => void;
 }> = ({ session, collapsed, mcpDebug = false, onExpandSidebar }) => {
   const { agent } = session;
-  const [messages, setMessages] = useState<Msg[]>([]);
-  // 아바타에게는 **이 세션에서 라이브로 흐른 텍스트만** 준다.
-  //
-  // 예전에는 "마지막 assistant 메시지"를 messages 변경마다 밀어 넣었다.
-  // 그러면 대화 기록을 열기만 해도 그 대화의 마지막 답변이 아바타 말풍선에
-  // 떠서, 아바타가 방금 말한 것처럼 보였다 (사용자 신고). 기록을 읽는 것과
-  // 말하는 것은 다른 일이다 — 책장을 펼쳤다고 배우가 대사를 치면 안 된다.
-  const [liveText, setLiveText] = useState('');
+  const messages = session.messages;
+  const streaming = session.streaming;
+  const loadingHistory = session.loadingHistory;
 
   const [input, setInput] = useState('');
-  const [streaming, setStreaming] = useState(false);
   // 화면 캡처 — 기본 꺼짐. 화면에는 다른 사람의 메시지·비밀번호·미공개 문서가
   // 있을 수 있어서, 서버로 보내는 것은 사용자가 명시적으로 골라야 한다.
   const [screenCaptureOn, setScreenCaptureOn] = useState(false);
   const [captureNotice, setCaptureNotice] = useState('');
   // 전체 도구 로그 — 흐름에는 하나씩 지나가게 두고, 필요할 때 여기서 펼친다.
   const [logFor, setLogFor] = useState<ToolEvent[] | null>(null);
-  const [loadingHistory, setLoadingHistory] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
   const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
   const [mcpLogsOpen, setMcpLogsOpen] = useState(false);
-  const [interactionId, setInteractionId] = useState(
-    () => session.interactionId ?? newInteractionId(agent.workflowId),
-  );
-  const cancelRef = useRef<{ cancel: () => void } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -238,9 +195,10 @@ export const Chat: React.FC<{
   // Mirrors for use inside async/stream callbacks (avoid stale closures + dep churn).
   const mutedRef = useRef(muted);
   const ttsOnRef = useRef(ttsOn);
-
-  // A stable signature of the open session — changing it resets the view.
-  const sessionSig = `${agent.workflowId}::${session.resume ? session.interactionId : 'new'}`;
+  // 이 세션에서 이미 읽어 준(TTS) assistant 텍스트 위치. 세션 전환으로
+  // 재마운트되면 처음부터 다시 읽지 않도록, 마지막 answer 의 현재 길이에서 시작.
+  const spokenRef = useRef<number | null>(null);
+  const lastAsstIdxRef = useRef(-1);
 
   useEffect(() => {
     if (!mcpDebug) {
@@ -280,39 +238,6 @@ export const Chat: React.FC<{
   }, [mcpDebug]);
 
   useEffect(() => {
-    cancelRef.current?.cancel();
-    cancelRef.current = null;
-    setStreaming(false);
-    const iid = session.interactionId ?? newInteractionId(agent.workflowId);
-    setInteractionId(iid);
-
-    setLiveText('');
-    if (session.resume && session.interactionId) {
-      setMessages([]);
-      setLoadingHistory(true);
-      let alive = true;
-      xgen.history
-        .turns(agent.workflowId, session.interactionId, agent.workflowName)
-        .then((turns) => {
-          if (!alive) return;
-          const msgs: Msg[] = [];
-          for (const t of turns) {
-            if (t.input) msgs.push({ role: 'user', text: t.input });
-            if (t.output) msgs.push({ role: 'assistant', text: t.output });
-          }
-          setMessages(msgs);
-        })
-        .catch(() => alive && setMessages([]))
-        .finally(() => alive && setLoadingHistory(false));
-      return () => {
-        alive = false;
-      };
-    }
-    setMessages([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionSig]);
-
-  useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
 
@@ -324,12 +249,13 @@ export const Chat: React.FC<{
   }, [input]);
 
   const newConversation = useCallback(() => {
-    cancelRef.current?.cancel();
-    cancelRef.current = null;
-    setMessages([]);
-    setInteractionId(newInteractionId(agent.workflowId));
-    setStreaming(false);
-  }, [agent.workflowId]);
+    sessionStore.openNew(agent);
+    void xgen.config.set({ lastWorkflowId: agent.workflowId });
+  }, [agent]);
+
+  const endChat = useCallback(() => {
+    sessionStore.endChat(session.key);
+  }, [session.key]);
 
   // ── TTS playback: serial queue over WebAudio (Geny 방식) ──
   // HTMLAudioElement + blob URL 은 CSP media-src 의 지배를 받고(누락 시
@@ -432,136 +358,44 @@ export const Chat: React.FC<{
     return () => clearTimeout(t);
   }, [captureNotice]);
 
-  const send = useCallback(async (override?: string) => {
-    const text = (override ?? input).trim();
-    if (!text || streaming) return;
-    if (override === undefined) setInput('');
+  const send = useCallback(
+    async (override?: string) => {
+      const text = (override ?? input).trim();
+      if (!text || streaming) return;
+      if (override === undefined) setInput('');
 
-    // 화면 캡처가 켜져 있으면 **보내기 직전** 한 장 찍는다. 주기적으로 올리지
-    // 않는 이유: 사용자가 언제 무엇이 나갔는지 알 수 있어야 한다.
-    //
-    // 실패해도 대화를 막지 않는다 — 캡처는 덤이고, 못 찍었다고 사용자의 질문이
-    // 사라지면 그게 더 나쁘다. 대신 **조용히 넘어가지 않고** 이유를 남긴다.
-    let shot: { dataUrl?: string; sourceName?: string; width?: number; height?: number } | null = null;
-    if (screenCaptureOn) {
-      try {
-        const r = await xgen.capture.screen();
-        if (r.ok && r.dataUrl) shot = r;
-        else if (r.error) setCaptureNotice(r.error);
-      } catch (e) {
-        setCaptureNotice(e instanceof Error ? e.message : '화면을 캡처하지 못했습니다');
-      }
-    }
-
-    setMessages((m) => [
-      ...m,
-      {
-        role: 'user',
-        text,
-        screenshot: shot
-          ? {
-              sourceName: shot.sourceName ?? '화면',
-              width: shot.width ?? 0,
-              height: shot.height ?? 0,
-            }
-          : undefined,
-      },
-      { role: 'assistant', text: '', tools: [], citations: [], streaming: true },
-    ]);
-    setStreaming(true);
-    setLiveText('');
-
-    const tools: ToolEvent[] = [];
-    let citations: Citation[] = [];
-    // 문장 단위 스트리밍 TTS — 응답이 흐르는 동안 완결 문장을 즉시 큐에 넣어
-    // "바로바로" 소리가 나게 한다 (끝까지 기다리지 않음).
-    let assistantText = '';
-    let spokenUpto = 0;
-    const flushSpeech = (force: boolean) => {
-      if (!ttsOnRef.current) return;
-      const pending = assistantText.slice(spokenUpto);
-      if (!pending) return;
-      if (force) {
-        const tail = cleanForSpeech(pending);
-        if (tail) enqueueTts(tail);
-        spokenUpto = assistantText.length;
-        return;
-      }
-      const cut = sentenceCut(pending);
-      if (cut > 0) {
-        const chunk = cleanForSpeech(pending.slice(0, cut));
-        if (chunk) enqueueTts(chunk);
-        spokenUpto += cut;
-      }
-    };
-    const handle = xgen.chat.stream(
-      {
-        workflowId: agent.workflowId,
-        workflowName: agent.workflowName,
-        // 캡처가 있으면 멀티모달 content 로 보낸다 — 백엔드가 받는 형식이
-        // [{type:'text'},{type:'image_url'}] 이다. 없으면 예전처럼 문자열.
-        input: shot?.dataUrl
-          ? [
-              { type: 'text', text },
-              { type: 'image_url', image_url: { url: shot.dataUrl } },
-            ]
-          : text,
-        interactionId,
-      },
-      (ev: ChatEvent) => {
-        if (ev.kind === 'text') {
-          assistantText += ev.content;
-          setLiveText(assistantText);
-          flushSpeech(false);
-        } else if (ev.kind === 'summary' && !assistantText) {
-          assistantText = ev.text;
-          setLiveText(assistantText);
+      // 화면 캡처가 켜져 있으면 **보내기 직전** 한 장 찍는다. 주기적으로 올리지
+      // 않는 이유: 사용자가 언제 무엇이 나갔는지 알 수 있어야 한다.
+      //
+      // 실패해도 대화를 막지 않는다 — 캡처는 덤이고, 못 찍었다고 사용자의 질문이
+      // 사라지면 그게 더 나쁘다. 대신 **조용히 넘어가지 않고** 이유를 남긴다.
+      let shot: { dataUrl?: string; sourceName?: string; width?: number; height?: number } | null = null;
+      if (screenCaptureOn) {
+        try {
+          const r = await xgen.capture.screen();
+          if (r.ok && r.dataUrl) shot = r;
+          else if (r.error) setCaptureNotice(r.error);
+        } catch (e) {
+          setCaptureNotice(e instanceof Error ? e.message : '화면을 캡처하지 못했습니다');
         }
-        setMessages((m) => {
-          const copy = [...m];
-          const last = copy[copy.length - 1];
-          if (!last || last.role !== 'assistant') return m;
-          if (ev.kind === 'text') last.text += ev.content;
-          else if (ev.kind === 'summary' && !last.text) last.text = ev.text;
-          else if (ev.kind === 'tool') {
-            tools.push(ev.event);
-            last.tools = [...tools];
-            citations = mergeCitations(citations, ev.event.citations);
-            last.citations = citations;
-          } else if (ev.kind === 'error') {
-            last.text += (last.text ? '\n\n' : '') + `⚠️ ${ev.detail}`;
-            last.error = true;
-          }
-          return copy;
-        });
-        if (ev.kind === 'end' || ev.kind === 'error') {
-          setStreaming(false);
-          setMessages((m) => {
-            const copy = [...m];
-            const last = copy[copy.length - 1];
-            if (last?.role === 'assistant') last.streaming = false;
-            return copy;
-          });
-          cancelRef.current = null;
-          // 남은 꼬리 문장 재생 (스트리밍 중 이미 대부분 재생됨).
-          if (ev.kind === 'end') flushSpeech(true);
-        }
-      },
-    );
-    cancelRef.current = handle;
-  }, [input, streaming, agent, interactionId, enqueueTts, screenCaptureOn]);
+      }
+
+      // 전송·스트림 수명은 스토어가 소유한다 — 이 뷰가 언마운트돼도(세션 전환)
+      // 답변은 백그라운드에서 계속 도착한다.
+      sessionStore.send(session.key, text, shot);
+    },
+    [input, streaming, session.key, screenCaptureOn],
+  );
 
   const stop = useCallback(() => {
-    cancelRef.current?.cancel();
-    cancelRef.current = null;
-    setStreaming(false);
-    setMessages((m) => {
-      const copy = [...m];
-      const last = copy[copy.length - 1];
-      if (last?.role === 'assistant') last.streaming = false;
-      return copy;
-    });
-  }, []);
+    // 사용자가 멈추면 소리도 멈춘다 — 아직 안 읽은 문장을 마저 읽지 않는다.
+    // 낭독 위치를 현재 끝으로 당겨, streaming=false 로 바뀔 때 TTS 감시가
+    // 잔여분을 flush 하지 못하게 한다.
+    stopTts();
+    const last = session.messages[session.messages.length - 1];
+    if (last?.role === 'assistant') spokenRef.current = last.text.length;
+    sessionStore.stop(session.key);
+  }, [session.key, session.messages, stopTts]);
 
   // ── STT: push-to-talk mic capture (getUserMedia + MediaRecorder) ──
   const startRecording = useCallback(async () => {
@@ -670,7 +504,42 @@ export const Chat: React.FC<{
     if (!ttsOn) stopTts();
   }, [ttsOn, stopTts]);
 
+  // ── 스트리밍 답변을 문장 단위로 읽어 준다 (foreground 세션만) ──
+  // 스토어가 채운 마지막 assistant 메시지의 텍스트 증가분을 감시해, 완결 문장이
+  // 생길 때마다 큐에 넣는다. 재마운트(세션 전환) 직후에는 이미 있는 텍스트를
+  // 다시 읽지 않도록 현재 길이에서 시작한다.
+  useEffect(() => {
+    const idx = messages.length - 1;
+    const last = messages[idx];
+    if (!last || last.role !== 'assistant') return;
+    if (idx !== lastAsstIdxRef.current) {
+      lastAsstIdxRef.current = idx;
+      spokenRef.current = last.text.length; // 새 턴/첫 마운트 — 기존 텍스트는 읽지 않음
+    }
+    if (spokenRef.current == null) spokenRef.current = last.text.length;
+    if (!ttsOnRef.current) {
+      spokenRef.current = last.text.length;
+      return;
+    }
+    const pending = last.text.slice(spokenRef.current);
+    if (!pending) return;
+    if (last.streaming) {
+      const cut = sentenceCut(pending);
+      if (cut > 0) {
+        const chunk = cleanForSpeech(pending.slice(0, cut));
+        if (chunk) enqueueTts(chunk);
+        spokenRef.current += cut;
+      }
+    } else {
+      const tail = cleanForSpeech(pending);
+      if (tail) enqueueTts(tail);
+      spokenRef.current = last.text.length;
+    }
+  }, [messages, enqueueTts]);
+
   // Tear down mic + audio when the view unmounts / session switches.
+  // NB: this does NOT cancel the chat stream — that lives in the store and must
+  // survive a foreground switch (기존 세션 connector 유지).
   useEffect(
     () => () => {
       stopRecording();
@@ -678,6 +547,14 @@ export const Chat: React.FC<{
     },
     [stopRecording, stopTts],
   );
+
+  // 아바타에게는 **이 세션에서 라이브로 흐르는 텍스트만** 준다 — 기록을 여는 것과
+  // 말하는 것은 다른 일이다. 스트리밍 중인 마지막 answer 만 흘려보낸다.
+  const liveText = useMemo(() => {
+    if (!streaming) return '';
+    const last = messages[messages.length - 1];
+    return last?.role === 'assistant' ? last.text : '';
+  }, [streaming, messages]);
 
   const avatarState: AvatarState = useMemo(
     () => ({
@@ -722,7 +599,7 @@ export const Chat: React.FC<{
               {kind}
               {agent.nodeCount ? ` · 노드 ${agent.nodeCount}개` : ''}
               {agent.isShared ? ' · 공유' : ''}
-              {session.resume ? ' · 이어보기' : ''}
+              {streaming ? ' · 진행 중' : session.resume ? ' · 이어보기' : ''}
             </div>
           </div>
         </div>
@@ -750,6 +627,9 @@ export const Chat: React.FC<{
               {muted ? <SpeakerOffIcon size={15} /> : <SpeakerIcon size={15} />}
             </button>
           )}
+          <button className="secondary end-chat" onClick={endChat} title="이 대화를 종료하고 목록으로 돌아갑니다">
+            <CloseIcon size={14} /> 채팅 종료
+          </button>
           <button className="secondary" onClick={newConversation}>
             <PlusIcon size={15} /> 새 대화
           </button>
@@ -842,7 +722,7 @@ export const Chat: React.FC<{
                 {m.citations && m.citations.length > 0 && (
                   <div className="citations">
                     <span className="label">출처</span>
-                    {m.citations.map((c, j) => (
+                    {m.citations.map((c: Citation, j: number) => (
                       <span className="cite-pill" key={j} title={c.fileName}>
                         <DocIcon size={11} />
                         <span className="fname">
