@@ -1587,6 +1587,12 @@ button {
   overscroll-behavior: contain;
   box-shadow: var(--shadow-lg);
 }
+/* Wider variant — the tabbed settings modal needs room for a tab bar + two-column
+   rows without wrapping. Still capped by max-width for small windows. */
+.modal.wide {
+  width: 640px;
+}
+
 /* Keep the title + 닫기 visible while the body scrolls. The negative margins +
    restored padding let its background span the modal's 24px padding box. */
 .modal-head {
@@ -1600,6 +1606,66 @@ button {
   padding: 24px 24px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border-soft);
+}
+
+/* ─── Tabbed settings ─── */
+.settings-tabs {
+  position: sticky;
+  top: 42px; /* sits just under the sticky modal-head */
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  margin: 0 -24px 14px;
+  padding: 0 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.settings-tab {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.12s ease, border-color 0.12s ease;
+  white-space: nowrap;
+}
+.settings-tab:hover {
+  color: var(--text);
+}
+.settings-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+}
+/* Indented block of dependent controls under a master toggle (e.g. shell opts). */
+.settings-subsection {
+  margin: 2px 0 6px;
+  padding: 4px 0 8px 12px;
+  border-left: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-hint {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.settings-hint.warn {
+  color: var(--warning);
+}
+.num-input {
+  width: 90px;
+  text-align: right;
 }
 .modal-head h2 {
   margin: 0;
