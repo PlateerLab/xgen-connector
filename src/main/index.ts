@@ -1814,6 +1814,17 @@ ipcMain.handle(CHANNELS.mcpSaveServers, async (_e, servers) => {
   return next.mcpServers ?? [];
 });
 ipcMain.handle(CHANNELS.mcpTestServer, async (e, cfg) => {
+  // OAuth 서버는 테스트가 임시이름(__test__)로 붙어 토큰이 없어 항상 실패하고, DCR 이
+  // 돌면 임시이름으로 고아 키체인 항목을 남긴다. 브라우저 인가로 안내하고 단락한다.
+  if (cfg?.auth === 'oauth') {
+    const authed = cfg?.name ? await hasOAuthTokens(String(cfg.name)).catch(() => false) : false;
+    return {
+      ok: authed,
+      message: authed
+        ? '이미 인가된 OAuth 서버입니다. 저장하면 자동 연결됩니다.'
+        : 'OAuth 서버는 테스트 대신 "브라우저로 인가하기" 를 사용하세요. 인가되면 자동 연결됩니다.',
+    };
+  }
   // 첫 실행은 인터프리터·의존성 내려받기로 몇 분이 걸릴 수 있다 — 그동안의
   // 서버 출력을 요청한 창으로 그대로 흘려보낸다.
   // G8a: 폼 값이 redacted('') 여도(저장된 서버를 테스트) 키체인 시크릿으로 채워 테스트.
@@ -1837,6 +1848,23 @@ ipcMain.handle(CHANNELS.mcpOauthStatus, async (_e, name) => ({
 ipcMain.handle(CHANNELS.mcpClearOauth, async (_e, name) => {
   await clearOAuth(String(name || '')).catch(() => {});
   syncMcp();
+  return { ok: true };
+});
+ipcMain.handle(CHANNELS.mcpRenameSecrets, async (_e, oldName, newName) => {
+  // 서버 이름 변경 시 키체인의 시크릿/OAuth 를 old→new 로 이관한다. 안 하면 mcpSaveServers
+  // 의 삭제정리(prev-but-not-new)가 옛 이름의 시크릿/토큰을 지워 데이터가 소실된다.
+  const from = String(oldName || '');
+  const to = String(newName || '');
+  if (!from || !to || from === to) return { ok: true };
+  try {
+    const sec = await mcpSecretStore.get(from);
+    if (sec) { await mcpSecretStore.save(to, sec); }
+    const oauth = await mcpOAuthStore.load(from);
+    if (oauth && (oauth.tokens || oauth.clientInformation || oauth.codeVerifier)) {
+      await mcpOAuthStore.save(to, oauth);
+    }
+    // 옛 이름은 mcpSaveServers 의 삭제정리가 처리한다(중복 제거).
+  } catch { /* best-effort — 저장은 계속 진행 */ }
   return { ok: true };
 });
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());

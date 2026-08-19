@@ -229,7 +229,7 @@ const ExposedToolsPanel: React.FC<{
   const [showCalls, setShowCalls] = useState(false);
   const servers = status?.servers ?? [];
   const total = servers.reduce((n, s) => n + (s.connected ? s.tools.length : 0), 0);
-  const recentCalls = logs.filter((l) => l.kind === 'result' || l.kind === 'call').slice(-25).reverse();
+  const recentCalls = logs.filter((l) => l.kind === 'result').slice(-25).reverse();
 
   return (
     <div className="mcp-exposed">
@@ -305,6 +305,8 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [runtimeLogs, setRuntimeLogs] = useState<McpRuntimeLogEntryLike[]>([]);
   const [authBusy, setAuthBusy] = useState(false);
   const [authMsg, setAuthMsg] = useState<{ ok?: boolean; text: string } | null>(null);
+  const [oauthAuthorized, setOauthAuthorized] = useState<Record<string, boolean>>({});
+  const [rowAuthBusy, setRowAuthBusy] = useState<Record<string, boolean>>({});
   const [editing, setEditing] = useState<number | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [test, setTest] = useState<TestState | null>(null);
@@ -368,6 +370,11 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       setTest({ ok: false, msg: "'local' 은 내장 도구 예약 이름입니다. 다른 이름을 쓰세요." });
       return;
     }
+    // 이름 변경 시: 저장(삭제정리) 전에 키체인 시크릿/OAuth 를 old→new 로 이관해
+    // 이름 바꾸다 시크릿이 소실되는 것을 막는다.
+    if (typeof editing === 'number' && servers[editing] && servers[editing].name !== c.name) {
+      await xgen.mcp.renameSecrets(servers[editing].name, c.name).catch(() => undefined);
+    }
     const next = [...servers];
     if (editing === 'new') next.push(c);
     else if (typeof editing === 'number') next[editing] = c;
@@ -393,7 +400,9 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     const next = [...servers];
     const added: string[] = [];
     const replaced: string[] = [];
+    const skippedReserved: string[] = [];
     for (const s of parsed.servers) {
+      if (s.name.toLowerCase() === 'local') { skippedReserved.push(s.name); continue; }
       const cfg: McpServerConfig = {
         name: s.name,
         transport: s.transport,
@@ -416,6 +425,7 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       added.length ? `추가 ${added.length}개 (${added.join(', ')})` : '',
       replaced.length ? `덮어씀 ${replaced.length}개 (${replaced.join(', ')})` : '',
       ...parsed.warnings,
+      skippedReserved.length ? `예약어 'local' 이름은 건너뜀 (${skippedReserved.join(', ')})` : '',
     ].filter(Boolean);
     setImportMsg({ ok: true, text: parts.join(' · ') });
     setImportText('');
@@ -423,14 +433,17 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   /** 현재 목록을 표준 JSON 으로 복사 (다른 도구에 붙여넣기). */
   const copyJson = async () => {
+    // 시크릿 값은 절대 내보내지 않는다 — 키만 남기고 값은 비운다(클립보드 유출 방지).
+    const redact = (o?: Record<string, string>) =>
+      o ? Object.fromEntries(Object.keys(o).map((k) => [k, ''])) : undefined;
     const payload: ImportedServer[] = servers.map((s) => ({
       name: s.name,
       transport: s.transport,
       command: s.command,
       args: s.args,
-      env: s.env,
+      env: redact(s.env),
       url: s.url,
-      headers: s.headers,
+      headers: redact(s.headers),
       enabled: s.enabled,
     }));
     try {
@@ -487,6 +500,41 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     }
   };
 
+  // OAuth 서버들의 인가 상태를 조회해 행에 배지로 표시한다.
+  useEffect(() => {
+    let cancelled = false;
+    const oauthServers = servers.filter((s) => s.auth === 'oauth').map((s) => s.name);
+    if (!oauthServers.length) return;
+    (async () => {
+      const entries = await Promise.all(
+        oauthServers.map(async (n) => [n, (await xgen.mcp.oauthStatus(n).catch(() => ({ authorized: false }))).authorized] as const),
+      );
+      if (!cancelled) setOauthAuthorized(Object.fromEntries(entries));
+    })();
+    return () => { cancelled = true; };
+  }, [servers]);
+
+  /** 행에서 OAuth 인가(또는 재인가) 실행. */
+  const authorizeRow = async (s: McpServerConfig) => {
+    setRowAuthBusy((m) => ({ ...m, [s.name]: true }));
+    try {
+      const res = await xgen.mcp.authorize(s);
+      setRowTest((m) => ({ ...m, [s.name]: { ok: res.ok, msg: res.ok ? '인가되었습니다.' : (res.error || '인가 실패') } }));
+      const st = await xgen.mcp.oauthStatus(s.name).catch(() => ({ authorized: false }));
+      setOauthAuthorized((m) => ({ ...m, [s.name]: st.authorized }));
+      if (res.ok) xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+    } finally {
+      setRowAuthBusy((m) => ({ ...m, [s.name]: false }));
+    }
+  };
+
+  /** 행에서 OAuth 연결 해제(토큰 삭제). */
+  const disconnectOauth = async (s: McpServerConfig) => {
+    await xgen.mcp.clearOauth(s.name).catch(() => undefined);
+    setOauthAuthorized((m) => ({ ...m, [s.name]: false }));
+    xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal mcp-modal" onClick={(e) => e.stopPropagation()}>
@@ -525,7 +573,7 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </label>
         </div>
 
-        <ExposedToolsPanel status={status} logs={runtimeLogs} />
+        {enabled && <ExposedToolsPanel status={status} logs={runtimeLogs} />}
 
         <div className="mcp-list">
           {servers.length === 0 && <div className="muted small pad">등록된 MCP 서버가 없습니다.</div>}
@@ -545,6 +593,11 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                       <span className={`mcp-dot ${st.connected ? 'ok' : 'off'}`} title={st.error || (st.connected ? '연결됨' : '연결 안 됨')} />
                     )}
                     {st?.connected && <span className="small muted">도구 {st.tools.length}</span>}
+                    {s.auth === 'oauth' && (
+                      <span className={`mcp-badge ${oauthAuthorized[s.name] ? 'notice-ok' : 'notice-warn'}`}>
+                        {oauthAuthorized[s.name] ? 'OAuth 인가됨' : 'OAuth 인가 필요'}
+                      </span>
+                    )}
                   </div>
                   <div className="mcp-item-cmd">
                     {s.transport === 'stdio'
@@ -569,6 +622,16 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                   >
                     테스트
                   </button>
+                  {s.auth === 'oauth' && (
+                    <button className="link" onClick={() => void authorizeRow(s)} disabled={rowAuthBusy[s.name]}>
+                      {rowAuthBusy[s.name] ? '인가 중…' : oauthAuthorized[s.name] ? '재인가' : '인가'}
+                    </button>
+                  )}
+                  {s.auth === 'oauth' && oauthAuthorized[s.name] && (
+                    <button className="link" onClick={() => void disconnectOauth(s)}>
+                      인가 해제
+                    </button>
+                  )}
                   <button className="link" onClick={() => startEdit(i)}>
                     편집
                   </button>

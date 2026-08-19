@@ -415,6 +415,9 @@ const api = {
       ipcRenderer.invoke(CHANNELS.mcpOauthStatus, name),
     clearOauth: (name: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.mcpClearOauth, name),
+    /** 서버 이름 변경 시 키체인 시크릿/OAuth 를 old→new 로 이관(저장 전에 호출). */
+    renameSecrets: (oldName: string, newName: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.mcpRenameSecrets, oldName, newName),
   },
 
   /** Global hotkeys (recorder support). */

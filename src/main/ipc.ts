@@ -106,6 +106,7 @@ export const CHANNELS = {
   mcpAuthorize: 'mcp:authorize',
   mcpOauthStatus: 'mcp:oauthStatus',
   mcpClearOauth: 'mcp:clearOauth',
+  mcpRenameSecrets: 'mcp:renameSecrets',
   diagText: 'diag:text',
   diagCopy: 'diag:copy',
   workspaceStatus: 'workspace:status',
