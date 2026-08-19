@@ -1173,6 +1173,10 @@ function syncMcp(): void {
     httpFetch: mcpHttpFetch,
     allowPrivateCertificate: cfg.allowPrivateCertificate === true,
   });
+  // 서버가 도구 목록을 바꾸거나(list_changed) 죽으면 카탈로그를 에이전트에 다시 광고한다.
+  mcp.setCatalogChangeListener(() => {
+    void getMcpBridge().refreshCatalog();
+  });
   // Connector-hosted built-ins (local shell) share the bridge catalog.
   getLocalToolProvider().configure(cfg.localShell);
   const bridge = getMcpBridge();
