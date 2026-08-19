@@ -1166,7 +1166,10 @@ function syncMcp(): void {
   const cfg = loadConfig();
   setMcpRuntimeLogEnabled(cfg.mcpDebug === true);
   const mcp = getMcpManager();
-  mcp.configure(cfg.mcpServers, {
+  // 로컬 MCP 마스터 스위치: cfg.mcp 가 꺼져 있으면 서버 목록을 비워 넘긴다 →
+  // configure 가 기존 서버를 전부 disconnect·제거한다. 이전에는 mcp:false 여도
+  // 서버가 스폰되고 도구가 카탈로그에 실리던 버그가 있었다.
+  mcp.configure(cfg.mcp ? cfg.mcpServers : [], {
     httpFetch: mcpHttpFetch,
     allowPrivateCertificate: cfg.allowPrivateCertificate === true,
   });

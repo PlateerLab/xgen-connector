@@ -44,9 +44,9 @@ export const Settings: React.FC<{
   const [linuxClickThrough, setLinuxClickThrough] = useState(config.linuxClickThrough ?? false);
   const isLinux = /linux/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
 
-  // ── 로컬 셸 접근 (기본 ON) ──
+  // ── 로컬 셸 접근 (기본 OFF, opt-in) ──
   const ls = config.localShell ?? {};
-  const [shellOn, setShellOn] = useState(ls.enabled !== false);
+  const [shellOn, setShellOn] = useState(ls.enabled === true);
   const [shellCwd, setShellCwd] = useState(ls.cwd ?? '');
   const [shellTimeoutS, setShellTimeoutS] = useState(Math.round((ls.timeoutMs ?? 120_000) / 1000));
   const [shellBlocked, setShellBlocked] = useState((ls.blocked ?? []).join(', '));
