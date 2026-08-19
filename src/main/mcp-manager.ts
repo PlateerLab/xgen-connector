@@ -151,12 +151,22 @@ let _sdk: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadSdk(): Promise<any> {
   if (_sdk) return _sdk;
-  const [{ Client }, { StdioClientTransport }, { StreamableHTTPClientTransport }] = await Promise.all([
-    import('@modelcontextprotocol/sdk/client/index.js'),
-    import('@modelcontextprotocol/sdk/client/stdio.js'),
-    import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
-  ]);
-  _sdk = { Client, StdioClientTransport, StreamableHTTPClientTransport };
+  const [{ Client }, { StdioClientTransport }, { StreamableHTTPClientTransport }, types] =
+    await Promise.all([
+      import('@modelcontextprotocol/sdk/client/index.js'),
+      import('@modelcontextprotocol/sdk/client/stdio.js'),
+      import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+      // tools/list_changed 알림 스키마 — 구버전 SDK 에 없을 수 있어 안전하게 감싼다.
+      import('@modelcontextprotocol/sdk/types.js').catch(() => null),
+    ]);
+  _sdk = {
+    Client,
+    StdioClientTransport,
+    StreamableHTTPClientTransport,
+    ToolListChangedNotificationSchema:
+      (types as { ToolListChangedNotificationSchema?: unknown } | null)
+        ?.ToolListChangedNotificationSchema ?? null,
+  };
   return _sdk;
 }
 
@@ -223,6 +233,14 @@ export class MCPManager {
   private states = new Map<string, ServerState>();
   private httpFetch: McpHttpFetch | undefined;
   private allowPrivateCertificate = false;
+  /** 서버가 도구 목록을 바꾸거나(list_changed) 죽었을 때(onclose) 카탈로그를 다시
+   *  광고하도록 호출된다 (index 가 bridge.refreshCatalog 로 배선). */
+  private onCatalogChange: (() => void) | undefined;
+
+  /** 카탈로그 변경(도구 추가/제거/서버 종료) 시 재광고할 리스너를 등록한다. */
+  setCatalogChangeListener(fn: (() => void) | undefined): void {
+    this.onCatalogChange = fn;
+  }
 
   /** Reconcile the configured server list into live state (drops removed,
    *  reconnects changed configs lazily). Does NOT connect yet. */
@@ -257,7 +275,12 @@ export class MCPManager {
     const label = name.replace(/^__test__/, '');
     if (st.connecting) return st.connecting;
     st.connecting = (async () => {
-      const { Client, StdioClientTransport, StreamableHTTPClientTransport } = await loadSdk();
+      const {
+        Client,
+        StdioClientTransport,
+        StreamableHTTPClientTransport,
+        ToolListChangedNotificationSchema,
+      } = await loadSdk();
       const cfg = st.config;
       let transport;
       let tap: StderrTap | null = null;
@@ -334,6 +357,42 @@ export class MCPManager {
         inputSchema: t.inputSchema,
       }));
       st.error = undefined;
+
+      // G5 — 서버가 런타임에 도구를 바꾸면(list_changed) 재조회 후 카탈로그를 다시
+      // 광고한다. 이전에는 한 번 붙으면 도구 목록이 영구 캐시라 반영되지 않았다.
+      if (ToolListChangedNotificationSchema) {
+        try {
+          client.setNotificationHandler(
+            ToolListChangedNotificationSchema,
+            async (): Promise<void> => {
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const relisted: any = await withTimeout(client.listTools(), 30000, `${label} 도구 재조회`);
+                if (st.client !== client) return;
+                st.tools = (relisted?.tools || []).map((t: McpToolSchema) => ({
+                  name: t.name,
+                  description: t.description,
+                  inputSchema: t.inputSchema,
+                }));
+                this.onCatalogChange?.();
+              } catch {
+                /* 재조회 실패는 다음 호출에서 회복된다. */
+              }
+            },
+          );
+        } catch {
+          /* 알림 핸들러를 지원하지 않는 SDK — 무시. */
+        }
+      }
+
+      // G11 — 서버가 조용히 죽으면(stdio 프로세스 exit / http 종료) 상태를 무효화하고
+      // 카탈로그를 다시 광고한다. 유령 도구가 카탈로그에 남아 계속 광고되던 문제를 막는다.
+      client.onclose = (): void => {
+        if (st.client !== client) return;
+        st.client = null;
+        st.tools = [];
+        this.onCatalogChange?.();
+      };
     })();
     try {
       await st.connecting;
