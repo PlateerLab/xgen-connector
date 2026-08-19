@@ -27,6 +27,12 @@ function toRequestBody(req: ChatRequest): Record<string, unknown> {
     include_node_status: req.includeNodeStatus ?? true,
     include_tool_events: req.includeToolEvents ?? true,
     response_format: 'stream',
+    // 대화 출처 — 이 턴이 데스크톱 커넥터에서 왔음을 서버에 알린다. 서버는 이
+    // 값이 "connector" 인 실행에만 커넥터 호스팅 로컬 도구(이 PC 의 파일/셸/
+    // 브라우저/오피스 조작)를 에이전트에 노출·실행한다. 웹 채팅은 이 필드를
+    // 보내지 않으므로, 같은 사용자가 커넥터를 켜 둔 상태로 웹에서 대화해도
+    // 로컬 도구는 절대 작동하지 않는다.
+    client_surface: 'connector',
   };
 }
 
