@@ -19,7 +19,7 @@
 
 export interface ImportedServer {
   name: string;
-  transport: 'stdio' | 'http';
+  transport: 'stdio' | 'http' | 'sse';
   /** stdio: 실행 파일 (args 와 분리). 표시용 문자열은 displayCommand. */
   command?: string;
   args?: string[];
@@ -75,7 +75,7 @@ function parseEntry(name: string, raw: unknown, warnings: string[]): ImportedSer
   if (url && (!command || declaredType.includes('http') || declaredType === 'sse')) {
     return {
       name,
-      transport: 'http',
+      transport: declaredType === 'sse' ? 'sse' : 'http',
       url,
       headers: asStringMap(o.headers),
       enabled,
@@ -156,8 +156,8 @@ export function toMcpConfigJson(
   const out: Record<string, Record<string, unknown>> = {};
   for (const s of servers) {
     const entry: Record<string, unknown> = {};
-    if (s.transport === 'http') {
-      entry.type = 'http';
+    if (s.transport === 'http' || s.transport === 'sse') {
+      entry.type = s.transport;
       entry.url = s.url ?? '';
       if (s.headers && Object.keys(s.headers).length) entry.headers = s.headers;
     } else {

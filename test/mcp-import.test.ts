@@ -5,6 +5,20 @@ import {
   McpImportError, parseMcpConfig, toDisplayCommand, toMcpConfigJson,
 } from '../src/renderer/src/views/mcp-import'
 
+test('type:"sse" 는 transport:sse 로 보존한다 (이전엔 http 로 뭉개졌다)', () => {
+  const { servers, warnings } = parseMcpConfig(JSON.stringify({
+    mcpServers: { remote: { type: 'sse', url: 'https://example.com/sse', headers: { Authorization: 'Bearer x' } } },
+  }))
+  assert.equal(warnings.length, 0)
+  assert.equal(servers.length, 1)
+  assert.equal(servers[0].transport, 'sse')
+  assert.equal(servers[0].url, 'https://example.com/sse')
+  assert.equal(servers[0].headers?.Authorization, 'Bearer x')
+  // 내보내기 왕복도 sse 유지
+  const json = JSON.parse(toMcpConfigJson(servers))
+  assert.equal(json.mcpServers.remote.type, 'sse')
+})
+
 test('사용자가 붙여넣은 mcp-atlassian 설정을 그대로 가져온다', () => {
   const { servers, warnings } = parseMcpConfig(JSON.stringify({
     mcpServers: {

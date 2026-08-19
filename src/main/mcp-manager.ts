@@ -151,11 +151,13 @@ let _sdk: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadSdk(): Promise<any> {
   if (_sdk) return _sdk;
-  const [{ Client }, { StdioClientTransport }, { StreamableHTTPClientTransport }, types] =
+  const [{ Client }, { StdioClientTransport }, { StreamableHTTPClientTransport }, sse, types] =
     await Promise.all([
       import('@modelcontextprotocol/sdk/client/index.js'),
       import('@modelcontextprotocol/sdk/client/stdio.js'),
       import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+      // 레거시 HTTP+SSE 전송 — 없는 빌드일 수 있어 안전하게 감싼다.
+      import('@modelcontextprotocol/sdk/client/sse.js').catch(() => null),
       // tools/list_changed 알림 스키마 — 구버전 SDK 에 없을 수 있어 안전하게 감싼다.
       import('@modelcontextprotocol/sdk/types.js').catch(() => null),
     ]);
@@ -163,6 +165,8 @@ async function loadSdk(): Promise<any> {
     Client,
     StdioClientTransport,
     StreamableHTTPClientTransport,
+    SSEClientTransport:
+      (sse as { SSEClientTransport?: unknown } | null)?.SSEClientTransport ?? null,
     ToolListChangedNotificationSchema:
       (types as { ToolListChangedNotificationSchema?: unknown } | null)
         ?.ToolListChangedNotificationSchema ?? null,
@@ -256,7 +260,7 @@ export class MCPManager {
       if (
         !cfg ||
         JSON.stringify(cfg) !== JSON.stringify(st.config) ||
-        (certificatePolicyChanged && st.config.transport === 'http')
+        (certificatePolicyChanged && (st.config.transport === 'http' || st.config.transport === 'sse'))
       ) {
         void this.disconnect(name);
         this.states.delete(name);
@@ -279,6 +283,7 @@ export class MCPManager {
         Client,
         StdioClientTransport,
         StreamableHTTPClientTransport,
+        SSEClientTransport,
         ToolListChangedNotificationSchema,
       } = await loadSdk();
       const cfg = st.config;
@@ -320,6 +325,13 @@ export class MCPManager {
         // 화면으로 흘려보내야 사용자가 '멈췄나?' 하지 않는다.
         const notify = st.onProgress ? throttle(st.onProgress, 300) : undefined;
         tap = collectStderr(transport as { stderr?: NodeJS.ReadableStream | null }, notify);
+      } else if (cfg.transport === 'sse') {
+        if (!cfg.url) throw new Error('sse server has no url');
+        if (!SSEClientTransport) throw new Error('이 빌드에서 SSE 전송을 사용할 수 없습니다.');
+        transport = new SSEClientTransport(new URL(cfg.url), {
+          requestInit: cfg.headers ? { headers: cfg.headers } : undefined,
+          fetch: this.httpFetch,
+        });
       } else {
         if (!cfg.url) throw new Error('http server has no url');
         transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
