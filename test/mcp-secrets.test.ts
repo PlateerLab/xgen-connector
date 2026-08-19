@@ -27,11 +27,13 @@ test('mergeSecretKv: 비어있는 입력은 저장값 유지, 채워진 입력�
   assert.deepEqual(mergeSecretKv(undefined, { A: '' }), { A: '' })
 })
 
-test('resolveSecretKv: 시크릿 우선, 없으면 config(마이그레이션 전 평문 호환)', () => {
-  // 마이그레이션 후: config 는 redacted(''), 시크릿은 실제값 → 실제값
+test('resolveSecretKv: 비어있지 않은 config(새로 입력/평문) 우선, redacted 면 시크릿', () => {
+  // redacted('') config → 저장 시크릿 사용 (마이그레이션 후 connect)
   assert.deepEqual(resolveSecretKv({ T: '' }, { T: 'secret' }), { T: 'secret' })
-  // 마이그레이션 전: config 에 평문, 시크릿 없음 → 평문
+  // 마이그레이션 전 평문 config, 시크릿 없음 → 평문
   assert.deepEqual(resolveSecretKv({ T: 'plain' }, undefined), { T: 'plain' })
+  // 폼에 새 값 입력 후 테스트: config 값이 저장 시크릿을 이긴다 (옛 값으로 테스트 방지)
+  assert.deepEqual(resolveSecretKv({ T: 'newtyped' }, { T: 'oldstored' }), { T: 'newtyped' })
   // 둘 다 없음 → undefined
   assert.equal(resolveSecretKv({ T: '' }, undefined), undefined)
 })

@@ -18,6 +18,7 @@
  * browser/loopback glue.
  */
 import http from 'node:http';
+import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import type { McpServerConfig } from './config';
 import { mcpOAuthStore } from './keychain';
@@ -28,6 +29,7 @@ import type { McpHttpFetch } from './mcp-manager';
 type OAuthClientProviderLike = {
   get redirectUrl(): string;
   get clientMetadata(): Record<string, unknown>;
+  state?(): string | undefined;
   clientInformation(): Promise<unknown> | unknown;
   saveClientInformation(info: unknown): Promise<void> | void;
   tokens(): Promise<unknown> | unknown;
@@ -47,10 +49,17 @@ export class ConnectorOAuthProvider implements OAuthClientProviderLike {
     private readonly port: number,
     private readonly interactive: boolean,
     private readonly onRedirect?: (url: URL) => Promise<void> | void,
+    private readonly stateValue?: string,
   ) {}
 
   get redirectUrl(): string {
     return `http://127.0.0.1:${this.port}/callback`;
+  }
+
+  /** OAuth2 state (CSRF) — only the interactive flow sets one; verified at the
+   *  loopback callback before the code is accepted. */
+  state(): string | undefined {
+    return this.stateValue;
   }
 
   get clientMetadata(): Record<string, unknown> {
@@ -97,20 +106,38 @@ export function makeSilentOAuthProvider(server: string): ConnectorOAuthProvider 
   return new ConnectorOAuthProvider(server, 0, false);
 }
 
+function escapeHtml(s: string): string {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
+  );
+}
+
 interface Loopback {
   server: http.Server;
   port: number;
   code: Promise<string>;
+  cancel: () => void;
 }
 
-function startLoopback(): Promise<Loopback> {
+/** Loopback listener that resolves with the authorization code once the browser
+ *  redirects back. `expectedState` is verified (CSRF / code-injection guard). */
+function startLoopback(expectedState: string): Promise<Loopback> {
   return new Promise((resolve, reject) => {
     let resolveCode!: (c: string) => void;
     let rejectCode!: (e: Error) => void;
+    let settled = false;
     const code = new Promise<string>((res, rej) => {
-      resolveCode = res;
-      rejectCode = rej;
+      resolveCode = (c) => {
+        settled = true;
+        res(c);
+      };
+      rejectCode = (e) => {
+        settled = true;
+        rej(e);
+      };
     });
+    // Never leave this promise unhandled (early-return paths don't await it).
+    code.catch(() => {});
     const server = http.createServer((req, res) => {
       let u: URL;
       try {
@@ -127,25 +154,54 @@ function startLoopback(): Promise<Loopback> {
       }
       const authCode = u.searchParams.get('code');
       const err = u.searchParams.get('error');
+      const gotState = u.searchParams.get('state') || '';
+      // CSRF / auth-code injection: the state must match what we issued.
+      const stateOk = gotState === expectedState;
+      const ok = !!authCode && !err && stateOk;
+      const message = ok
+        ? '이 창을 닫고 XGEN 커넥터로 돌아가세요.'
+        : !stateOk
+          ? '보안 검증(state)에 실패했습니다. 다시 시도하세요.'
+          : escapeHtml(err || '인가 코드가 없습니다.');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(
         `<!doctype html><html><body style="font-family:system-ui,sans-serif;padding:3rem;text-align:center">` +
-          `<h2>${authCode ? '인증 완료' : '인증 실패'}</h2>` +
-          `<p>${authCode ? '이 창을 닫고 XGEN 커넥터로 돌아가세요.' : (err || '알 수 없는 오류')}</p>` +
-          `</body></html>`,
+          `<h2>${ok ? '인증 완료' : '인증 실패'}</h2><p>${message}</p></body></html>`,
       );
-      if (authCode) resolveCode(authCode);
+      if (ok) resolveCode(authCode as string);
+      else if (!stateOk) rejectCode(new Error('OAuth state 불일치 (CSRF 방지).'));
       else rejectCode(new Error(err || '인가 코드가 없습니다.'));
     });
     server.on('error', reject);
     server.listen(0, '127.0.0.1', () => {
       const addr = server.address() as AddressInfo | null;
       const port = addr && typeof addr === 'object' ? addr.port : 0;
-      const timer = setTimeout(() => rejectCode(new Error('인증 시간 초과 (5분).')), AUTH_TIMEOUT_MS);
-      // Stop the timer once the code resolves/rejects.
+      const timer = setTimeout(() => {
+        if (!settled) rejectCode(new Error('인증 시간 초과 (5분).'));
+      }, AUTH_TIMEOUT_MS);
       void code.finally(() => clearTimeout(timer));
-      resolve({ server, port, code });
+      const cancel = () => {
+        clearTimeout(timer);
+        if (!settled) rejectCode(new Error('인증이 취소되었습니다.'));
+      };
+      resolve({ server, port, code, cancel });
     });
+  });
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} 시간 초과 (${Math.round(ms / 1000)}초).`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
   });
 }
 
@@ -196,15 +252,25 @@ export async function authorizeMcpServer(
       await shell.openExternal(url);
     });
 
-  const loop = await startLoopback();
+  const state = randomBytes(24).toString('base64url');
+  const loop = await startLoopback(state);
   try {
     const { SSEClientTransport, StreamableHTTPClientTransport, UnauthorizedError, Client } =
       await loadTransportsAndError();
-    // Fresh PKCE each authorization.
-    await mcpOAuthStore.patch(cfg.name, { codeVerifier: undefined, tokens: undefined });
+    // Fresh authorization: drop old PKCE/tokens AND client registration so DCR
+    // re-runs with THIS session's loopback redirect_uri (avoids a stale port).
+    await mcpOAuthStore.patch(cfg.name, {
+      codeVerifier: undefined,
+      tokens: undefined,
+      clientInformation: undefined,
+    });
 
-    const provider = new ConnectorOAuthProvider(cfg.name, loop.port, true, (url) =>
-      openExternal(url.toString()),
+    const provider = new ConnectorOAuthProvider(
+      cfg.name,
+      loop.port,
+      true,
+      (url) => openExternal(url.toString()),
+      state,
     );
     const url = new URL(cfg.url);
     const mkTransport = () =>
@@ -220,7 +286,8 @@ export async function authorizeMcpServer(
     const client = new Client({ name: 'xgen-connector', version: '1.0.0' }, { capabilities: {} });
     try {
       // If we already have valid/refreshable tokens, this connects straight away.
-      await client.connect(transport);
+      // Bounded so a stalled discovery/registration can't hang forever.
+      await withTimeout(client.connect(transport), 60_000, 'OAuth 연결');
       await client.close();
       return { ok: true };
     } catch (e) {
@@ -230,14 +297,14 @@ export async function authorizeMcpServer(
       // The browser was opened by redirectToAuthorization — wait for the code.
     }
 
-    const code = await loop.code;
-    await transport.finishAuth(code);
+    const code = await loop.code; // already bounded by the loopback 5-min timer
+    await withTimeout(transport.finishAuth(code), 60_000, 'OAuth 토큰 교환');
     // Verify with a fresh transport that now has tokens.
     const verifyTransport = mkTransport();
     const verifyClient = new Client({ name: 'xgen-connector', version: '1.0.0' }, { capabilities: {} });
     try {
       if (verifyTransport) {
-        await verifyClient.connect(verifyTransport);
+        await withTimeout(verifyClient.connect(verifyTransport), 60_000, 'OAuth 검증');
         await verifyClient.close();
       }
     } catch {
@@ -247,6 +314,7 @@ export async function authorizeMcpServer(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   } finally {
+    loop.cancel();
     loop.server.close();
   }
 }

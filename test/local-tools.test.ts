@@ -285,6 +285,15 @@ test('paginate: head/tail 라인 + max_bytes 바이트 캡 (tail-bias)', () => {
   assert.equal(paginate('short', {}).truncated, false)
 })
 
+test('paginate: max_bytes 는 바이트 기준이며 멀티바이트 문자를 깨지 않는다', () => {
+  const s = '가'.repeat(100) // 각 3바이트(UTF-8) → 300바이트
+  const p = paginate(s, { maxBytes: 10 })
+  assert.ok(Buffer.byteLength(p.text) <= 10, `바이트 캡 초과: ${Buffer.byteLength(p.text)}`)
+  assert.ok(!p.text.includes('�'), '깨진 문자(U+FFFD)가 남았다')
+  assert.equal(p.truncated, true)
+  assert.equal(p.totalBytes, 300)
+})
+
 test('classifyOpenTarget: 안전 URL 허용 / 위험 스킴 차단 / 경로 통과', () => {
   assert.deepEqual(classifyOpenTarget('https://x.com'), { kind: 'url', value: 'https://x.com' })
   assert.deepEqual(classifyOpenTarget('mailto:a@b.com'), { kind: 'url', value: 'mailto:a@b.com' })

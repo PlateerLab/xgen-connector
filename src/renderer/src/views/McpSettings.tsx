@@ -169,10 +169,14 @@ function kvToText(obj?: Record<string, string>, sep = '='): string {
 }
 function textToKv(text: string, sep = '='): Record<string, string> | undefined {
   const out: Record<string, string> = {};
+  // Split on the FIRST delimiter char (sep[0]) so a redacted secret line like
+  // `Authorization:` (trailing space trimmed off) still yields the key with an
+  // empty value — instead of being dropped, which would wipe the stored secret.
+  const delim = sep[0] || sep;
   for (const line of text.split('\n')) {
     const t = line.trim();
     if (!t) continue;
-    const i = t.indexOf(sep);
+    const i = t.indexOf(delim);
     if (i <= 0) continue;
     out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
   }
@@ -263,7 +267,7 @@ const ExposedToolsPanel: React.FC<{
                     </button>
                     {open && (
                       <pre className="mcp-exposed-schema">
-                        {(t.description ? t.description.trim() + '\n\n' : '') +
+                        {(t.description ? String(t.description).trim() + '\n\n' : '') +
                           (t.inputSchema ? JSON.stringify(t.inputSchema, null, 2) : '(입력 스키마 없음)')}
                       </pre>
                     )}
@@ -358,6 +362,12 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const saveDraft = async () => {
     const c = configFromDraft(draft);
     if (!c.name) return;
+    // 'local' is the reserved namespace for the connector's built-in tools —
+    // a configured server with that name would collide in the exposed-tools list.
+    if (c.name.toLowerCase() === 'local') {
+      setTest({ ok: false, msg: "'local' 은 내장 도구 예약 이름입니다. 다른 이름을 쓰세요." });
+      return;
+    }
     const next = [...servers];
     if (editing === 'new') next.push(c);
     else if (typeof editing === 'number') next[editing] = c;

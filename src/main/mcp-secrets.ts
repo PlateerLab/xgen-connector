@@ -33,15 +33,16 @@ export function mergeSecretKv(stored?: Kv, incoming?: Kv): Kv | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
-/** For connect: the real value is the stored secret if present, else the config
- *  value (backward-compat for pre-migration plaintext config). Empty dropped. */
+/** Resolve real values for connect/test. A NON-EMPTY config value wins — it is
+ *  either a freshly-typed value (test-before-save) or pre-migration plaintext;
+ *  an empty ('') config value is a redaction, so the stored secret is used. */
 export function resolveSecretKv(configVals?: Kv, secretVals?: Kv): Kv | undefined {
   const keys = new Set([...Object.keys(configVals || {}), ...Object.keys(secretVals || {})]);
   if (!keys.size) return undefined;
   const out: Kv = {};
   for (const k of keys) {
-    const secret = secretVals?.[k];
-    const v = secret && secret.length ? secret : configVals?.[k] || '';
+    const cfg = configVals?.[k];
+    const v = cfg && cfg.length ? cfg : secretVals?.[k] || '';
     if (v) out[k] = v;
   }
   return Object.keys(out).length ? out : undefined;

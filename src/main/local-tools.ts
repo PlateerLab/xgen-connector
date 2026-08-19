@@ -97,6 +97,8 @@ const BG_SETTLE_MS = 350;
 const JOB_STREAM_CAP = 262_144; // 256KB stdout + 256KB stderr per job
 /** Max background jobs retained; oldest FINISHED jobs are evicted past this. */
 const MAX_JOBS = 50;
+/** Max concurrently-RUNNING background jobs (finished ones don't count). */
+const MAX_RUNNING_JOBS = 25;
 
 const IS_WIN = platform() === 'win32';
 const IS_MAC = platform() === 'darwin';
@@ -494,7 +496,13 @@ export function paginate(
   }
   const cap = Math.max(1, Math.min(OUTPUT_CAP, Number(opts.maxBytes) > 0 ? Math.floor(Number(opts.maxBytes)) : OUTPUT_CAP));
   if (Buffer.byteLength(out) > cap) {
-    out = head ? out.slice(0, cap) : out.slice(-cap); // head requested → keep head, else tail
+    // Cap on BYTES (not UTF-16 units). Decoding a mid-character cut yields U+FFFD
+    // at the cut edge — drop it so we never emit a broken partial character.
+    const buf = Buffer.from(out, 'utf8');
+    const sliced = head ? buf.subarray(0, cap) : buf.subarray(buf.length - cap);
+    out = sliced.toString('utf8');
+    if (!head && out.charCodeAt(0) === 0xfffd) out = out.slice(1);
+    if (head && out.charCodeAt(out.length - 1) === 0xfffd) out = out.slice(0, -1);
     truncated = true;
   }
   return { text: out, truncated, totalBytes };
@@ -979,6 +987,21 @@ export class LocalToolProvider {
   ): Promise<LocalToolResult> {
     const detachedGroup = !IS_WIN;
     return new Promise<LocalToolResult>((resolve) => {
+      // Bound concurrent background jobs so a runaway loop can't accumulate live
+      // processes/pipe FDs without limit (finished jobs are evicted separately).
+      const running = [...bgJobs.values()].filter((j) => j.status === 'running').length;
+      if (running >= MAX_RUNNING_JOBS) {
+        resolve({
+          content: [
+            {
+              type: 'text',
+              text: `실행 중인 백그라운드 작업이 너무 많습니다 (${running}/${MAX_RUNNING_JOBS}). ShellJob(action:'list')로 확인하고 kill 로 정리한 뒤 다시 시도하세요.`,
+            },
+          ],
+          isError: true,
+        });
+        return;
+      }
       let child: ChildProcess;
       try {
         child = spawn(file, argv, {
@@ -1034,15 +1057,22 @@ export class LocalToolProvider {
         done({ content: [{ type: 'text', text: `백그라운드 실행 실패: ${e.message}` }], isError: true });
       });
       child.on('close', (code, signal) => {
+        // Always record the real exit code/signal (even for a job we killed, so
+        // list/poll can show it); only transition status if still running.
+        job.code = code;
+        job.signal = signal;
         if (job.status === 'running') {
           job.status = signal ? 'killed' : 'exited';
-          job.code = code;
-          job.signal = signal;
+          job.endedAt = Date.now();
+        } else if (!job.endedAt) {
           job.endedAt = Date.now();
         }
       });
-      // Don't let the piped child keep the connector's event loop alive on quit.
+      // Don't let the piped child keep the connector's event loop alive on quit —
+      // unref the process AND its stdout/stderr sockets (the pipes hold the loop).
       child.unref();
+      (child.stdout as unknown as { unref?: () => void })?.unref?.();
+      (child.stderr as unknown as { unref?: () => void })?.unref?.();
       // Brief grace so an ENOENT launch reports failure instead of a false success.
       setTimeout(
         () =>

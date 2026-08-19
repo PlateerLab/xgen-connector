@@ -266,6 +266,11 @@ export interface McpOAuthState {
   codeVerifier?: string;
 }
 
+// Per-server write serialization — patch() is load-modify-save on one shared
+// keychain entry, so a concurrent silent refresh + interactive authorize could
+// clobber each other's fields. Chain writes per server to keep them atomic.
+const oauthWriteChain = new Map<string, Promise<unknown>>();
+
 export const mcpOAuthStore = {
   async load(server: string): Promise<McpOAuthState> {
     const raw = await get(MCP_OAUTH_PREFIX + server);
@@ -281,8 +286,16 @@ export const mcpOAuthStore = {
     return set(MCP_OAUTH_PREFIX + server, JSON.stringify(state));
   },
   async patch(server: string, patch: Partial<McpOAuthState>): Promise<boolean> {
-    const cur = await mcpOAuthStore.load(server);
-    return mcpOAuthStore.save(server, { ...cur, ...patch });
+    const prev = oauthWriteChain.get(server) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      const cur = await mcpOAuthStore.load(server);
+      return mcpOAuthStore.save(server, { ...cur, ...patch });
+    });
+    oauthWriteChain.set(
+      server,
+      next.catch(() => undefined),
+    );
+    return next;
   },
   async clear(server: string): Promise<void> {
     await set(MCP_OAUTH_PREFIX + server, null);

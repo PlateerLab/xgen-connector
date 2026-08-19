@@ -47,6 +47,12 @@ test('redirectToAuthorization: silent 은 브라우저를 안 연다, interactiv
   assert.match(openedUrl, /auth\.example\/authorize/)
 })
 
+test('state(): 대화형은 주입된 state 를 노출, silent 는 없음', () => {
+  const withState = new ConnectorOAuthProvider('s', 1, true, undefined, 'abc123')
+  assert.equal(withState.state(), 'abc123')
+  assert.equal(makeSilentOAuthProvider('s').state(), undefined)
+})
+
 test('makeSilentOAuthProvider 는 비대화형 provider 를 만든다', async () => {
   let called = false
   const p = makeSilentOAuthProvider('s')
