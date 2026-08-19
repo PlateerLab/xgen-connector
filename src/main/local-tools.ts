@@ -30,6 +30,8 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir, platform } from 'node:os';
+import { readFile as fsReadFile, writeFile as fsWriteFile, appendFile as fsAppendFile, readdir, stat, mkdir } from 'node:fs/promises';
+import { resolve as pathResolve, relative as pathRelative, isAbsolute, join as pathJoin, dirname, extname } from 'node:path';
 import { augmentedPath, buildChildEnv } from './exec-resolve';
 
 /** Reserved MCP "server" name for connector-hosted built-ins. Agents see the
@@ -37,6 +39,14 @@ import { augmentedPath, buildChildEnv } from './exec-resolve';
 export const LOCAL_SERVER = 'local';
 export const SHELL_TOOL = 'Shell';
 export const OPEN_TOOL = 'Open';
+// 반구조화 1급 로컬 도구 — 셸 문자열 우회 없이 파일/클립보드/알림을 다룬다.
+// 파일 계열은 allowedRoots 경로 스코프 안에서만 동작한다(방어적 가드).
+export const READ_FILE_TOOL = 'ReadFile';
+export const WRITE_FILE_TOOL = 'WriteFile';
+export const LIST_DIR_TOOL = 'ListDir';
+export const SEARCH_TOOL = 'Search';
+export const CLIPBOARD_TOOL = 'Clipboard';
+export const NOTIFY_TOOL = 'Notify';
 
 /** Device-local shell capability config (persisted under ConnectorConfig.localShell). */
 export interface LocalShellConfig {
@@ -54,6 +64,13 @@ export interface LocalShellConfig {
    * security boundary — the agent runs as the logged-in user either way.
    */
   blocked?: string[];
+  /**
+   * Directory roots the file tools (ReadFile/WriteFile/ListDir/Search) may touch.
+   * A path outside every root is refused. Empty → defaults to the user's home
+   * directory. This is a real scope for the STRUCTURED file tools (unlike Shell,
+   * which is unrestricted once enabled). Paths may use `~` for home.
+   */
+  allowedRoots?: string[];
 }
 
 export interface LocalToolSchema {
@@ -87,6 +104,9 @@ export function shellConfig(cfg: LocalShellConfig | undefined): Required<LocalSh
     cwd: (c.cwd || '').trim(),
     timeoutMs: Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, Math.round(t))),
     blocked: Array.isArray(c.blocked) ? c.blocked.map((b) => String(b).trim()).filter(Boolean) : [],
+    allowedRoots: Array.isArray(c.allowedRoots)
+      ? c.allowedRoots.map((r) => String(r).trim()).filter(Boolean)
+      : [],
   };
 }
 
@@ -369,6 +389,130 @@ function killTree(child: ChildProcess, detachedGroup: boolean): void {
   }
 }
 
+/** Extensions we never text-search (binary/asset). */
+const BINARY_EXT = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.pdf', '.zip', '.gz',
+  '.tar', '.7z', '.rar', '.mp3', '.mp4', '.mov', '.avi', '.wav', '.ogg', '.woff',
+  '.woff2', '.ttf', '.eot', '.so', '.dll', '.dylib', '.exe', '.bin', '.class', '.o',
+]);
+
+function resolveOne(p: string, base: string): string {
+  const home = homedir();
+  const expanded = p.startsWith('~') ? home + p.slice(1) : p;
+  return isAbsolute(expanded) ? pathResolve(expanded) : pathResolve(base, expanded);
+}
+
+/**
+ * Resolve a user-supplied path and confirm it stays within an allowed root.
+ * Empty roots → the user's home directory. Returns the absolute path, or null
+ * when it escapes every root. `~` expands to home; relative paths resolve
+ * against home.
+ */
+export function resolveWithinRoots(input: string, roots: string[]): string | null {
+  const home = homedir();
+  const effective = (roots && roots.length ? roots : [home]).map((r) => resolveOne(r, home));
+  const abs = resolveOne(String(input || ''), home);
+  for (const root of effective) {
+    const rel = pathRelative(root, abs);
+    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return abs;
+  }
+  return null;
+}
+
+export function readFileToolSchema(): LocalToolSchema {
+  return {
+    name: READ_FILE_TOOL,
+    description:
+      "Read a text file on the USER'S OWN COMPUTER (the local desktop), within the " +
+      'allowed folders. Prefer this over `Shell cat` — it distinguishes “not found” ' +
+      'from “no permission” cleanly. Returns UTF-8 text (truncated at maxBytes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path. Absolute, ~ for home, or relative to home.' },
+        maxBytes: { type: 'number', description: `Max bytes to return (default/cap ${OUTPUT_CAP}).` },
+      },
+      required: ['path'],
+    },
+  };
+}
+
+export function writeFileToolSchema(): LocalToolSchema {
+  return {
+    name: WRITE_FILE_TOOL,
+    description:
+      "Write (or append to) a text file on the USER'S OWN COMPUTER, within the allowed " +
+      'folders. Creates parent directories as needed. Prefer this over shell redirection.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path. Absolute, ~ for home, or relative to home.' },
+        content: { type: 'string', description: 'Text to write.' },
+        mode: { type: 'string', enum: ['overwrite', 'append'], description: 'Default overwrite.' },
+      },
+      required: ['path', 'content'],
+    },
+  };
+}
+
+export function listDirToolSchema(): LocalToolSchema {
+  return {
+    name: LIST_DIR_TOOL,
+    description: "List a directory on the USER'S OWN COMPUTER (within allowed folders). Shows type/size/name.",
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string', description: 'Directory path (default: home).' } },
+    },
+  };
+}
+
+export function searchToolSchema(): LocalToolSchema {
+  return {
+    name: SEARCH_TOOL,
+    description:
+      "Recursively search text files under a folder on the USER'S OWN COMPUTER (within allowed " +
+      'folders) for a literal substring. Skips node_modules/.git/binaries. Returns path:line: match.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Literal substring to find.' },
+        path: { type: 'string', description: 'Root folder to search (default: home).' },
+        maxResults: { type: 'number', description: 'Max matches (default 100, cap 500).' },
+      },
+      required: ['query'],
+    },
+  };
+}
+
+export function clipboardToolSchema(): LocalToolSchema {
+  return {
+    name: CLIPBOARD_TOOL,
+    description: "Read or write the USER'S system clipboard (plain text).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['read', 'write'], description: 'read (default) or write.' },
+        text: { type: 'string', description: 'Text to put on the clipboard when action=write.' },
+      },
+    },
+  };
+}
+
+export function notifyToolSchema(): LocalToolSchema {
+  return {
+    name: NOTIFY_TOOL,
+    description: "Show a desktop notification on the USER'S OWN COMPUTER.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Notification title.' },
+        body: { type: 'string', description: 'Notification body.' },
+      },
+      required: ['title'],
+    },
+  };
+}
+
 export class LocalToolProvider {
   private cfg: Required<LocalShellConfig> = shellConfig(undefined);
 
@@ -383,14 +527,175 @@ export class LocalToolProvider {
 
   /** Tools advertised into the catalog. Empty when the capability is off. */
   advertise(): LocalToolSchema[] {
-    return this.cfg.enabled ? [shellToolSchema(), openToolSchema()] : [];
+    if (!this.cfg.enabled) return [];
+    return [
+      shellToolSchema(),
+      openToolSchema(),
+      readFileToolSchema(),
+      writeFileToolSchema(),
+      listDirToolSchema(),
+      searchToolSchema(),
+      clipboardToolSchema(),
+      notifyToolSchema(),
+    ];
   }
 
   async callTool(tool: string, args: unknown): Promise<LocalToolResult> {
     if (!this.cfg.enabled) throw new Error('로컬 도구 접근이 꺼져 있습니다 (설정 > 로컬 도구).');
     if (tool === SHELL_TOOL) return this.shell(args);
     if (tool === OPEN_TOOL) return this.open(args);
+    if (tool === READ_FILE_TOOL) return this.readFile(args);
+    if (tool === WRITE_FILE_TOOL) return this.writeFile(args);
+    if (tool === LIST_DIR_TOOL) return this.listDir(args);
+    if (tool === SEARCH_TOOL) return this.search(args);
+    if (tool === CLIPBOARD_TOOL) return this.clipboard(args);
+    if (tool === NOTIFY_TOOL) return this.notify(args);
     throw new Error(`unknown local tool: ${tool}`);
+  }
+
+  /** Resolve + scope-check a file path against allowedRoots (throws if outside). */
+  private guardPath(p: unknown): string {
+    const abs = resolveWithinRoots(String(p ?? ''), this.cfg.allowedRoots);
+    if (!abs) {
+      throw new Error(
+        `경로가 허용된 범위 밖입니다: ${String(p ?? '')} ` +
+          `(설정 > 로컬 도구 > 허용 폴더에서 범위를 넓힐 수 있습니다).`,
+      );
+    }
+    return abs;
+  }
+
+  private async readFile(args: unknown): Promise<LocalToolResult> {
+    const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const abs = this.guardPath(a.path);
+    const maxBytes = Math.max(1, Math.min(OUTPUT_CAP, Number(a.maxBytes) || OUTPUT_CAP));
+    try {
+      const buf = await fsReadFile(abs);
+      const text = buf.subarray(0, maxBytes).toString('utf8');
+      const suffix = buf.byteLength > maxBytes ? `\n…(truncated, ${buf.byteLength} bytes total)` : '';
+      return { content: [{ type: 'text', text: (text || '(empty file)') + suffix }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `읽기 실패: ${(e as Error).message}` }], isError: true };
+    }
+  }
+
+  private async writeFile(args: unknown): Promise<LocalToolResult> {
+    const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const abs = this.guardPath(a.path);
+    const content = typeof a.content === 'string' ? a.content : String(a.content ?? '');
+    const append = a.mode === 'append' || a.append === true;
+    try {
+      await mkdir(dirname(abs), { recursive: true });
+      if (append) await fsAppendFile(abs, content, 'utf8');
+      else await fsWriteFile(abs, content, 'utf8');
+      return {
+        content: [{ type: 'text', text: `${append ? '이어썼습니다' : '저장했습니다'}: ${abs} (${Buffer.byteLength(content)} bytes)` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `쓰기 실패: ${(e as Error).message}` }], isError: true };
+    }
+  }
+
+  private async listDir(args: unknown): Promise<LocalToolResult> {
+    const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const abs = this.guardPath(a.path ?? '~');
+    try {
+      const names = await readdir(abs);
+      const rows: string[] = [];
+      for (const name of names.slice(0, 1000)) {
+        try {
+          const s = await stat(pathJoin(abs, name));
+          rows.push(`${s.isDirectory() ? 'd' : '-'} ${String(s.size).padStart(10)}  ${name}`);
+        } catch {
+          rows.push(`?          ?  ${name}`);
+        }
+      }
+      const more = names.length > 1000 ? `\n…(${names.length} entries, first 1000 shown)` : '';
+      return { content: [{ type: 'text', text: rows.join('\n') + more || '(empty directory)' }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `목록 실패: ${(e as Error).message}` }], isError: true };
+    }
+  }
+
+  private async search(args: unknown): Promise<LocalToolResult> {
+    const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const query = String(a.query ?? '');
+    if (!query) throw new Error('query must not be empty');
+    const abs = this.guardPath(a.path ?? '~');
+    const maxResults = Math.max(1, Math.min(500, Number(a.maxResults) || 100));
+    const hits: string[] = [];
+    const skipDirs = new Set(['node_modules', '.git', '.venv', 'dist', 'out', '.next', '__pycache__']);
+    const walk = async (dir: string, depth: number): Promise<void> => {
+      if (hits.length >= maxResults || depth > 8) return;
+      let entries: string[];
+      try {
+        entries = await readdir(dir);
+      } catch {
+        return;
+      }
+      for (const name of entries) {
+        if (hits.length >= maxResults) return;
+        const full = pathJoin(dir, name);
+        let s;
+        try {
+          s = await stat(full);
+        } catch {
+          continue;
+        }
+        if (s.isDirectory()) {
+          if (!skipDirs.has(name) && !name.startsWith('.')) await walk(full, depth + 1);
+        } else if (s.size <= 2_000_000 && !BINARY_EXT.has(extname(name).toLowerCase())) {
+          try {
+            const text = await fsReadFile(full, 'utf8');
+            const lines = text.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].includes(query)) {
+                hits.push(`${full}:${i + 1}: ${lines[i].trim().slice(0, 200)}`);
+                if (hits.length >= maxResults) return;
+              }
+            }
+          } catch {
+            /* unreadable/binary — skip */
+          }
+        }
+      }
+    };
+    await walk(abs, 0);
+    return {
+      content: [{ type: 'text', text: hits.length ? hits.join('\n') : `'${query}' 를 찾지 못했습니다 (${abs}).` }],
+    };
+  }
+
+  private async clipboard(args: unknown): Promise<LocalToolResult> {
+    const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const action = String(a.action ?? 'read');
+    try {
+      const { clipboard } = await import('electron');
+      if (action === 'write') {
+        clipboard.writeText(String(a.text ?? ''));
+        return { content: [{ type: 'text', text: '클립보드에 복사했습니다.' }] };
+      }
+      const text = clipboard.readText();
+      return { content: [{ type: 'text', text: text || '(클립보드가 비어 있습니다)' }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `클립보드 접근 실패: ${(e as Error).message}` }], isError: true };
+    }
+  }
+
+  private async notify(args: unknown): Promise<LocalToolResult> {
+    const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const title = String(a.title ?? 'XGEN');
+    const body = String(a.body ?? '');
+    try {
+      const { Notification } = await import('electron');
+      if (!Notification.isSupported()) {
+        return { content: [{ type: 'text', text: '이 OS 에서 알림을 지원하지 않습니다.' }], isError: true };
+      }
+      new Notification({ title, body }).show();
+      return { content: [{ type: 'text', text: '알림을 표시했습니다.' }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `알림 실패: ${(e as Error).message}` }], isError: true };
+    }
   }
 
   private async shell(args: unknown): Promise<LocalToolResult> {

@@ -50,6 +50,9 @@ export const Settings: React.FC<{
   const [shellCwd, setShellCwd] = useState(ls.cwd ?? '');
   const [shellTimeoutS, setShellTimeoutS] = useState(Math.round((ls.timeoutMs ?? 120_000) / 1000));
   const [shellBlocked, setShellBlocked] = useState((ls.blocked ?? []).join(', '));
+  // 파일 도구(ReadFile/WriteFile/ListDir/Search)가 접근할 수 있는 폴더 (줄바꿈/쉼표 구분).
+  // 비우면 홈 폴더로 제한된다.
+  const [shellRoots, setShellRoots] = useState((ls.allowedRoots ?? []).join('\n'));
 
   const [resetDone, setResetDone] = useState(false);
   const [confirmSettingsReset, setConfirmSettingsReset] = useState(false);
@@ -86,7 +89,7 @@ export const Settings: React.FC<{
 
   // 셸 설정은 여러 필드가 하나의 localShell 객체를 이룬다 — 저장 시점의 상태를
   // 통째로 쓰되, 방금 바꾼 필드는 override 로 즉시 반영한다.
-  const commitShell = (over: Partial<{ enabled: boolean; cwd: string; timeoutS: number; blocked: string }> = {}) => {
+  const commitShell = (over: Partial<{ enabled: boolean; cwd: string; timeoutS: number; blocked: string; roots: string }> = {}) => {
     const enabled = over.enabled ?? shellOn;
     const cwd = (over.cwd ?? shellCwd).trim();
     const timeoutS = Math.max(1, Math.round(over.timeoutS ?? shellTimeoutS));
@@ -94,7 +97,11 @@ export const Settings: React.FC<{
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    void apply({ localShell: { enabled, cwd: cwd || undefined, timeoutMs: timeoutS * 1000, blocked } });
+    const allowedRoots = (over.roots ?? shellRoots)
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    void apply({ localShell: { enabled, cwd: cwd || undefined, timeoutMs: timeoutS * 1000, blocked, allowedRoots } });
   };
 
   // 서버 주소 변경은 세션 전환 — 첫 클릭에서 로그아웃 안내를 띄우고,
@@ -434,10 +441,11 @@ export const Settings: React.FC<{
                 <div className="tool-card-main">
                   <span className="tool-card-icon"><MonitorIcon size={18} /></span>
                   <div className="tool-card-text">
-                    <div className="tool-card-title">로컬 셸 접근</div>
+                    <div className="tool-card-title">로컬 도구 접근 (셸 · 파일)</div>
                     <div className="tool-card-desc">
-                      에이전트가 이 PC 의 셸(PowerShell/bash)로 명령을 실행할 수 있게 합니다.
-                      앱 실행·파일 조작 등 "내 컴퓨터"를 직접 다루는 요청이 가능해집니다.
+                      에이전트가 이 PC 의 셸(PowerShell/bash)로 명령을 실행하고, 파일
+                      읽기/쓰기·목록·검색·클립보드·알림 도구로 "내 컴퓨터"를 직접 다룰 수
+                      있게 합니다. 파일 도구는 아래 허용 폴더 범위로 제한됩니다.
                     </div>
                   </div>
                   <label className="switch">
@@ -485,10 +493,21 @@ export const Settings: React.FC<{
                         onBlur={() => commitShell()}
                       />
                     </label>
+                    <label className="field">
+                      <span>허용 폴더 <span className="small muted">(파일 도구 접근 범위 · 줄바꿈/쉼표 구분 · 비우면 홈)</span></span>
+                      <textarea
+                        rows={2}
+                        value={shellRoots}
+                        placeholder={'예: /home/me/projects\n/home/me/Documents'}
+                        onChange={(e) => setShellRoots(e.target.value)}
+                        onBlur={() => commitShell()}
+                      />
+                    </label>
                     <p className="settings-hint warn">
-                      ⚠ 이 도구는 로그인한 사용자 권한으로 명령을 실행합니다. 실행 내역은
-                      채팅의 도구 로그에 남으며, 위 차단 목록은 편의를 위한 가드일 뿐
-                      보안 경계가 아닙니다.
+                      ⚠ 켜면 파일 읽기/쓰기·목록·검색·클립보드·알림 도구와 셸이 에이전트에
+                      노출됩니다. 셸은 로그인 사용자 권한으로 실행되며, 되돌리기 어려운
+                      명령(rm -rf 등)은 실행 직전 확인을 요청합니다. 파일 도구는 위 허용
+                      폴더 범위로 제한됩니다. 실행 내역은 항상 도구 로그에 기록됩니다.
                     </p>
                   </div>
                 )}

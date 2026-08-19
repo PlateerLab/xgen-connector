@@ -139,6 +139,9 @@ export interface LocalShellPersistConfig {
   timeoutMs?: number;
   /** 첫 토큰이 일치하면 거절할 명령 이름들 (편의용 가드, 보안 경계 아님). */
   blocked?: string[];
+  /** 파일 도구(ReadFile/WriteFile/ListDir/Search)가 접근 가능한 폴더 루트.
+   *  비우면 홈으로 제한. `~` 는 홈으로 확장된다. */
+  allowedRoots?: string[];
 }
 
 /** XGEN 워크스페이스(가상 드라이브) 영속 형태 — workspace.WorkspaceConfig 미러. */
