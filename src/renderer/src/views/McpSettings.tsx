@@ -23,6 +23,7 @@ type Draft = {
   url: string;
   envText: string;
   headersText: string;
+  auth: 'none' | 'oauth';
   enabled: boolean;
 };
 
@@ -156,6 +157,7 @@ const EMPTY_DRAFT: Draft = {
   url: '',
   envText: '',
   headersText: '',
+  auth: 'none',
   enabled: true,
 };
 
@@ -187,6 +189,7 @@ function draftFromConfig(c: McpServerConfig): Draft {
     url: c.url ?? '',
     envText: kvToText(c.env, '='),
     headersText: kvToText(c.headers, ': '),
+    auth: c.auth === 'oauth' ? 'oauth' : 'none',
     enabled: c.enabled !== false,
   };
 }
@@ -202,6 +205,7 @@ function configFromDraft(d: Draft): McpServerConfig {
     c.url = d.url.trim();
     const headers = textToKv(d.headersText, ': ');
     if (headers) c.headers = headers;
+    if (d.auth === 'oauth') c.auth = 'oauth';
   }
   return c;
 }
@@ -295,6 +299,8 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [servers, setServers] = useState<McpServerConfig[]>([]);
   const [status, setStatus] = useState<McpBridgeStatusLike | null>(null);
   const [runtimeLogs, setRuntimeLogs] = useState<McpRuntimeLogEntryLike[]>([]);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMsg, setAuthMsg] = useState<{ ok?: boolean; text: string } | null>(null);
   const [editing, setEditing] = useState<number | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [test, setTest] = useState<TestState | null>(null);
@@ -450,6 +456,25 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     // 테스트가 되면 실제 연결도 되어야 한다 — 브릿지에 다시 붙여 도구가
     // 에이전트에게 실제로 광고되게 하고, 낡은 실패 문구를 지운다.
     if (r.ok) xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+  };
+
+  /** OAuth 2.1 인가 — 브라우저 로그인 흐름을 시작한다. */
+  const authorizeDraft = async () => {
+    setAuthBusy(true);
+    setAuthMsg(null);
+    try {
+      const res = await xgen.mcp.authorize(configFromDraft(draft));
+      setAuthMsg(
+        res.ok
+          ? { ok: true, text: '인가되었습니다 — 연결에 액세스 토큰이 자동 사용됩니다.' }
+          : { ok: false, text: res.error || '인가에 실패했습니다.' },
+      );
+      if (res.ok) xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+    } catch (e) {
+      setAuthMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setAuthBusy(false);
+    }
   };
 
   return (
@@ -667,6 +692,31 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     비워 두면 기존 값이 유지되고 새 값을 입력하면 교체됩니다.
                   </span>
                 </label>
+                <label className="field">
+                  <span>인증</span>
+                  <select
+                    className="mcp-select"
+                    value={draft.auth}
+                    onChange={(e) => setDraft({ ...draft, auth: e.target.value as 'none' | 'oauth' })}
+                  >
+                    <option value="none">없음 (헤더/토큰 직접 입력)</option>
+                    <option value="oauth">OAuth 2.1 (브라우저 로그인)</option>
+                  </select>
+                </label>
+                {draft.auth === 'oauth' && (
+                  <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: -4 }}>
+                    <button
+                      className="secondary"
+                      onClick={() => void authorizeDraft()}
+                      disabled={authBusy || !draft.url.trim() || !draft.name.trim()}
+                    >
+                      {authBusy ? '인가 중… (브라우저 확인)' : '브라우저로 인가하기'}
+                    </button>
+                    {authMsg && (
+                      <span className={`small ${authMsg.ok ? 'notice-ok' : 'notice-warn'}`}>{authMsg.text}</span>
+                    )}
+                  </div>
+                )}
               </>
             )}
 

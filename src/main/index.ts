@@ -42,6 +42,7 @@ import {
 } from './config';
 import { tokenStore, credentialStore, storageStatus, mcpSecretStore, mcpOAuthStore } from './keychain';
 import { splitServerSecrets, withResolvedSecrets } from './mcp-secrets';
+import { authorizeMcpServer, hasOAuthTokens, clearOAuth } from './mcp-oauth';
 import {
   initUpdater,
   setAutoUpdate,
@@ -1821,6 +1822,22 @@ ipcMain.handle(CHANNELS.mcpTestServer, async (e, cfg) => {
   return getMcpManager().test(resolved, (lines) => {
     if (!e.sender.isDestroyed()) e.sender.send(CHANNELS.mcpTestProgressEvent, { name: cfg?.name, lines });
   });
+});
+ipcMain.handle(CHANNELS.mcpAuthorize, async (_e, cfg) => {
+  // G8b: interactive OAuth 2.1 (PKCE) — opens the browser + loopback listener.
+  const stored = cfg?.name ? await mcpSecretStore.get(cfg.name).catch(() => null) : null;
+  const resolved = cfg ? withResolvedSecrets(cfg, stored) : cfg;
+  const res = await authorizeMcpServer(resolved, { fetch: mcpHttpFetch });
+  if (res.ok) syncMcp(); // reconnect now that tokens exist
+  return res;
+});
+ipcMain.handle(CHANNELS.mcpOauthStatus, async (_e, name) => ({
+  authorized: await hasOAuthTokens(String(name || '')).catch(() => false),
+}));
+ipcMain.handle(CHANNELS.mcpClearOauth, async (_e, name) => {
+  await clearOAuth(String(name || '')).catch(() => {});
+  syncMcp();
+  return { ok: true };
 });
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
 ipcMain.handle(CHANNELS.mcpRuntimeLogs, () => mcpRuntimeLogs());
