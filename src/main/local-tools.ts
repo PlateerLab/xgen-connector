@@ -40,7 +40,8 @@ export const OPEN_TOOL = 'Open';
 
 /** Device-local shell capability config (persisted under ConnectorConfig.localShell). */
 export interface LocalShellConfig {
-  /** Master switch for the built-in local tools. Default ON (opt-out). */
+  /** Master switch for the built-in local tools. Default OFF (opt-in) — running
+   *  arbitrary local commands from the cloud must be turned on explicitly. */
   enabled?: boolean;
   /** Default working directory for commands. Empty → the user's home. */
   cwd?: string;
@@ -82,7 +83,7 @@ export function shellConfig(cfg: LocalShellConfig | undefined): Required<LocalSh
   const c = cfg || {};
   const t = typeof c.timeoutMs === 'number' && c.timeoutMs > 0 ? c.timeoutMs : DEFAULT_TIMEOUT_MS;
   return {
-    enabled: c.enabled !== false, // default ON
+    enabled: c.enabled === true, // opt-in (default OFF) — 로컬 셸은 명시적으로 켜야 한다
     cwd: (c.cwd || '').trim(),
     timeoutMs: Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, Math.round(t))),
     blocked: Array.isArray(c.blocked) ? c.blocked.map((b) => String(b).trim()).filter(Boolean) : [],
@@ -156,6 +157,72 @@ export function isBlocked(command: string, blocked: string[]): boolean {
   if (!blocked.length) return false;
   const tok = firstToken(command);
   return blocked.some((b) => firstToken(b) === tok || b.trim().toLowerCase() === tok);
+}
+
+/**
+ * 되돌리기 어려운(파괴적) 명령 패턴. 일반 명령은 승인 없이 실행하되, 이 패턴에
+ * 걸리는 명령만 사용자 확인을 받는다 — 마찰을 최소화하면서 사고를 막는다.
+ * 보안 경계가 아니라 "실수 방지 게이트"다 (에이전트는 어차피 로그인 사용자 권한).
+ */
+const DANGEROUS_PATTERNS: RegExp[] = [
+  /\brm\s+-[a-z]*[rf]/i, // rm -rf / -r / -f
+  /(^|[;&|`(])\s*rm\s+\//i, // rm on an absolute path
+  /\bRemove-Item\b[^\n]*-Recurse/i,
+  /\brmdir\s+\/s/i,
+  /\bdel\s+\/[a-z]*[sf]/i,
+  /\b(mkfs|fdisk|format)\b/i,
+  /\bdd\b[^\n]*\b(of|if)=/i,
+  /\b(shutdown|reboot|halt|poweroff)\b/i,
+  /\bchmod\s+-R\b/i,
+  /\bchown\s+-R\b/i,
+  />\s*\/dev\/(sd|nvme|disk|hd)/i,
+  /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:/, // fork bomb
+  /\bgit\s+push\b[^\n]*--force/i,
+  /\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(sh|bash|zsh)\b/i, // curl … | sh
+  /\bsudo\s+rm\b/i,
+];
+
+/** True if the command matches a destructive pattern that warrants confirmation. */
+export function isDangerousShellCommand(command: string): boolean {
+  const c = String(command || '');
+  return DANGEROUS_PATTERNS.some((re) => re.test(c));
+}
+
+// 세션 동안 위험 명령을 한 번 승인하면 이후 되묻지 않는다 (사용자 선택).
+let sessionApprovedDangerous = false;
+
+/** 위험 패턴이면 사용자에게 확인. false = 거부. dialog 는 main 프로세스에서만. */
+async function ensureDangerousApproval(command: string): Promise<boolean> {
+  if (!isDangerousShellCommand(command)) return true;
+  if (sessionApprovedDangerous) return true;
+  try {
+    const { dialog, BrowserWindow } = await import('electron');
+    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+    const result = await (win
+      ? dialog.showMessageBox(win, dangerousDialogOptions(command))
+      : dialog.showMessageBox(dangerousDialogOptions(command)));
+    if (result.response === 2) {
+      sessionApprovedDangerous = true;
+      return true;
+    }
+    return result.response === 1; // 1 = 이번만 허용, 0 = 거부
+  } catch {
+    // dialog 를 띄울 수 없으면(창 없음 등) 안전하게 거부한다.
+    return false;
+  }
+}
+
+function dangerousDialogOptions(command: string) {
+  return {
+    type: 'warning' as const,
+    buttons: ['거부', '이번만 허용', '이 세션 동안 허용'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: '위험할 수 있는 명령 실행 확인',
+    message: 'XGEN 에이전트가 이 PC 에서 되돌리기 어려운 명령을 실행하려 합니다.',
+    detail: command.length > 800 ? `${command.slice(0, 800)} …` : command,
+  };
 }
 
 /** Clamp + label combined stdout/stderr into an MCP text result. */
@@ -331,6 +398,13 @@ export class LocalToolProvider {
     if (!command.trim()) throw new Error('command must not be empty');
     if (isBlocked(command, this.cfg.blocked)) {
       throw new Error(`명령 '${firstToken(command)}' 은(는) 차단 목록에 있어 실행할 수 없습니다.`);
+    }
+    // 되돌리기 어려운 명령은 사용자 승인을 받는다 (위험 패턴만 — 일반 명령은 확인 없이).
+    if (!(await ensureDangerousApproval(command))) {
+      return {
+        content: [{ type: 'text', text: '사용자가 이 명령의 실행을 거부했습니다 (위험할 수 있는 명령).' }],
+        isError: true,
+      };
     }
     const pathStr = await augmentedPath();
     const userShellBin = IS_WIN ? null : process.env.SHELL || null;

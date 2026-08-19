@@ -16,16 +16,16 @@ test.beforeEach(() => {
 
 test.afterEach(() => setMcpRuntimeLogEnabled(false));
 
-test('디버그 모드가 꺼지면 로그를 수집하거나 전달하지 않는다', () => {
+test('로컬 도구 실행은 디버그 토글과 무관하게 항상 기록한다 (감사)', () => {
   const received: number[] = [];
   const off = onMcpRuntimeLog((entry) => received.push(entry.id));
-  setMcpRuntimeLogEnabled(false);
+  setMcpRuntimeLogEnabled(false); // 하위호환 no-op — 더 이상 기록을 막지 않는다
   const entry = appendMcpRuntimeLog({ kind: 'call', message: '호출' });
   off();
 
-  assert.equal(entry, null);
-  assert.deepEqual(received, []);
-  assert.deepEqual(mcpRuntimeLogs(), []);
+  assert.notEqual(entry, null);
+  assert.deepEqual(received, [entry!.id]);
+  assert.equal(mcpRuntimeLogs().length, 1);
 });
 
 test('추가된 로그를 구독자와 현재 실행 목록에 전달한다', () => {

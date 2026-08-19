@@ -19,17 +19,17 @@ export interface McpRuntimeLogEntry {
 const entries: McpRuntimeLogEntry[] = [];
 const listeners = new Set<(entry: McpRuntimeLogEntry) => void>();
 let sequence = 0;
-let enabled = false;
 
-export function setMcpRuntimeLogEnabled(next: boolean): void {
-  enabled = next;
-  if (!enabled) clearMcpRuntimeLogs();
+// 로컬 도구 실행·호출·결과는 **항상** 감사 기록한다 (기본 꺼져 있던 문제 수정 —
+// 로컬 셸/도구가 사용자 PC 에서 무엇을 했는지는 mcpDebug 여부와 무관하게 남겨야 한다).
+// 이 토글은 하위호환용 no-op 이다.
+export function setMcpRuntimeLogEnabled(_next: boolean): void {
+  /* no-op — 기록은 항상 유지된다. */
 }
 
 export function appendMcpRuntimeLog(
   entry: Omit<McpRuntimeLogEntry, 'id' | 'timestamp'>,
 ): McpRuntimeLogEntry | null {
-  if (!enabled) return null;
   const next: McpRuntimeLogEntry = {
     ...entry,
     id: ++sequence,
