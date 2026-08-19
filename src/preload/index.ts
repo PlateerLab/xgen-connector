@@ -64,7 +64,7 @@ export interface McpBridgeStatusLike {
     name: string;
     connected: boolean;
     error?: string;
-    tools: Array<{ name: string }>;
+    tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>;
   }>;
 }
 

@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { xgen } from '../bridge';
 import type { McpServerConfig } from '../../../main/config';
-import type { McpBridgeStatusLike } from '../../../preload/index';
+import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
 import {
   McpImportError,
   parseMcpConfig,
@@ -206,10 +206,95 @@ function configFromDraft(d: Draft): McpServerConfig {
   return c;
 }
 
+function firstLine(s: string): string {
+  const line = String(s).split('\n')[0].trim();
+  return line.length > 96 ? line.slice(0, 96) + '…' : line;
+}
+
+/** G10 — persistent surface of the tools currently exposed to the agent, with
+ *  per-tool description/inputSchema and the recent invocation log. */
+const ExposedToolsPanel: React.FC<{
+  status: McpBridgeStatusLike | null;
+  logs: McpRuntimeLogEntryLike[];
+}> = ({ status, logs }) => {
+  const [openTool, setOpenTool] = useState<string | null>(null);
+  const [showCalls, setShowCalls] = useState(false);
+  const servers = status?.servers ?? [];
+  const total = servers.reduce((n, s) => n + (s.connected ? s.tools.length : 0), 0);
+  const recentCalls = logs.filter((l) => l.kind === 'result' || l.kind === 'call').slice(-25).reverse();
+
+  return (
+    <div className="mcp-exposed">
+      <div className="mcp-exposed-head">
+        <strong>에이전트에 노출된 도구 {total}개</strong>
+        <span className="small muted">
+          {status?.connected ? '지금 세션 에이전트가 사용할 수 있습니다' : '연결되면 자동 주입됩니다'}
+        </span>
+      </div>
+      {servers.length === 0 ? (
+        <div className="small muted pad">노출된 도구가 없습니다. 로컬 도구를 켜거나 MCP 서버를 추가하세요.</div>
+      ) : (
+        servers.map((s) => (
+          <div key={s.name} className="mcp-exposed-group">
+            <div className="mcp-exposed-server small muted">
+              {s.name === 'local' ? '내 PC · 로컬 도구' : s.name}
+              {!s.connected && <span className="mcp-dot off" style={{ marginLeft: 6 }} title="연결 안 됨" />}
+              <span style={{ marginLeft: 6 }}>· {s.tools.length}</span>
+            </div>
+            <ul className="mcp-exposed-tools">
+              {s.tools.map((t) => {
+                const key = `${s.name}/${t.name}`;
+                const open = openTool === key;
+                return (
+                  <li key={key} className="mcp-exposed-tool">
+                    <button
+                      className="mcp-exposed-tool-btn"
+                      onClick={() => setOpenTool(open ? null : key)}
+                      aria-expanded={open}
+                    >
+                      <span className="mcp-exposed-tool-name">{t.name}</span>
+                      {t.description && (
+                        <span className="small muted mcp-exposed-tool-desc">{firstLine(t.description)}</span>
+                      )}
+                    </button>
+                    {open && (
+                      <pre className="mcp-exposed-schema">
+                        {(t.description ? t.description.trim() + '\n\n' : '') +
+                          (t.inputSchema ? JSON.stringify(t.inputSchema, null, 2) : '(입력 스키마 없음)')}
+                      </pre>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))
+      )}
+      <button className="link small" onClick={() => setShowCalls((v) => !v)} style={{ marginTop: 6 }}>
+        {showCalls ? '최근 호출 숨기기' : `최근 호출 보기 (${recentCalls.length})`}
+      </button>
+      {showCalls && (
+        <ul className="mcp-exposed-calls">
+          {recentCalls.length === 0 && <li className="small muted">아직 호출 기록이 없습니다.</li>}
+          {recentCalls.map((l) => (
+            <li key={l.id} className="small mcp-exposed-call">
+              <span className={`mcp-dot ${l.ok === false ? 'off' : 'ok'}`} />
+              <span className="mcp-exposed-call-tool">{l.tool || l.message}</span>
+              {l.server && <span className="muted"> · {l.server === 'local' ? '내 PC' : l.server}</span>}
+              {typeof l.durationMs === 'number' && <span className="muted"> · {l.durationMs}ms</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
 export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [enabled, setEnabled] = useState(false);
   const [servers, setServers] = useState<McpServerConfig[]>([]);
   const [status, setStatus] = useState<McpBridgeStatusLike | null>(null);
+  const [runtimeLogs, setRuntimeLogs] = useState<McpRuntimeLogEntryLike[]>([]);
   const [editing, setEditing] = useState<number | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [test, setTest] = useState<TestState | null>(null);
@@ -229,6 +314,11 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     // 화면을 열 때 다시 붙여 본다 — 런타임을 나중에 설치했는데 예전 실패
     // 문구가 계속 남아 있으면 안 된다.
     xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+    // 최근 도구 호출 로그 — G10 노출 도구 패널의 "최근 호출" 섹션.
+    xgen.mcp.runtimeLogs().then((rows) => setRuntimeLogs(rows.slice(-100))).catch(() => undefined);
+    const offLog = xgen.mcp.onRuntimeLog((entry) =>
+      setRuntimeLogs((prev) => [...prev, entry].slice(-100)),
+    );
     const offStatus = xgen.mcp.onStatus(setStatus);
     // 기동 중인 서버의 출력을 실시간으로 받아 '멈춘 게 아니다'를 보여준다.
     const offProgress = xgen.mcp.onTestProgress(({ name, lines }) => {
@@ -238,6 +328,7 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     return () => {
       offStatus();
       offProgress();
+      offLog();
     };
   }, []);
 
@@ -398,6 +489,8 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <span className="track" />
           </label>
         </div>
+
+        <ExposedToolsPanel status={status} logs={runtimeLogs} />
 
         <div className="mcp-list">
           {servers.length === 0 && <div className="muted small pad">등록된 MCP 서버가 없습니다.</div>}

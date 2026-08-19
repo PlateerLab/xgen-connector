@@ -2020,6 +2020,97 @@ button {
 .mcp-dot.off {
   background: var(--gray-400);
 }
+/* G10 — exposed-tools panel */
+.mcp-exposed {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  padding: 8px 10px;
+  margin: 6px 0 10px;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+.mcp-exposed-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.mcp-exposed-group {
+  margin-top: 6px;
+}
+.mcp-exposed-server {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  margin: 4px 0 2px;
+}
+.mcp-exposed-tools {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mcp-exposed-tool-btn {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 6px;
+  color: var(--text);
+}
+.mcp-exposed-tool-btn:hover {
+  background: var(--primary-soft);
+}
+.mcp-exposed-tool-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.mcp-exposed-tool-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-exposed-schema {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 2px 6px 4px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mcp-exposed-calls {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mcp-exposed-call {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mcp-exposed-call-tool {
+  font-family: var(--font-mono);
+}
 .mcp-item-cmd {
   font-family: var(--font-mono);
   font-size: 11px;
