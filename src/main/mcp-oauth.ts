@@ -37,6 +37,7 @@ type OAuthClientProviderLike = {
   redirectToAuthorization(url: URL): Promise<void> | void;
   saveCodeVerifier(v: string): Promise<void> | void;
   codeVerifier(): Promise<string> | string;
+  invalidateCredentials?(scope: 'all' | 'client' | 'tokens' | 'verifier'): Promise<void> | void;
 };
 
 const CLIENT_NAME = 'XGEN Connector';
@@ -98,6 +99,20 @@ export class ConnectorOAuthProvider implements OAuthClientProviderLike {
     // (thrown by the SDK after this returns) is the intended "needs auth" signal.
     if (!this.interactive) return;
     if (this.onRedirect) await this.onRedirect(url);
+  }
+
+  /** SDK self-heal: on InvalidGrant/registration errors the SDK asks us to drop
+   *  the stale credential so the next attempt re-registers / re-authorizes. */
+  async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier'): Promise<void> {
+    if (scope === 'all') {
+      await mcpOAuthStore.clear(this.server);
+      return;
+    }
+    await mcpOAuthStore.patch(this.server, {
+      ...(scope === 'client' ? { clientInformation: undefined } : {}),
+      ...(scope === 'tokens' ? { tokens: undefined } : {}),
+      ...(scope === 'verifier' ? { codeVerifier: undefined } : {}),
+    });
   }
 }
 

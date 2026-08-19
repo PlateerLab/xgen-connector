@@ -496,13 +496,19 @@ export function paginate(
   }
   const cap = Math.max(1, Math.min(OUTPUT_CAP, Number(opts.maxBytes) > 0 ? Math.floor(Number(opts.maxBytes)) : OUTPUT_CAP));
   if (Buffer.byteLength(out) > cap) {
-    // Cap on BYTES (not UTF-16 units). Decoding a mid-character cut yields U+FFFD
-    // at the cut edge — drop it so we never emit a broken partial character.
+    // Cap on BYTES (not UTF-16 units), snapping to a UTF-8 character boundary so
+    // we never split a multibyte char (no U+FFFD) and never exceed `cap` bytes.
+    // Continuation bytes are 0b10xxxxxx (0x80–0xBF).
     const buf = Buffer.from(out, 'utf8');
-    const sliced = head ? buf.subarray(0, cap) : buf.subarray(buf.length - cap);
-    out = sliced.toString('utf8');
-    if (!head && out.charCodeAt(0) === 0xfffd) out = out.slice(1);
-    if (head && out.charCodeAt(out.length - 1) === 0xfffd) out = out.slice(0, -1);
+    if (head) {
+      let end = cap;
+      while (end > 0 && (buf[end] & 0xc0) === 0x80) end--; // back up before a partial char
+      out = buf.subarray(0, end).toString('utf8');
+    } else {
+      let start = buf.length - cap;
+      while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++; // advance to a lead byte
+      out = buf.subarray(start).toString('utf8');
+    }
     truncated = true;
   }
   return { text: out, truncated, totalBytes };
