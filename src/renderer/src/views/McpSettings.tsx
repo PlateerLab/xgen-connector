@@ -641,6 +641,10 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     placeholder={'API_TOKEN=xxxx'}
                     rows={2}
                   />
+                  <span className="small muted">
+                    값은 OS 키체인에 암호화 저장됩니다(설정 파일에 평문으로 남지 않음). 저장된 서버를
+                    다시 열면 값은 비어 보이며, 비워 두면 기존 값이 유지되고 새 값을 입력하면 교체됩니다.
+                  </span>
                 </label>
               </>
             ) : (
@@ -658,6 +662,10 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     placeholder={'Authorization: Bearer xxxx'}
                     rows={2}
                   />
+                  <span className="small muted">
+                    헤더 값은 OS 키체인에 암호화 저장됩니다. 저장된 서버를 다시 열면 값은 비어 보이며,
+                    비워 두면 기존 값이 유지되고 새 값을 입력하면 교체됩니다.
+                  </span>
                 </label>
               </>
             )}

@@ -10,6 +10,8 @@
  * it still boots — MCP just reports unavailable. Ported from geny-connector.
  */
 import type { McpServerConfig } from './config';
+import { mcpSecretStore } from './keychain';
+import { withResolvedSecrets } from './mcp-secrets';
 import { homedir } from 'os';
 import {
   augmentedPath,
@@ -286,7 +288,10 @@ export class MCPManager {
         SSEClientTransport,
         ToolListChangedNotificationSchema,
       } = await loadSdk();
-      const cfg = st.config;
+      // G8a: rehydrate secret env/headers from the encrypted keychain (config.json
+      // only holds redacted values). Falls back to config for pre-migration users.
+      const secrets = await mcpSecretStore.get(name).catch(() => null);
+      const cfg = withResolvedSecrets(st.config, secrets);
       let transport;
       let tap: StderrTap | null = null;
       if (cfg.transport === 'stdio') {
