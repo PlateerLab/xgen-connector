@@ -47,6 +47,9 @@ export const LIST_DIR_TOOL = 'ListDir';
 export const SEARCH_TOOL = 'Search';
 export const CLIPBOARD_TOOL = 'Clipboard';
 export const NOTIFY_TOOL = 'Notify';
+/** Manage long-running background jobs started with Shell(background:true):
+ *  list / poll (status + captured output, paginated) / kill. */
+export const SHELL_JOB_TOOL = 'ShellJob';
 
 /** Device-local shell capability config (persisted under ConnectorConfig.localShell). */
 export interface LocalShellConfig {
@@ -90,8 +93,10 @@ const MAX_TIMEOUT_MS = 60 * 60_000;
 const OUTPUT_CAP = 200_000; // chars kept from stdout+stderr
 /** Grace we wait for a background launch to fail (ENOENT) before reporting success. */
 const BG_SETTLE_MS = 350;
-/** The OS opener (start/open/xdg-open) returns fast; bound it modestly. */
-const OPEN_TIMEOUT_MS = 15_000;
+/** Per-stream ring-buffer cap for a background job (chars). */
+const JOB_STREAM_CAP = 262_144; // 256KB stdout + 256KB stderr per job
+/** Max background jobs retained; oldest FINISHED jobs are evicted past this. */
+const MAX_JOBS = 50;
 
 const IS_WIN = platform() === 'win32';
 const IS_MAC = platform() === 'darwin';
@@ -279,10 +284,12 @@ export function shellToolSchema(): LocalToolSchema {
       `• Non-interactive only — stdin is closed, so REPLs/prompts (bash, python with no args, ` +
       `\`read\`, pagers) return immediately instead of hanging. Pass the full command each call.\n` +
       `• To launch a GUI app or a long-running/never-exiting process (editors like notepad/gedit, ` +
-      `servers, watchers), set background:true — it starts detached and returns at once, and is ` +
-      `NOT killed at the timeout. Without it, a foreground app is terminated when the timeout hits.\n` +
+      `servers, watchers) — or ANY job that may run longer than a couple of minutes — set ` +
+      `background:true. It starts detached, returns a job_id at once, and is NOT killed at the ` +
+      `timeout; its output is captured. Poll it later with the ShellJob tool (action:'poll', job_id).\n` +
       `• To just open a file/URL/folder with its default app, prefer the Open tool.\n` +
-      `Returns combined stdout/stderr and the exit code (foreground only).`,
+      `Returns combined stdout/stderr and the exit code (foreground); a job_id (background). For huge ` +
+      `output, pass head/tail (lines) or max_bytes to page it.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -290,8 +297,8 @@ export function shellToolSchema(): LocalToolSchema {
         background: {
           type: 'boolean',
           description:
-            'Launch detached and return immediately (no output captured). Use for GUI apps and ' +
-            'long-running processes so they keep running and are not killed at the timeout.',
+            'Launch detached and return a job_id immediately (output captured, pollable via ShellJob). ' +
+            'Use for GUI apps and long-running jobs so they keep running and are not killed at the timeout.',
         },
         cwd: {
           type: 'string',
@@ -306,8 +313,35 @@ export function shellToolSchema(): LocalToolSchema {
           type: 'integer',
           description: 'Optional per-command timeout override (ms). Ignored when background=true.',
         },
+        tail: { type: 'integer', description: 'Return only the last N lines of output (for chatty commands).' },
+        head: { type: 'integer', description: 'Return only the first N lines of output.' },
+        max_bytes: { type: 'integer', description: `Cap returned output bytes (default/cap ${OUTPUT_CAP}).` },
       },
       required: ['command'],
+    },
+  };
+}
+
+/** The ShellJob tool schema — manage background jobs (G6/G13). */
+export function shellJobToolSchema(): LocalToolSchema {
+  return {
+    name: SHELL_JOB_TOOL,
+    description:
+      `Manage long-running background jobs started with Shell(background:true) on the USER'S OWN ` +
+      `COMPUTER. This is how you run work that outlives a single tool call: start it in the ` +
+      `background, then poll it here until it finishes.\n` +
+      `• action:'list' — show all recent/running jobs (id, status, pid, duration, command).\n` +
+      `• action:'poll' (job_id) — status + captured stdout/stderr (paginated: tail default, or head/max_bytes).\n` +
+      `• action:'kill' (job_id) — terminate a running job (whole process tree).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'poll', 'kill'], description: "Default 'list'." },
+        job_id: { type: 'string', description: 'The job id returned by Shell(background:true). Required for poll/kill.' },
+        tail: { type: 'integer', description: 'poll: last N lines (default 200).' },
+        head: { type: 'integer', description: 'poll: first N lines.' },
+        max_bytes: { type: 'integer', description: 'poll: cap returned output bytes.' },
+      },
     },
   };
 }
@@ -317,16 +351,17 @@ export function openToolSchema(): LocalToolSchema {
   return {
     name: OPEN_TOOL,
     description:
-      `Open a file, folder, or URL on the USER'S OWN COMPUTER with its default application ` +
-      `(Windows start / macOS open / Linux xdg-open). Non-blocking — the app launches and this ` +
-      `returns immediately. Use this for "open <file>", "show me <folder>", "open <url>". To launch ` +
-      `an app by name or run a command, use the Shell tool with background:true instead.`,
+      `Open a file, folder, or URL on the USER'S OWN COMPUTER with its default application. ` +
+      `Non-blocking — the app launches and this returns immediately. Use this for "open <file>", ` +
+      `"show me <folder>", "open <url>". Safe by construction: only http/https/mailto/tel/ftp URLs ` +
+      `and filesystem paths within the allowed folders are opened (javascript:/data: and unknown ` +
+      `schemes are refused). To launch an app by name or run a command, use Shell(background:true).`,
     inputSchema: {
       type: 'object',
       properties: {
         target: {
           type: 'string',
-          description: 'Absolute file path, folder path, or URL to open with the default handler.',
+          description: 'A file/folder path (within allowed folders) or an http/https/mailto/tel/ftp URL.',
         },
       },
       required: ['target'],
@@ -387,6 +422,105 @@ function killTree(child: ChildProcess, detachedGroup: boolean): void {
       /* already gone */
     }
   }
+}
+
+// ── Background job registry (G6/G13) ────────────────────────────────
+// Shell(background:true) registers a job here so the agent can later poll its
+// output / status and kill it — decoupling long jobs from any single tool-call
+// timeout (the connector allows up to 1h; the backend tool call is ~125s).
+
+type JobStatus = 'running' | 'exited' | 'killed' | 'error';
+
+interface BgJob {
+  id: string;
+  command: string;
+  pid?: number;
+  child: ChildProcess;
+  detachedGroup: boolean;
+  status: JobStatus;
+  code: number | null;
+  signal: string | null;
+  startedAt: number;
+  endedAt?: number;
+  stdout: string;
+  stderr: string;
+  errorMsg?: string;
+}
+
+const bgJobs = new Map<string, BgJob>();
+let bgJobSeq = 0;
+
+function newJobId(): string {
+  bgJobSeq += 1;
+  return `job-${Date.now().toString(36)}-${bgJobSeq}`;
+}
+
+/** Drop the oldest FINISHED jobs once the registry exceeds MAX_JOBS. Running
+ *  jobs are never evicted. */
+function evictFinishedJobs(): void {
+  if (bgJobs.size <= MAX_JOBS) return;
+  const finished = [...bgJobs.values()]
+    .filter((j) => j.status !== 'running')
+    .sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt));
+  for (const j of finished) {
+    if (bgJobs.size <= MAX_JOBS) break;
+    bgJobs.delete(j.id);
+  }
+}
+
+/** Append to a job stream buffer, keeping only the last JOB_STREAM_CAP chars. */
+function appendCapped(prev: string, chunk: string): string {
+  const next = prev + chunk;
+  return next.length > JOB_STREAM_CAP ? next.slice(-JOB_STREAM_CAP) : next;
+}
+
+/** Paginate text by lines (head/tail) then clamp to a byte cap. Tail-biased so
+ *  logs show their most recent output when clamped. Returns the shaped text plus
+ *  whether it was truncated and the full byte length. */
+export function paginate(
+  text: string,
+  opts: { head?: number; tail?: number; maxBytes?: number },
+): { text: string; truncated: boolean; totalBytes: number } {
+  const totalBytes = Buffer.byteLength(text);
+  let out = text;
+  let truncated = false;
+  const head = Number(opts.head) > 0 ? Math.floor(Number(opts.head)) : 0;
+  const tail = Number(opts.tail) > 0 ? Math.floor(Number(opts.tail)) : 0;
+  if (head || tail) {
+    const lines = text.split('\n');
+    if (head) out = lines.slice(0, head).join('\n');
+    else out = lines.slice(-tail).join('\n');
+    if (out.length < text.length) truncated = true;
+  }
+  const cap = Math.max(1, Math.min(OUTPUT_CAP, Number(opts.maxBytes) > 0 ? Math.floor(Number(opts.maxBytes)) : OUTPUT_CAP));
+  if (Buffer.byteLength(out) > cap) {
+    out = head ? out.slice(0, cap) : out.slice(-cap); // head requested → keep head, else tail
+    truncated = true;
+  }
+  return { text: out, truncated, totalBytes };
+}
+
+/** Allowed URL schemes for the Open tool. Everything else (javascript:, data:,
+ *  vbscript:, unknown app schemes) is refused. `file:` is treated as a path. */
+const SAFE_OPEN_SCHEMES = new Set(['http', 'https', 'mailto', 'tel', 'ftp', 'ftps']);
+
+/** Classify an Open target into a safe URL, a filesystem path, or blocked. Pure
+ *  (unit-tested) — the actual open uses Electron's shell API (no shell string). */
+export function classifyOpenTarget(
+  target: string,
+): { kind: 'url'; value: string } | { kind: 'path'; value: string } | { kind: 'blocked'; reason: string } {
+  const t = String(target || '').trim();
+  if (!t) return { kind: 'blocked', reason: 'target 이 비어 있습니다.' };
+  const m = t.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (m) {
+    const scheme = m[1].toLowerCase();
+    if (scheme === 'file') return { kind: 'path', value: t.replace(/^file:\/\//i, '').replace(/^file:/i, '') };
+    if (SAFE_OPEN_SCHEMES.has(scheme)) return { kind: 'url', value: t };
+    // Windows drive letters ("C:\…") look like a scheme — treat as a path.
+    if (IS_WIN && /^[a-zA-Z]:[\\/]/.test(t)) return { kind: 'path', value: t };
+    return { kind: 'blocked', reason: `허용되지 않은 스킴 '${scheme}:' (javascript/data 등은 차단).` };
+  }
+  return { kind: 'path', value: t };
 }
 
 /** Extensions we never text-search (binary/asset). */
@@ -530,6 +664,7 @@ export class LocalToolProvider {
     if (!this.cfg.enabled) return [];
     return [
       shellToolSchema(),
+      shellJobToolSchema(),
       openToolSchema(),
       readFileToolSchema(),
       writeFileToolSchema(),
@@ -543,6 +678,7 @@ export class LocalToolProvider {
   async callTool(tool: string, args: unknown): Promise<LocalToolResult> {
     if (!this.cfg.enabled) throw new Error('로컬 도구 접근이 꺼져 있습니다 (설정 > 로컬 도구).');
     if (tool === SHELL_TOOL) return this.shell(args);
+    if (tool === SHELL_JOB_TOOL) return this.shellJob(args);
     if (tool === OPEN_TOOL) return this.open(args);
     if (tool === READ_FILE_TOOL) return this.readFile(args);
     if (tool === WRITE_FILE_TOOL) return this.writeFile(args);
@@ -717,7 +853,7 @@ export class LocalToolProvider {
     const env = buildChildEnv(pathStr);
     const runCwd = cwd || this.cfg.cwd || homedir();
 
-    if (background) return this.spawnBackground(file, argv, env, runCwd);
+    if (background) return this.spawnBackground(command, file, argv, env, runCwd);
 
     const timeout = Math.max(
       MIN_TIMEOUT_MS,
@@ -739,32 +875,44 @@ export class LocalToolProvider {
         isError: true,
       };
     }
+    // Optional output paging (G13): head/tail lines + max_bytes cap. Tail-biased
+    // so a caller asking to "see the end" of a chatty command gets the tail.
+    const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const head = Number(a.head) || 0;
+    const tail = Number(a.tail) || 0;
+    const maxBytes = Number(a.max_bytes ?? a.maxBytes) || 0;
+    if (head || tail || maxBytes) {
+      const outP = paginate(r.stdout, { head, tail, maxBytes });
+      const errP = paginate(r.stderr, { head, tail, maxBytes });
+      return shapeResult(outP.text, errP.text, r.code, r.signal);
+    }
     return shapeResult(r.stdout, r.stderr, r.code, r.signal);
   }
 
   private async open(args: unknown): Promise<LocalToolResult> {
     const { target } = coerceOpenArgs(args);
     if (!target.trim()) throw new Error('target must not be empty');
-    const pathStr = await augmentedPath();
-    const env = buildChildEnv(pathStr);
-    const { file, args: argv } = openerInvocation(target);
-    const r = await this.spawnCapture(file, argv, env, homedir(), OPEN_TIMEOUT_MS);
-    if (r.error) {
-      return {
-        content: [{ type: 'text', text: `열기 실패: ${r.error.message} (opener: ${file})` }],
-        isError: true,
-      };
+    // G9: validate scheme (block javascript:/data:/vbscript:/unknown) and use
+    // Electron's shell API — no shell string, so no cmd.exe arg-injection.
+    const cls = classifyOpenTarget(target);
+    if (cls.kind === 'blocked') {
+      return { content: [{ type: 'text', text: `열 수 없습니다: ${cls.reason}` }], isError: true };
     }
-    // Openers fork the app and exit 0. A non-zero exit is a real failure
-    // (no handler, bad path); a timeout means the opener itself hung (rare) —
-    // treat as launched since the app is likely up.
-    if (r.timedOut || r.code === 0 || r.code == null) {
-      return { content: [{ type: 'text', text: `열었습니다: ${target}` }] };
+    try {
+      const { shell: electronShell } = await import('electron');
+      if (cls.kind === 'url') {
+        await electronShell.openExternal(cls.value);
+        return { content: [{ type: 'text', text: `열었습니다: ${cls.value}` }] };
+      }
+      // Filesystem path — scope to allowedRoots (like the file tools), then open
+      // with the OS default app. guardPath throws (caught below) if out of scope.
+      const abs = this.guardPath(cls.value);
+      const err = await electronShell.openPath(abs); // '' on success, else message
+      if (err) return { content: [{ type: 'text', text: `열기 실패: ${err}` }], isError: true };
+      return { content: [{ type: 'text', text: `열었습니다: ${abs}` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `열기 실패: ${(e as Error).message}` }], isError: true };
     }
-    return {
-      content: [{ type: 'text', text: `열기 실패 (${file} exit ${r.code}): ${(r.stderr || r.stdout || '(no output)').trim()}` }],
-      isError: true,
-    };
   }
 
   /** Foreground: capture output, close stdin (no interactive hang), tree-kill on timeout. */
@@ -819,14 +967,17 @@ export class LocalToolProvider {
     });
   }
 
-  /** Background: detached + unref, return immediately. The launched app survives
-   *  this connector and is never killed at a timeout. */
+  /** Background: detached, output captured into the job registry, returns a
+   *  job_id at once. The process keeps running past any tool-call timeout; poll
+   *  or kill it later with the ShellJob tool. */
   private spawnBackground(
+    command: string,
     file: string,
     argv: string[],
     env: Record<string, string>,
     cwd: string,
   ): Promise<LocalToolResult> {
+    const detachedGroup = !IS_WIN;
     return new Promise<LocalToolResult>((resolve) => {
       let child: ChildProcess;
       try {
@@ -834,8 +985,9 @@ export class LocalToolProvider {
           cwd: cwd || homedir(),
           env,
           windowsHide: true,
-          detached: true,
-          stdio: 'ignore',
+          detached: detachedGroup,
+          // Capture output (so it can be polled) but close stdin so REPLs don't hang.
+          stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (e) {
         resolve({
@@ -844,31 +996,134 @@ export class LocalToolProvider {
         });
         return;
       }
+      const job: BgJob = {
+        id: newJobId(),
+        command,
+        pid: child.pid,
+        child,
+        detachedGroup,
+        status: 'running',
+        code: null,
+        signal: null,
+        startedAt: Date.now(),
+        stdout: '',
+        stderr: '',
+      };
+      bgJobs.set(job.id, job);
+      evictFinishedJobs();
+
+      child.stdout?.on('data', (d) => {
+        job.stdout = appendCapped(job.stdout, String(d));
+      });
+      child.stderr?.on('data', (d) => {
+        job.stderr = appendCapped(job.stderr, String(d));
+      });
+
       let settled = false;
       const done = (r: LocalToolResult) => {
         if (settled) return;
         settled = true;
         resolve(r);
       };
-      // A launch that can't even start (ENOENT) fires 'error' synchronously-ish;
-      // give it a brief grace so we report the failure instead of a false success.
-      child.on('error', (e) =>
-        done({ content: [{ type: 'text', text: `백그라운드 실행 실패: ${e.message}` }], isError: true }),
-      );
+      child.on('error', (e) => {
+        if (job.status === 'running') {
+          job.status = 'error';
+          job.errorMsg = e.message;
+          job.endedAt = Date.now();
+        }
+        done({ content: [{ type: 'text', text: `백그라운드 실행 실패: ${e.message}` }], isError: true });
+      });
+      child.on('close', (code, signal) => {
+        if (job.status === 'running') {
+          job.status = signal ? 'killed' : 'exited';
+          job.code = code;
+          job.signal = signal;
+          job.endedAt = Date.now();
+        }
+      });
+      // Don't let the piped child keep the connector's event loop alive on quit.
       child.unref();
+      // Brief grace so an ENOENT launch reports failure instead of a false success.
       setTimeout(
         () =>
           done({
             content: [
               {
                 type: 'text',
-                text: `백그라운드로 시작했습니다 (pid ${child.pid ?? '?'}). 계속 실행되며, 출력은 캡처하지 않습니다.`,
+                text:
+                  `백그라운드 작업을 시작했습니다.\njob_id: ${job.id}  (pid ${job.pid ?? '?'})\n` +
+                  `계속 실행되며 출력이 캡처됩니다. 상태·출력은 ShellJob(action:'poll', job_id) 로, ` +
+                  `종료는 ShellJob(action:'kill', job_id) 로 확인/제어하세요.`,
               },
             ],
           }),
         BG_SETTLE_MS,
       );
     });
+  }
+
+  /** ShellJob: manage background jobs — list / poll (status+output) / kill. */
+  private async shellJob(args: unknown): Promise<LocalToolResult> {
+    const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const action = String(a.action ?? 'list').toLowerCase();
+    const jobId = String(a.job_id ?? a.jobId ?? '').trim();
+
+    if (action === 'list') {
+      if (!bgJobs.size) return { content: [{ type: 'text', text: '실행 중이거나 최근 종료된 백그라운드 작업이 없습니다.' }] };
+      const rows = [...bgJobs.values()]
+        .sort((x, y) => y.startedAt - x.startedAt)
+        .map((j) => {
+          const dur = Math.round(((j.endedAt ?? Date.now()) - j.startedAt) / 1000);
+          const exit = j.status === 'running' ? '' : ` exit=${j.signal ? j.signal : j.code}`;
+          return `${j.id}  [${j.status}${exit}]  pid=${j.pid ?? '?'}  ${dur}s  ${j.command.slice(0, 80)}`;
+        });
+      return { content: [{ type: 'text', text: rows.join('\n') }] };
+    }
+
+    const job = jobId ? bgJobs.get(jobId) : undefined;
+    if (!job) {
+      return {
+        content: [{ type: 'text', text: `job_id '${jobId}' 를 찾지 못했습니다. ShellJob(action:'list') 로 확인하세요.` }],
+        isError: true,
+      };
+    }
+
+    if (action === 'kill') {
+      if (job.status === 'running') {
+        killTree(job.child, job.detachedGroup);
+        job.status = 'killed';
+        job.endedAt = Date.now();
+      }
+      return { content: [{ type: 'text', text: `작업 ${job.id} 을(를) 종료했습니다 (상태: ${job.status}).` }] };
+    }
+
+    // poll / logs — status + captured output (paginated).
+    if (action === 'poll' || action === 'logs') {
+      const head = Number(a.head) || 0;
+      const tail = Number(a.tail) || (head ? 0 : 200); // default: last 200 lines
+      const maxBytes = Number(a.max_bytes ?? a.maxBytes) || 0;
+      const outP = paginate(job.stdout, { head, tail, maxBytes });
+      const errP = paginate(job.stderr, { head, tail, maxBytes });
+      const dur = Math.round(((job.endedAt ?? Date.now()) - job.startedAt) / 1000);
+      const header =
+        `job ${job.id} — ${job.status}` +
+        (job.status !== 'running' ? ` (exit ${job.signal ? job.signal : job.code})` : '') +
+        `  pid=${job.pid ?? '?'}  ${dur}s`;
+      const parts = [header];
+      if (job.errorMsg) parts.push(`ERROR: ${job.errorMsg}`);
+      parts.push(
+        `--- stdout${outP.truncated ? ` (last, ${outP.totalBytes}B total)` : ''} ---\n${outP.text || '(none)'}`,
+      );
+      if (errP.text.trim() || errP.totalBytes) {
+        parts.push(`--- stderr${errP.truncated ? ` (last, ${errP.totalBytes}B total)` : ''} ---\n${errP.text || '(none)'}`);
+      }
+      return { content: [{ type: 'text', text: parts.join('\n\n') }], isError: job.status === 'error' };
+    }
+
+    return {
+      content: [{ type: 'text', text: `알 수 없는 action '${action}'. list | poll | kill 중 하나를 쓰세요.` }],
+      isError: true,
+    };
   }
 }
 
