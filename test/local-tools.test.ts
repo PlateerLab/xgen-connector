@@ -3,7 +3,7 @@ import assert from 'assert'
 import { test } from 'node:test'
 import { platform, homedir, tmpdir } from 'os'
 import { mkdtemp } from 'fs/promises'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import {
   LOCAL_SERVER,
   OPEN_TOOL,
@@ -69,9 +69,12 @@ test('resolveWithinRoots: 스코프 안은 허용, 밖은 거부', () => {
   assert.equal(resolveWithinRoots('foo/bar', []), join(home, 'foo/bar'))
   assert.equal(resolveWithinRoots('/nonexistent-root/x', []), null)
   assert.equal(resolveWithinRoots('~/../escape', []), null)
-  assert.equal(resolveWithinRoots('/tmp/x/y', ['/tmp/x']), '/tmp/x/y')
+  // 크로스플랫폼: '/tmp/..' 는 Windows 에서 'D:\\tmp\\..' 로 해석되므로 기대값도
+  // 같은 resolve() 로 만든다(리터럴 POSIX 경로 비교는 Windows CI 에서 깨진다).
+  const rootX = resolve('/tmp/x')
+  assert.equal(resolveWithinRoots('/tmp/x/y', ['/tmp/x']), resolve('/tmp/x/y'))
   assert.equal(resolveWithinRoots('/tmp/other', ['/tmp/x']), null)
-  assert.equal(resolveWithinRoots('/tmp/x', ['/tmp/x']), '/tmp/x')
+  assert.equal(resolveWithinRoots('/tmp/x', ['/tmp/x']), rootX)
 })
 
 test('파일 도구 end-to-end: write→read→list→search + 스코프 밖 거부', async () => {
