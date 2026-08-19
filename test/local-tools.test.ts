@@ -1,7 +1,9 @@
 /** 로컬 셸 도구 — 카탈로그 광고·게이트·셸 선택·결과 정형·실행·강건성. */
 import assert from 'assert'
 import { test } from 'node:test'
-import { platform } from 'os'
+import { platform, homedir, tmpdir } from 'os'
+import { mkdtemp } from 'fs/promises'
+import { join } from 'path'
 import {
   LOCAL_SERVER,
   OPEN_TOOL,
@@ -19,6 +21,7 @@ import {
   isDangerousShellCommand,
   shellInvocation,
   shellToolSchema,
+  resolveWithinRoots,
 } from '../src/main/local-tools'
 
 const isWin = platform() === 'win32'
@@ -54,7 +57,33 @@ test('꺼져 있으면 카탈로그가 비고, 켜져 있으면 Shell+Open', () 
   assert.deepEqual(p.advertise(), [])
   p.configure({ enabled: true })
   const names = p.advertise().map((t) => t.name)
-  assert.deepEqual(names, [SHELL_TOOL, OPEN_TOOL])
+  assert.deepEqual(names, [SHELL_TOOL, OPEN_TOOL, 'ReadFile', 'WriteFile', 'ListDir', 'Search', 'Clipboard', 'Notify'])
+})
+
+test('resolveWithinRoots: 스코프 안은 허용, 밖은 거부', () => {
+  const home = homedir()
+  assert.equal(resolveWithinRoots('~/docs/a.txt', []), join(home, 'docs/a.txt'))
+  assert.equal(resolveWithinRoots('foo/bar', []), join(home, 'foo/bar'))
+  assert.equal(resolveWithinRoots('/nonexistent-root/x', []), null)
+  assert.equal(resolveWithinRoots('~/../escape', []), null)
+  assert.equal(resolveWithinRoots('/tmp/x/y', ['/tmp/x']), '/tmp/x/y')
+  assert.equal(resolveWithinRoots('/tmp/other', ['/tmp/x']), null)
+  assert.equal(resolveWithinRoots('/tmp/x', ['/tmp/x']), '/tmp/x')
+})
+
+test('파일 도구 end-to-end: write→read→list→search + 스코프 밖 거부', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'xgen-lt-'))
+  const p = new LocalToolProvider()
+  p.configure({ enabled: true, allowedRoots: [dir] })
+  const w = await p.callTool('WriteFile', { path: join(dir, 'a.txt'), content: 'hello\nNEEDLE here\n' })
+  assert.equal(w.isError, undefined)
+  const r = await p.callTool('ReadFile', { path: join(dir, 'a.txt') })
+  assert.ok(r.content[0].text.includes('NEEDLE'))
+  const l = await p.callTool('ListDir', { path: dir })
+  assert.ok(l.content[0].text.includes('a.txt'))
+  const sr = await p.callTool('Search', { query: 'NEEDLE', path: dir })
+  assert.ok(sr.content[0].text.includes('a.txt:2'))
+  await assert.rejects(() => p.callTool('ReadFile', { path: '/etc/hostname' }))
 })
 
 test('Shell 스키마에 background, Open 스키마에 target', () => {
