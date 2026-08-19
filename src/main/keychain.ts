@@ -218,3 +218,86 @@ export const credentialStore = {
     await set(CREDS, null);
   },
 };
+
+// ── MCP server secrets (env/headers) — never written to plaintext config.json ──
+// The connector.json config keeps the KEY names (for the UI) but redacts the
+// VALUES; the real values live here, encrypted by the same safeStorage ladder.
+const MCP_SECRET_PREFIX = 'xgen_mcp_secret_';
+
+export interface McpServerSecrets {
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+}
+
+function nonEmpty(o?: Record<string, string>): boolean {
+  return !!o && Object.values(o).some((v) => typeof v === 'string' && v.length > 0);
+}
+
+export const mcpSecretStore = {
+  /** Store a server's secret env/headers. Empty → cleared. */
+  async save(server: string, secrets: McpServerSecrets): Promise<boolean> {
+    if (!nonEmpty(secrets.env) && !nonEmpty(secrets.headers)) {
+      await set(MCP_SECRET_PREFIX + server, null);
+      return true;
+    }
+    return set(MCP_SECRET_PREFIX + server, JSON.stringify(secrets));
+  },
+  async get(server: string): Promise<McpServerSecrets | null> {
+    const raw = await get(MCP_SECRET_PREFIX + server);
+    if (!raw) return null;
+    try {
+      const p = JSON.parse(raw);
+      return p && typeof p === 'object' ? (p as McpServerSecrets) : null;
+    } catch {
+      return null;
+    }
+  },
+  async clear(server: string): Promise<void> {
+    await set(MCP_SECRET_PREFIX + server, null);
+  },
+};
+
+// ── MCP OAuth state (tokens + client info + PKCE verifier) per server ──
+const MCP_OAUTH_PREFIX = 'xgen_mcp_oauth_';
+
+export interface McpOAuthState {
+  tokens?: unknown; // OAuthTokens
+  clientInformation?: unknown; // OAuthClientInformationFull
+  codeVerifier?: string;
+}
+
+// Per-server write serialization — patch() is load-modify-save on one shared
+// keychain entry, so a concurrent silent refresh + interactive authorize could
+// clobber each other's fields. Chain writes per server to keep them atomic.
+const oauthWriteChain = new Map<string, Promise<unknown>>();
+
+export const mcpOAuthStore = {
+  async load(server: string): Promise<McpOAuthState> {
+    const raw = await get(MCP_OAUTH_PREFIX + server);
+    if (!raw) return {};
+    try {
+      const p = JSON.parse(raw);
+      return p && typeof p === 'object' ? (p as McpOAuthState) : {};
+    } catch {
+      return {};
+    }
+  },
+  async save(server: string, state: McpOAuthState): Promise<boolean> {
+    return set(MCP_OAUTH_PREFIX + server, JSON.stringify(state));
+  },
+  async patch(server: string, patch: Partial<McpOAuthState>): Promise<boolean> {
+    const prev = oauthWriteChain.get(server) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      const cur = await mcpOAuthStore.load(server);
+      return mcpOAuthStore.save(server, { ...cur, ...patch });
+    });
+    oauthWriteChain.set(
+      server,
+      next.catch(() => undefined),
+    );
+    return next;
+  },
+  async clear(server: string): Promise<void> {
+    await set(MCP_OAUTH_PREFIX + server, null);
+  },
+};

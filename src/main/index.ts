@@ -37,9 +37,12 @@ import {
   resetConfig,
   normalizeServerUrl,
   type ConnectorConfig,
+  type McpServerConfig,
   type WorkspacePersistConfig,
 } from './config';
-import { tokenStore, credentialStore, storageStatus } from './keychain';
+import { tokenStore, credentialStore, storageStatus, mcpSecretStore, mcpOAuthStore } from './keychain';
+import { splitServerSecrets, withResolvedSecrets } from './mcp-secrets';
+import { authorizeMcpServer, hasOAuthTokens, clearOAuth } from './mcp-oauth';
 import {
   initUpdater,
   setAutoUpdate,
@@ -1784,19 +1787,58 @@ ipcMain.handle(CHANNELS.mcpSetEnabled, (_e, enabled: boolean) => {
   return !!enabled;
 });
 ipcMain.handle(CHANNELS.mcpListServers, () => loadConfig().mcpServers ?? []);
-ipcMain.handle(CHANNELS.mcpSaveServers, (_e, servers) => {
-  const next = saveConfig({ mcpServers: Array.isArray(servers) ? servers : [] });
+ipcMain.handle(CHANNELS.mcpSaveServers, async (_e, servers) => {
+  // G8a: move secret env/headers values to the encrypted keychain; persist only
+  // redacted configs (keys kept, values '') to connector.json.
+  const incoming: McpServerConfig[] = Array.isArray(servers) ? servers : [];
+  const prev = loadConfig().mcpServers ?? [];
+  const redacted: McpServerConfig[] = [];
+  for (const s of incoming) {
+    if (!s || !s.name) continue;
+    const stored = await mcpSecretStore.get(s.name).catch(() => null);
+    const { redacted: safe, secrets } = splitServerSecrets(s, stored);
+    await mcpSecretStore.save(s.name, secrets).catch(() => {});
+    redacted.push(safe);
+  }
+  // Clean up secrets + OAuth state for removed servers.
+  const keep = new Set(redacted.map((s) => s.name));
+  for (const p of prev) {
+    if (p?.name && !keep.has(p.name)) {
+      await mcpSecretStore.clear(p.name).catch(() => {});
+      await mcpOAuthStore.clear(p.name).catch(() => {});
+    }
+  }
+  const next = saveConfig({ mcpServers: redacted });
   syncMcp();
   broadcastConfig(next);
   return next.mcpServers ?? [];
 });
-ipcMain.handle(CHANNELS.mcpTestServer, (e, cfg) =>
+ipcMain.handle(CHANNELS.mcpTestServer, async (e, cfg) => {
   // 첫 실행은 인터프리터·의존성 내려받기로 몇 분이 걸릴 수 있다 — 그동안의
   // 서버 출력을 요청한 창으로 그대로 흘려보낸다.
-  getMcpManager().test(cfg, (lines) => {
+  // G8a: 폼 값이 redacted('') 여도(저장된 서버를 테스트) 키체인 시크릿으로 채워 테스트.
+  const stored = cfg?.name ? await mcpSecretStore.get(cfg.name).catch(() => null) : null;
+  const resolved = cfg ? withResolvedSecrets(cfg, stored) : cfg;
+  return getMcpManager().test(resolved, (lines) => {
     if (!e.sender.isDestroyed()) e.sender.send(CHANNELS.mcpTestProgressEvent, { name: cfg?.name, lines });
-  }),
-);
+  });
+});
+ipcMain.handle(CHANNELS.mcpAuthorize, async (_e, cfg) => {
+  // G8b: interactive OAuth 2.1 (PKCE) — opens the browser + loopback listener.
+  const stored = cfg?.name ? await mcpSecretStore.get(cfg.name).catch(() => null) : null;
+  const resolved = cfg ? withResolvedSecrets(cfg, stored) : cfg;
+  const res = await authorizeMcpServer(resolved, { fetch: mcpHttpFetch });
+  if (res.ok) syncMcp(); // reconnect now that tokens exist
+  return res;
+});
+ipcMain.handle(CHANNELS.mcpOauthStatus, async (_e, name) => ({
+  authorized: await hasOAuthTokens(String(name || '')).catch(() => false),
+}));
+ipcMain.handle(CHANNELS.mcpClearOauth, async (_e, name) => {
+  await clearOAuth(String(name || '')).catch(() => {});
+  syncMcp();
+  return { ok: true };
+});
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
 ipcMain.handle(CHANNELS.mcpRuntimeLogs, () => mcpRuntimeLogs());
 ipcMain.handle(CHANNELS.mcpClearRuntimeLogs, () => {

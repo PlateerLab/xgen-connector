@@ -64,7 +64,7 @@ export interface McpBridgeStatusLike {
     name: string;
     connected: boolean;
     error?: string;
-    tools: Array<{ name: string }>;
+    tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>;
   }>;
 }
 
@@ -408,6 +408,13 @@ const api = {
       ipcRenderer.on(CHANNELS.mcpStatusEvent, h);
       return () => ipcRenderer.removeListener(CHANNELS.mcpStatusEvent, h);
     },
+    /** OAuth 2.1: 서버 인가(브라우저 흐름). 성공 시 재연결된다. */
+    authorize: (cfg: McpServerConfig): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.mcpAuthorize, cfg),
+    oauthStatus: (name: string): Promise<{ authorized: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.mcpOauthStatus, name),
+    clearOauth: (name: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.mcpClearOauth, name),
   },
 
   /** Global hotkeys (recorder support). */

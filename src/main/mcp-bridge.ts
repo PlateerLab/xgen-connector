@@ -70,13 +70,21 @@ export class McpBridge {
   }
 
   status(): McpBridgeStatus {
+    // Include the connector-hosted built-ins as a synthetic `local` server so the
+    // renderer's "exposed tools" view lists them alongside external MCP servers
+    // (they ride the same agent catalog). Full schemas — the UI shows per-tool
+    // description/inputSchema.
+    const localTools = getLocalToolProvider().advertise();
+    const localServer: McpServerAdvert[] = localTools.length
+      ? [{ name: LOCAL_SERVER, connected: true, tools: localTools }]
+      : [];
     return {
       enabled: !this.stopped,
       connected: this.uiConnected,
       catalogSynced: this.catalogSynced,
       serverToolCount: this.serverToolCount,
       error: this.lastError,
-      servers: this.lastServers,
+      servers: [...localServer, ...this.lastServers],
     };
   }
 

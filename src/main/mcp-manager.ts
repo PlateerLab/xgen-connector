@@ -10,6 +10,9 @@
  * it still boots — MCP just reports unavailable. Ported from geny-connector.
  */
 import type { McpServerConfig } from './config';
+import { mcpSecretStore } from './keychain';
+import { withResolvedSecrets } from './mcp-secrets';
+import { oauthTransportOptions } from './mcp-oauth';
 import { homedir } from 'os';
 import {
   augmentedPath,
@@ -286,7 +289,10 @@ export class MCPManager {
         SSEClientTransport,
         ToolListChangedNotificationSchema,
       } = await loadSdk();
-      const cfg = st.config;
+      // G8a: rehydrate secret env/headers from the encrypted keychain (config.json
+      // only holds redacted values). Falls back to config for pre-migration users.
+      const secrets = await mcpSecretStore.get(name).catch(() => null);
+      const cfg = withResolvedSecrets(st.config, secrets);
       let transport;
       let tap: StderrTap | null = null;
       if (cfg.transport === 'stdio') {
@@ -328,16 +334,22 @@ export class MCPManager {
       } else if (cfg.transport === 'sse') {
         if (!cfg.url) throw new Error('sse server has no url');
         if (!SSEClientTransport) throw new Error('이 빌드에서 SSE 전송을 사용할 수 없습니다.');
-        transport = new SSEClientTransport(new URL(cfg.url), {
-          requestInit: cfg.headers ? { headers: cfg.headers } : undefined,
-          fetch: this.httpFetch,
-        });
+        transport = new SSEClientTransport(
+          new URL(cfg.url),
+          oauthTransportOptions(cfg, {
+            requestInit: cfg.headers ? { headers: cfg.headers } : undefined,
+            fetch: this.httpFetch,
+          }) as ConstructorParameters<typeof SSEClientTransport>[1],
+        );
       } else {
         if (!cfg.url) throw new Error('http server has no url');
-        transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
-          requestInit: cfg.headers ? { headers: cfg.headers } : undefined,
-          fetch: this.httpFetch,
-        });
+        transport = new StreamableHTTPClientTransport(
+          new URL(cfg.url),
+          oauthTransportOptions(cfg, {
+            requestInit: cfg.headers ? { headers: cfg.headers } : undefined,
+            fetch: this.httpFetch,
+          }) as ConstructorParameters<typeof StreamableHTTPClientTransport>[1],
+        );
       }
       const client = new Client({ name: 'xgen-connector', version: '1.0.0' }, { capabilities: {} });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

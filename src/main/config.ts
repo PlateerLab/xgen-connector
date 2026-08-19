@@ -27,6 +27,9 @@ export interface McpServerConfig {
   url?: string;
   /** http: extra request headers (e.g. Authorization). */
   headers?: Record<string, string>;
+  /** http/sse: 'oauth' runs an OAuth 2.1 (PKCE) browser flow and attaches the
+   *  access token automatically (tokens stored encrypted). Default 'none'. */
+  auth?: 'none' | 'oauth';
   /** Off servers are never connected/advertised. Default true. */
   enabled?: boolean;
 }

@@ -8,6 +8,7 @@ import {
   LOCAL_SERVER,
   OPEN_TOOL,
   SHELL_TOOL,
+  SHELL_JOB_TOOL,
   LocalToolProvider,
   coerceOpenArgs,
   coerceShellArgs,
@@ -15,6 +16,8 @@ import {
   isBlocked,
   openerInvocation,
   openToolSchema,
+  paginate,
+  classifyOpenTarget,
   shapeResult,
   shellConfig,
   shellEnabled,
@@ -57,7 +60,7 @@ test('꺼져 있으면 카탈로그가 비고, 켜져 있으면 Shell+Open', () 
   assert.deepEqual(p.advertise(), [])
   p.configure({ enabled: true })
   const names = p.advertise().map((t) => t.name)
-  assert.deepEqual(names, [SHELL_TOOL, OPEN_TOOL, 'ReadFile', 'WriteFile', 'ListDir', 'Search', 'Clipboard', 'Notify'])
+  assert.deepEqual(names, [SHELL_TOOL, SHELL_JOB_TOOL, OPEN_TOOL, 'ReadFile', 'WriteFile', 'ListDir', 'Search', 'Clipboard', 'Notify'])
 })
 
 test('resolveWithinRoots: 스코프 안은 허용, 밖은 거부', () => {
@@ -265,6 +268,78 @@ test('E2E: background 는 즉시 반환하고, 그 프로세스는 타임아웃�
   assert.notEqual(res.isError, true, JSON.stringify(res))
   assert.ok(elapsed < 2000, `background 가 즉시 반환하지 않고 ${elapsed}ms 걸렸다`)
   assert.match(res.content[0].text, /백그라운드|pid/)
+})
+
+// ── G13 페이징 / G9 Open 검증 / G6 background job 레지스트리 ──
+
+test('paginate: head/tail 라인 + max_bytes 바이트 캡 (tail-bias)', () => {
+  const text = Array.from({ length: 10 }, (_, i) => `line${i}`).join('\n')
+  assert.equal(paginate(text, { tail: 2 }).text, 'line8\nline9')
+  assert.equal(paginate(text, { head: 2 }).text, 'line0\nline1')
+  const big = 'x'.repeat(1000)
+  const p = paginate(big, { maxBytes: 100 })
+  assert.equal(p.text.length, 100)
+  assert.equal(p.truncated, true)
+  assert.equal(p.totalBytes, 1000)
+  assert.equal(paginate('short', {}).text, 'short')
+  assert.equal(paginate('short', {}).truncated, false)
+})
+
+test('paginate: max_bytes 는 바이트 기준이며 멀티바이트 문자를 깨지 않는다', () => {
+  const s = '가'.repeat(100) // 각 3바이트(UTF-8) → 300바이트
+  const p = paginate(s, { maxBytes: 10 })
+  assert.ok(Buffer.byteLength(p.text) <= 10, `바이트 캡 초과: ${Buffer.byteLength(p.text)}`)
+  assert.ok(!p.text.includes('�'), '깨진 문자(U+FFFD)가 남았다')
+  assert.equal(p.truncated, true)
+  assert.equal(p.totalBytes, 300)
+})
+
+test('classifyOpenTarget: 안전 URL 허용 / 위험 스킴 차단 / 경로 통과', () => {
+  assert.deepEqual(classifyOpenTarget('https://x.com'), { kind: 'url', value: 'https://x.com' })
+  assert.deepEqual(classifyOpenTarget('mailto:a@b.com'), { kind: 'url', value: 'mailto:a@b.com' })
+  assert.equal(classifyOpenTarget('javascript:alert(1)').kind, 'blocked')
+  assert.equal(classifyOpenTarget('data:text/html,x').kind, 'blocked')
+  assert.equal(classifyOpenTarget('vbscript:msgbox').kind, 'blocked')
+  assert.equal(classifyOpenTarget('customscheme:foo').kind, 'blocked')
+  assert.equal(classifyOpenTarget('/home/u/a.txt').kind, 'path')
+  assert.equal(classifyOpenTarget('~/a.txt').kind, 'path')
+  assert.equal(classifyOpenTarget('').kind, 'blocked')
+  assert.equal(classifyOpenTarget('file:///home/u/a.txt').kind, 'path')
+})
+
+test('Open 은 위험 스킴을 throw 없이 거절한다', async () => {
+  const p = new LocalToolProvider()
+  p.configure({ enabled: true })
+  const res = await p.callTool(OPEN_TOOL, { target: 'javascript:alert(1)' })
+  assert.equal(res.isError, true)
+  assert.match(res.content[0].text, /스킴|열 수 없습니다/)
+})
+
+test('E2E: background job → job_id, ShellJob list/poll/kill 로 관리', async () => {
+  const p = new LocalToolProvider()
+  p.configure({ enabled: true, timeoutMs: 1000 })
+  const cmd = isWin ? 'Write-Output started-xgen; Start-Sleep -Seconds 3' : 'echo started-xgen; sleep 3'
+  const res = await p.callTool(SHELL_TOOL, { command: cmd, background: true })
+  const m = res.content[0].text.match(/job_id:\s*(\S+)/)
+  assert.ok(m, 'job_id 미반환: ' + res.content[0].text)
+  const jobId = m![1]
+  const list = await p.callTool(SHELL_JOB_TOOL, { action: 'list' })
+  assert.match(list.content[0].text, new RegExp(jobId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  await new Promise((r) => setTimeout(r, 500))
+  const poll = await p.callTool(SHELL_JOB_TOOL, { action: 'poll', job_id: jobId })
+  assert.match(poll.content[0].text, /started-xgen/)
+  assert.match(poll.content[0].text, /running/)
+  const kill = await p.callTool(SHELL_JOB_TOOL, { action: 'kill', job_id: jobId })
+  assert.match(kill.content[0].text, /종료/)
+  const poll2 = await p.callTool(SHELL_JOB_TOOL, { action: 'poll', job_id: jobId })
+  assert.match(poll2.content[0].text, /killed|exited/)
+})
+
+test('ShellJob: 없는 job_id 는 오류', async () => {
+  const p = new LocalToolProvider()
+  p.configure({ enabled: true })
+  const r = await p.callTool(SHELL_JOB_TOOL, { action: 'poll', job_id: 'does-not-exist' })
+  assert.equal(r.isError, true)
 })
 
 test('E2E: Open 은 존재하지 않는 opener 여도 앱 실행 실패를 보고한다 (throw 안 함)', async () => {
