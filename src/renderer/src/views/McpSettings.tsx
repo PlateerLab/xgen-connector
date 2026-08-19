@@ -483,6 +483,12 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   /** OAuth 2.1 인가 — 브라우저 로그인 흐름을 시작한다. */
   const authorizeDraft = async () => {
+    // 미저장(new) 서버를 인가하면 토큰이 draft 이름으로 저장되는데, 저장 전 이름을
+    // 바꾸면 토큰이 유실된다. 먼저 저장을 권장한다(막지는 않음).
+    if (editing === 'new') {
+      setAuthMsg({ ok: false, text: '먼저 저장한 뒤 인가하세요 — 저장 전 이름을 바꾸면 인가 토큰이 유실됩니다.' });
+      return;
+    }
     setAuthBusy(true);
     setAuthMsg(null);
     try {

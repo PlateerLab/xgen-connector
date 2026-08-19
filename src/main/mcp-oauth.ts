@@ -251,6 +251,19 @@ export function oauthTransportOptions(
 
 /** Run the interactive OAuth authorization for a server. Opens the browser, runs
  *  a loopback listener, and completes the token exchange. */
+/** Map cryptic SDK OAuth errors to actionable Korean guidance (no-DCR, discovery). */
+function friendlyOAuthError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  const low = msg.toLowerCase();
+  if (low.includes('registration') || low.includes('register client') || low.includes('dynamic client')) {
+    return `이 서버는 동적 클라이언트 등록(DCR)을 지원하지 않는 것으로 보입니다. 사전 등록된 client_id 를 요구하는 서버는 현재 커넥터로 자동 인가할 수 없습니다. (원인: ${msg})`;
+  }
+  if (low.includes('.well-known') || low.includes('metadata') || low.includes('discover')) {
+    return `OAuth 메타데이터(.well-known)를 찾지 못했습니다 — 이 URL 이 OAuth 를 지원하는 MCP 엔드포인트가 맞는지 확인하세요. (원인: ${msg})`;
+  }
+  return msg;
+}
+
 export async function authorizeMcpServer(
   cfg: McpServerConfig,
   opts: { fetch?: McpHttpFetch; openExternal?: (url: string) => Promise<void> } = {},
@@ -307,7 +320,7 @@ export async function authorizeMcpServer(
       return { ok: true };
     } catch (e) {
       if (!(e instanceof UnauthorizedError)) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        return { ok: false, error: friendlyOAuthError(e) };
       }
       // The browser was opened by redirectToAuthorization — wait for the code.
     }
@@ -327,7 +340,7 @@ export async function authorizeMcpServer(
     }
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: friendlyOAuthError(e) };
   } finally {
     loop.cancel();
     loop.server.close();
