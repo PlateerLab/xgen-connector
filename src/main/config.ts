@@ -14,7 +14,7 @@ import { DEPLOYMENT_DEFAULTS } from './deployment-defaults';
 export interface McpServerConfig {
   /** Unique, stable id used to namespace the server's tools. */
   name: string;
-  transport: 'stdio' | 'http';
+  transport: 'stdio' | 'http' | 'sse';
   /** stdio: 실행 명령. `args` 가 없으면 따옴표 인식 분해로 argv 를 만든다
    *  (사람이 한 줄로 적는 경로), `args` 가 있으면 이 값은 **실행 파일**이다. */
   command?: string;

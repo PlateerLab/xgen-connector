@@ -15,7 +15,7 @@ import {
   type ImportedServer,
 } from './mcp-import';
 
-type Transport = 'stdio' | 'http';
+type Transport = 'stdio' | 'http' | 'sse';
 type Draft = {
   name: string;
   transport: Transport;
@@ -522,7 +522,7 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <div className="field-row">
               <span>전송 방식</span>
               <div className="seg">
-                {(['stdio', 'http'] as const).map((t) => (
+                {(['stdio', 'http', 'sse'] as const).map((t) => (
                   <button key={t} className={draft.transport === t ? 'active' : ''} onClick={() => setDraft({ ...draft, transport: t })}>
                     {t}
                   </button>
