@@ -202,7 +202,7 @@ test('MOVE 는 복사+삭제로 처리한다 (편집기의 임시파일→rename
   assert.ok(!api.files.has('보고서.md'))
 })
 
-test('드라이브가 만드는 폴더는 보호된다 (클라우드 안은 자유롭게 쓴다)', async () => {
+test('드라이브가 만드는 폴더는 보호된다 (클라우드 폴더 안에는 자유롭게 쓴다)', async () => {
   const { be, user } = setup()
   // 에이전트 폴더는 앱에서 연결/해제한다 — 드라이브에서 만들면 실제와 어긋난다.
   await assert.rejects(() => be.mkdir('/에이전트/마케팅 리서치'), /앱에서 관리/)
@@ -210,11 +210,34 @@ test('드라이브가 만드는 폴더는 보호된다 (클라우드 안은 자�
   // 예약된 두 폴더도 마찬가지다 — 지우면 드라이브 구조가 무너진다.
   await assert.rejects(() => be.remove('/클라우드'), /앱에서 관리/)
   await assert.rejects(() => be.remove('/에이전트'), /앱에서 관리/)
-  // 반면 사용자 클라우드에는 루트에서도 자유롭게 쓴다 — 내 스토리지다.
-  await be.write('/클라우드/새 메모.txt', Buffer.from('hello'))
-  assert.equal(user.files.get('새 메모.txt'), 'hello')
+  // 클라우드 루트는 폴더(저장소) 단위로만 — 루트 직속 파일 쓰기는 거부한다.
+  await assert.rejects(
+    () => be.write('/클라우드/새 메모.txt', Buffer.from('hello')),
+    /루트에는 파일을 만들 수 없습니다/,
+  )
+  // 폴더는 만들 수 있고, 그 폴더 안에는 자유롭게 쓴다 — 내 스토리지다.
   await be.mkdir('/클라우드/새 폴더')
   assert.ok(user.dirs.has('새 폴더'))
+  await be.write('/클라우드/새 폴더/새 메모.txt', Buffer.from('hello'))
+  assert.equal(user.files.get('새 폴더/새 메모.txt'), 'hello')
+})
+
+test('클라우드 루트 파일 거부 시 이 PC 의 폴더를 정확히 안내한다', async () => {
+  const { be, user } = setup()
+  // home_folder 를 모르면 일반 안내.
+  await assert.rejects(
+    () => be.write('/클라우드/메모.txt', Buffer.from('x')),
+    /클라우드 아래의 폴더 안에 저장하세요/,
+  )
+  // 서버가 정한 이 PC 의 폴더를 알면, 정확한 경로(클라우드/<PC 폴더>)를 안내한다.
+  be.setHomeFolder('내-PC')
+  await assert.rejects(
+    () => be.write('/클라우드/메모.txt', Buffer.from('x')),
+    /클라우드\/내-PC\/ 폴더 안에 저장하세요/,
+  )
+  // 안내한 그 폴더 안에는 정상적으로 써진다.
+  await be.write('/클라우드/내-PC/메모.txt', Buffer.from('x'))
+  assert.equal(user.files.get('내-PC/메모.txt'), 'x')
 })
 
 test('이름이 겹쳐도 아무것도 가려지지 않는다', async () => {
@@ -328,8 +351,9 @@ test('쓰기가 충돌하면 최신 sha 로 다시 올린다 (EIO 로 끝내지 
     }
     return realPut(path, fromAbs, baseSha)
   }
-  await be.write('/클라우드/내 메모.md', Buffer.from('새 내용\n'))
-  assert.equal(user.files.get('내 메모.md'), '새 내용\n', '재시도가 안 돌아 쓰기가 유실됐다')
+  // 폴더 안 경로로 쓴다 — 클라우드 루트 직속 파일은 이제 거부되므로.
+  await be.write('/클라우드/메모/내 메모.md', Buffer.from('새 내용\n'))
+  assert.equal(user.files.get('메모/내 메모.md'), '새 내용\n', '재시도가 안 돌아 쓰기가 유실됐다')
 })
 
 test('삭제가 충돌해도 최신 sha 로 다시 지운다', async () => {

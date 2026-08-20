@@ -183,10 +183,13 @@ export const SyncSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 </div>
               )}
               {/* 이 PC 의 폴더. 어디에 넣어야 하는지를 말해 주지 않으면 사용자는
-                  루트에 떨어뜨리고, 그러면 모든 PC 의 파일이 한 트리에 섞인다. */}
+                  루트에 떨어뜨리고, 그러면 모든 PC 의 파일이 한 트리에 섞인다.
+                  경로는 실제 드라이브 경로(클라우드/<PC 폴더>)와 1:1 로 맞춘다 —
+                  클라우드 루트에는 파일을 둘 수 없고, 파일은 이 폴더 안에 넣는다. */}
               {ws?.homeFolder && !ws?.needsReconnect && (
                 <div className="small muted" style={{ marginTop: 4 }}>
-                  이 PC 의 클라우드 폴더: <span className="mcp-item-cmd">/{ws.homeFolder}</span>
+                  이 PC 의 클라우드 폴더: <span className="mcp-item-cmd">/클라우드/{ws.homeFolder}</span>
+                  <div style={{ marginTop: 2 }}>파일은 이 폴더 안에 저장하세요 — 클라우드 루트에는 폴더만 둘 수 있습니다.</div>
                 </div>
               )}
               {/*
