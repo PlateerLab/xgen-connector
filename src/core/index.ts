@@ -35,6 +35,13 @@ export interface XgenClientOptions {
   accessToken?: string;
   refreshToken?: string;
   onAuthFailure?: () => void;
+  /**
+   * 액세스 토큰이 **회전**될 때마다 호출된다 (로그인 / restore 의 validate 회전 /
+   * ensureFreshAuth). 게이트웨이는 회전 시 **이전 토큰의 세션 키를 삭제**하므로,
+   * 호스트는 이 콜백으로 keychain 을 즉시 갱신해야 다른 소비자(WS 브릿지·
+   * 워크스페이스 동기화)가 폐기된 토큰으로 접속하다 403 을 맞지 않는다.
+   */
+  onTokensRotated?: (accessToken: string, refreshToken?: string) => void;
 }
 
 export class XgenClient {
@@ -48,6 +55,9 @@ export class XgenClient {
   readonly voice: VoiceApi;
 
   private refreshToken?: string;
+  private readonly onTokensRotated?: (accessToken: string, refreshToken?: string) => void;
+  /** ensureFreshAuth 의 single-flight 가드 — 동시 401 들이 refresh 를 한 번만 태운다. */
+  private refreshing: Promise<string | null> | null = null;
   user: CurrentUser | null = null;
 
   constructor(opts: XgenClientOptions) {
@@ -58,6 +68,7 @@ export class XgenClient {
     });
     if (opts.accessToken) this.http.setToken(opts.accessToken);
     this.refreshToken = opts.refreshToken;
+    this.onTokensRotated = opts.onTokensRotated;
     this.auth = new AuthApi(this.http);
     this.agents = new AgentsApi(this.http);
     this.chat = new ChatApi(this.http);
@@ -85,6 +96,7 @@ export class XgenClient {
   async adoptLogin(res: LoginResult): Promise<LoginResult> {
     this.http.setToken(res.accessToken);
     this.refreshToken = res.refreshToken;
+    this.onTokensRotated?.(res.accessToken, res.refreshToken);
     this.user = {
       userId: res.userId,
       username: res.username,
@@ -127,7 +139,10 @@ export class XgenClient {
     let sawNetworkError = false;
     try {
       const { user, newAccessToken } = await this.auth.validate(accessToken, refreshToken);
-      if (newAccessToken) this.http.setToken(newAccessToken);
+      if (newAccessToken) {
+        this.http.setToken(newAccessToken);
+        this.onTokensRotated?.(newAccessToken, refreshToken);
+      }
       if (user) {
         this.user = user;
         return 'valid';
@@ -141,6 +156,7 @@ export class XgenClient {
         const fresh = await this.auth.refresh(refreshToken);
         if (fresh) {
           this.http.setToken(fresh);
+          this.onTokensRotated?.(fresh, refreshToken);
           const { user } = await this.auth.validate(fresh, refreshToken);
           if (user) {
             this.user = user;
@@ -159,6 +175,39 @@ export class XgenClient {
   getAccessTokenAfterRotation(): string {
     // The HttpClient holds the current (possibly rotated) token.
     return (this.http as unknown as { accessToken: string }).accessToken ?? '';
+  }
+
+  /**
+   * 인증 실패(401/403)를 맞은 소비자가 부르는 **자가치유** 경로: refresh 토큰으로
+   * 액세스 토큰을 회전시키고 새 토큰을 돌려준다. 실패(refresh 토큰 없음/거부)면
+   * null — 그때는 진짜 재로그인 대상이다.
+   *
+   * single-flight: WS 브릿지·워크스페이스 동기화·HTTP 가 동시에 401 을 맞아도
+   * refresh 는 한 번만 나간다 (게이트웨이는 refresh 마다 이전 세션을 지우므로,
+   * 동시 refresh 는 서로의 새 토큰을 폐기하는 경쟁이 된다).
+   *
+   * ``fallbackRefreshToken`` — 인메모리에 refresh 토큰이 없을 때(재시작 직후 등)
+   * 호스트가 keychain 값을 넘겨줄 수 있다.
+   */
+  async ensureFreshAuth(fallbackRefreshToken?: string): Promise<string | null> {
+    if (this.refreshing) return this.refreshing;
+    const rt = this.refreshToken ?? fallbackRefreshToken;
+    if (!rt) return null;
+    this.refreshing = (async () => {
+      try {
+        const fresh = await this.auth.refresh(rt);
+        if (!fresh) return null;
+        this.http.setToken(fresh);
+        this.refreshToken = rt;
+        this.onTokensRotated?.(fresh, rt);
+        return fresh;
+      } catch {
+        return null;
+      } finally {
+        this.refreshing = null;
+      }
+    })();
+    return this.refreshing;
   }
 
   /** The current refresh token, so the host can persist it (e.g. keychain). */

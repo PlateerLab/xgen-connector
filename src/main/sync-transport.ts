@@ -41,6 +41,14 @@ export interface TransportAuth {
   fetch?: NetworkFetch
   /** 설정된 XGEN WebSocket의 사설 인증서를 허용한다. */
   allowPrivateCertificate?: boolean
+  /**
+   * 인증 실패(401/403) 시 **자가치유** — 호스트가 refresh 토큰으로 액세스 토큰을
+   * 회전시키고(single-flight) 새 토큰을 돌려준다. 게이트웨이는 토큰 회전/세션
+   * 회수 때 이전 세션 키를 지우므로, 이 훅이 없으면 장수명 소비자(WS·동기화)는
+   * 폐기된 토큰으로 **영원히 재시도**한다 (실기: 채팅은 되는데 WS 만 403).
+   * null 반환 = 회전 불가(재로그인 대상) — 그때는 기존 백오프 재시도만 남는다.
+   */
+  refreshAuth?: () => Promise<string | null>
 }
 
 function wsPath(p: string): string {
@@ -55,8 +63,23 @@ async function authHeaders(auth: TransportAuth): Promise<Record<string, string>>
   return { Authorization: `Bearer ${await auth.token()}` }
 }
 
-function transportFetch(auth: TransportAuth, input: string, init?: RequestInit): Promise<Response> {
-  return (auth.fetch ?? globalThis.fetch)(input, init)
+async function transportFetch(auth: TransportAuth, input: string, init?: RequestInit): Promise<Response> {
+  const f = auth.fetch ?? globalThis.fetch
+  const res = await f(input, init)
+  // 401 = 토큰이 회전/회수됐다 — refresh 로 한 번 자가치유 후 같은 요청을 재발송.
+  // 본문은 전부 Buffer(스트림 아님)라 재사용이 안전하다. 403 은 재시도하지 않는다
+  // (권한 거부·정책 거부 — 토큰을 바꿔도 결과가 같고, 서버 안내를 살려야 한다).
+  if (res.status === 401 && auth.refreshAuth) {
+    const fresh = await Promise.resolve(auth.refreshAuth()).catch(() => null)
+    if (fresh) {
+      const headers = {
+        ...((init?.headers as Record<string, string> | undefined) ?? {}),
+        Authorization: `Bearer ${fresh}`,
+      }
+      return f(input, { ...init, headers })
+    }
+  }
+  return res
 }
 
 /** Files above this go through the chunked/resumable path. */
@@ -421,7 +444,11 @@ export class WorkspaceWsClient {
         /* ignore malformed frames */
       }
     })
+    let retried = false
     const scheduleRetry = () => {
+      // unexpected-response 와 close 가 겹쳐도 재시도 타이머는 한 번만.
+      if (retried) return
+      retried = true
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
       this.onState(false)
       if (this.closed) return
@@ -429,6 +456,24 @@ export class WorkspaceWsClient {
       this.retryMs = Math.min(this.retryMs * 2, 60_000)
       setTimeout(() => void this.connect(), delay)
     }
+    // 핸드셰이크가 401/403 으로 거절됐다 = 토큰이 회전됐거나 세션이 회수된 것.
+    // 이 리스너가 없으면 'error' 로만 떨어져 **폐기된 토큰으로 영원히 재시도**한다
+    // (실기: 게이트웨이 "session revoked" 403 무한 반복). refresh 로 토큰을
+    // 회전시킨 뒤 재시도한다 — 다음 connect() 가 auth.token() 으로 새 토큰을 집는다.
+    ws.on('unexpected-response', (_req, res) => {
+      const sc = res?.statusCode ?? 0
+      try { res?.resume?.() } catch { /* drain */ }
+      const heal =
+        (sc === 401 || sc === 403) && this.auth.refreshAuth
+          ? Promise.resolve(this.auth.refreshAuth()).catch(() => null)
+          : Promise.resolve(null)
+      void heal.then((fresh) => {
+        // 토큰이 실제로 회전됐으면 백오프를 리셋해 즉시 다시 붙는다.
+        if (fresh) this.retryMs = 2000
+        try { ws.close() } catch { /* already gone */ }
+        scheduleRetry()
+      })
+    })
     ws.on('close', scheduleRetry)
     ws.on('error', () => ws.close())
   }

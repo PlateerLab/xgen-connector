@@ -13,6 +13,8 @@ import type { WorkspaceApi } from './workspace-backend'
 export interface ApiFactoryDeps {
   serverUrl: () => string
   token: () => string | Promise<string>
+  /** 401 자가치유 — refresh 로 토큰 회전(single-flight). see TransportAuth.refreshAuth */
+  refreshAuth?: () => Promise<string | null>
   deviceId: () => string
   fetch: NetworkFetch
   allowPrivateCertificate: () => boolean
@@ -33,6 +35,7 @@ export function makeWorkspaceApi(deps: ApiFactoryDeps, workflowId: string): Work
       {
         baseUrl: deps.serverUrl(),
         token: deps.token,
+        refreshAuth: deps.refreshAuth,
         workflowId,
         deviceId: deps.deviceId(),
         fetch: deps.fetch,
