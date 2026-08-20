@@ -5,7 +5,7 @@ import { HotkeyCapture } from './HotkeyCapture';
 import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
-import { MonitorIcon, ServerIcon, RefreshIcon, SpeakerIcon } from '../brand/icons';
+import { MonitorIcon, ServerIcon, SpeakerIcon } from '../brand/icons';
 
 type Theme = NonNullable<ConnectorConfig['theme']>;
 
@@ -62,7 +62,6 @@ export const Settings: React.FC<{
   const [saved, setSaved] = useState(false);
   const [showMcp, setShowMcp] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
-  const [showSync, setShowSync] = useState(false);
 
   // Any status message means the check is underway/done → drop the button spinner
   // (the message line then shows progress like "내려받는 중… 45%").
@@ -141,7 +140,6 @@ export const Settings: React.FC<{
 
   if (showMcp) return <McpSettings onClose={() => setShowMcp(false)} />;
   if (showVoice) return <VoiceSettings onClose={() => setShowVoice(false)} />;
-  if (showSync) return <SyncSettings onClose={() => setShowSync(false)} />;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -531,25 +529,10 @@ export const Settings: React.FC<{
           )}
 
           {/* ─── 스토리지 ─── */}
-          {tab === 'storage' && (
-            <>
-              <div className="tool-card">
-                <div className="tool-card-main">
-                  <span className="tool-card-icon"><RefreshIcon size={18} /></span>
-                  <div className="tool-card-text">
-                    <div className="tool-card-title">워크스페이스 동기화</div>
-                    <div className="tool-card-desc">
-                      로컬 폴더와 에이전트 워크스페이스를 양방향으로 동기화합니다
-                      (Drive 형). 페어링·경로·동기화 상태를 관리합니다.
-                    </div>
-                  </div>
-                  <button className="secondary" onClick={() => setShowSync(true)}>
-                    관리
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
+          {/* 예전에는 카드 + [관리] 버튼을 한 번 더 눌러야 전체 설정이 떴다.
+              스토리지 탭이 곧 워크스페이스 동기화 화면이므로 본문을 그대로
+              임베드해 한 단계 클릭을 없앤다. */}
+          {tab === 'storage' && <SyncSettings embedded />}
 
           {/* ─── 업데이트 ─── */}
           {tab === 'updates' && (
