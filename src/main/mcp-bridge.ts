@@ -60,6 +60,7 @@ export class McpBridge {
   private userId = '';
   private allowPrivateCertificate = false;
   private getToken: () => Promise<string | null> = async () => null;
+  private refreshAuth: () => Promise<string | null> = async () => null;
   private lastServers: McpServerAdvert[] = [];
   private lastError: string | undefined;
   private lastEmit = '';
@@ -109,6 +110,8 @@ export class McpBridge {
     userId: string;
     allowPrivateCertificate: boolean;
     getToken: () => Promise<string | null>;
+    /** 핸드셰이크 401/403 자가치유 — refresh 로 토큰 회전(single-flight). */
+    refreshAuth?: () => Promise<string | null>;
   }): void {
     // A no-op restart (same target, already running) must NOT tear down a live
     // socket — that alone would cause a visible flap on every auth refresh.
@@ -120,6 +123,7 @@ export class McpBridge {
     this.userId = opts.userId;
     this.allowPrivateCertificate = opts.allowPrivateCertificate;
     this.getToken = opts.getToken;
+    if (opts.refreshAuth) this.refreshAuth = opts.refreshAuth;
     if (!this.stopped && sameTarget && (this.ws || this.retry)) {
       void this.refreshCatalog();
       return;
@@ -219,6 +223,35 @@ export class McpBridge {
       return;
     }
     this.ws = ws;
+
+    // 핸드셰이크가 401/403 으로 거절됐다 = 토큰이 회전됐거나 세션이 회수된 것
+    // (게이트웨이는 회전/세션제한 때 이전 세션 키를 지운다). 이 리스너가 없으면
+    // 'error' 로만 떨어져 **폐기된 토큰으로 백오프 재시도만 반복**하고, 브릿지는
+    // 영영 안 붙는다 → 에이전트에 로컬 도구가 절대 노출되지 않는다 (실기).
+    // refresh 로 토큰을 회전시키면(다음 reconnect 가 getToken 으로 새 토큰을
+    // 집는다) 즉시 재시도한다. 리스너를 단 순간 기본 error/close 경로가 꺼지므로
+    // 정리와 재시도 스케줄까지 여기서 책임진다.
+    ws.on('unexpected-response', (_req, res) => {
+      const sc = res?.statusCode ?? 0;
+      try { res?.resume?.(); } catch { /* drain */ }
+      this.lastError = `handshake HTTP ${sc}`;
+      const heal =
+        sc === 401 || sc === 403
+          ? Promise.resolve(this.refreshAuth()).catch(() => null)
+          : Promise.resolve<string | null>(null);
+      void heal.then((fresh) => {
+        if (this.ws === ws) this.ws = null;
+        try {
+          ws.removeAllListeners();
+          ws.close();
+        } catch {
+          /* ignore */
+        }
+        if (fresh) this.backoff = RECONNECT_MIN_MS;
+        this.emit();
+        this.scheduleRetry();
+      });
+    });
 
     ws.on('open', () => {
       if (this.grace) {

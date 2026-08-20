@@ -148,6 +148,14 @@ function getClient(): XgenClient {
       // Chromium 네트워크 스택을 사용해 OS 프록시·인증서 정책을 공유한다.
       fetch: (input, init) => net.fetch(input, init),
       onAuthFailure: () => safeSend(mainWindow, CHANNELS.authFailed),
+      // 토큰이 회전되는 **모든** 지점에서 keychain 을 즉시 갱신한다. 게이트웨이는
+      // 회전 시 이전 토큰의 세션 키를 지우므로, 여기서 놓치면 keychain 을 읽는
+      // 장수명 소비자(WS 브릿지·워크스페이스 동기화)가 폐기된 토큰으로 접속하다
+      // 403(session revoked)에 갇힌다 — 실기에서 채팅은 되는데 WS 만 죽던 원인.
+      onTokensRotated: (access, refresh) => {
+        void tokenStore.setAccess(access);
+        if (refresh) void tokenStore.setRefresh(refresh);
+      },
     });
   } else {
     client.setBaseUrl(normalizeServerUrl(cfg.serverUrl));
@@ -1164,6 +1172,27 @@ function applyMcpHttpCertificatePolicy(): void {
 function currentUserId(): string | null {
   return client?.user?.userId ?? null;
 }
+/**
+ * 현재 유효한 액세스 토큰 — **라이브 클라이언트(회전 반영) 우선**, 없으면 keychain.
+ * WS 브릿지·워크스페이스 동기화가 keychain 만 읽으면, 세션 중 회전 시점과
+ * keychain 기록 사이의 틈에서 폐기된 토큰을 집는다. 단일 소스로 그 틈을 없앤다.
+ */
+async function liveAccessToken(): Promise<string> {
+  const live = client?.getAccessTokenAfterRotation();
+  if (live) return live;
+  return (await tokenStore.getAccess()) ?? '';
+}
+/**
+ * 인증 실패(401/403)를 맞은 소비자의 자가치유 — refresh 토큰으로 액세스 토큰을
+ * 회전(single-flight, core 가 보장)하고 새 토큰을 돌려준다. onTokensRotated 가
+ * keychain 도 함께 갱신한다. null = 회전 불가(진짜 재로그인 대상).
+ */
+async function refreshAuthToken(): Promise<string | null> {
+  const c = client;
+  if (!c) return null;
+  const fallback = (await tokenStore.getRefresh()) ?? undefined;
+  return c.ensureFreshAuth(fallback);
+}
 /** Reconcile MCP manager + bridge with config + login state. */
 function syncMcp(): void {
   const cfg = loadConfig();
@@ -1205,7 +1234,9 @@ function syncMcp(): void {
       serverUrl: normalizeServerUrl(cfg.serverUrl),
       userId,
       allowPrivateCertificate: cfg.allowPrivateCertificate === true,
-      getToken: () => tokenStore.getAccess(),
+      // 라이브 토큰 우선 — keychain 만 읽으면 세션 중 회전 시 폐기 토큰을 집는다.
+      getToken: async () => (await liveAccessToken()) || null,
+      refreshAuth: refreshAuthToken,
     });
   } else {
     bridge.stop();
@@ -1947,8 +1978,8 @@ async function cloudLinkRequest(
   body?: unknown,
 ): Promise<unknown> {
   const base = normalizeServerUrl(loadConfig().serverUrl).replace(/\/$/, '');
-  const token = (await tokenStore.getAccess()) ?? '';
-  const res = await net.fetch(`${base}${path}`, {
+  const token = await liveAccessToken();
+  let res = await net.fetch(`${base}${path}`, {
     method,
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -1956,6 +1987,20 @@ async function cloudLinkRequest(
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
+  // 401 = 토큰 회전/세션 회수 — refresh 로 한 번 자가치유 후 재발송.
+  if (res.status === 401) {
+    const fresh = await refreshAuthToken().catch(() => null);
+    if (fresh) {
+      res = await net.fetch(`${base}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${fresh}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    }
+  }
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
     try {
@@ -1977,7 +2022,8 @@ function wireWorkspaceManager(): void {
       makeWorkspaceApi(
         {
           serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
-          token: async () => (await tokenStore.getAccess()) ?? '',
+          token: liveAccessToken,
+          refreshAuth: refreshAuthToken,
           deviceId: () => ensureDeviceId(),
           fetch: (input, init) => net.fetch(input, init),
           allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
@@ -1993,7 +2039,8 @@ function wireWorkspaceManager(): void {
       return makeWorkspaceApi(
         {
           serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
-          token: async () => (await tokenStore.getAccess()) ?? '',
+          token: liveAccessToken,
+          refreshAuth: refreshAuthToken,
           deviceId: () => ensureDeviceId(),
           fetch: (input, init) => net.fetch(input, init),
           allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
@@ -2013,7 +2060,8 @@ function wireWorkspaceManager(): void {
       new WorkspaceWsClient(
         {
           baseUrl: normalizeServerUrl(loadConfig().serverUrl).replace(/\/$/, ''),
-          token: async () => (await tokenStore.getAccess()) ?? '',
+          token: liveAccessToken,
+          refreshAuth: refreshAuthToken,
           workflowId: owner,
           deviceId: ensureDeviceId(),
           // 이름이 쓰기 요청에도 실려야 서버가 이 PC 의 홈 폴더를 만든다.
@@ -2053,10 +2101,20 @@ function wireWorkspaceManager(): void {
     },
     cloudProbe: async () => {
       const base = normalizeServerUrl(loadConfig().serverUrl).replace(/\/$/, '');
-      const token = (await tokenStore.getAccess()) ?? '';
-      const res = await net.fetch(`${base}/api/cloud/overview`, {
+      const token = await liveAccessToken();
+      let res = await net.fetch(`${base}/api/cloud/overview`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
+      if (res.status === 401) {
+        // 토큰 회전/세션 회수 — refresh 후 한 번 재시도 (이 프로브가 죽으면
+        // homeFolder 를 몰라 이 PC 폴더 안내·라우팅이 전부 빠진다).
+        const fresh = await refreshAuthToken().catch(() => null);
+        if (fresh) {
+          res = await net.fetch(`${base}/api/cloud/overview`, {
+            headers: { Authorization: `Bearer ${fresh}` },
+          });
+        }
+      }
       if (!res.ok) return null;   // 모르면 경고하지 않는다
       const body = (await res.json()) as {
         needs_reconnect?: string[];
@@ -2292,7 +2350,7 @@ if (!gotLock) {
       updateServer: cfg.updateServer ?? 'github',
       isConfigured: () => !!normalizeServerUrl(loadConfig().serverUrl),
       xgenServerUrl: () => normalizeServerUrl(loadConfig().serverUrl),
-      xgenToken: () => tokenStore.getAccess(),
+      xgenToken: async () => (await liveAccessToken()) || null,
       onWillInstall: () => {
         appQuitting = true;
       },
