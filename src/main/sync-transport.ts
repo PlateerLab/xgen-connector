@@ -117,6 +117,26 @@ async function httpError(what: string, res: Response): Promise<Error & { status:
   return Object.assign(new Error(msg), { status: res.status })
 }
 
+/**
+ * PUT/commit 의 409 본문을 해석해 알맞은 에러를 만든다.
+ *
+ * 서버는 두 가지 다른 이유로 409 를 낸다:
+ *   1. **낙관적 동시성 충돌**(`detail.current_sha`) — 재시도로 해소한다.
+ *   2. **정책 거부**(`detail.conflict === 'root_file'`) — 클라우드 루트에는
+ *      파일을 만들 수 없다. 이건 재시도해도 영원히 같은 409 다. 그래서
+ *      `SyncConflictError` **로 감싸지 않는다** — 감싸면 백엔드의 `isConflict`
+ *      가 참이 되어 무한 재시도에 빠지고, 서버의 안내 메시지도 사라진다.
+ *      상태코드도 싣지 않는다(`isConflict` 가 `.status===409` 도 보므로).
+ */
+function conflict409(body: unknown): Error {
+  const detail = (body as { detail?: unknown })?.detail
+  if (detail && typeof detail === 'object' && (detail as { conflict?: string }).conflict === 'root_file') {
+    const d = detail as { message?: string; suggest_folder?: string }
+    return new Error(d.message || '클라우드 루트에는 파일을 만들 수 없습니다. 폴더 안에 저장하세요.')
+  }
+  return new SyncConflictError((detail as { current_sha?: string })?.current_sha)
+}
+
 export class HttpSyncTransport implements Transport {
   private chunkThreshold: number
 
@@ -214,7 +234,7 @@ export class HttpSyncTransport implements Transport {
     )
     if (res.status === 409) {
       const body = await res.json().catch(() => ({}) as any)
-      throw new SyncConflictError(body?.detail?.current_sha)
+      throw conflict409(body)
     }
     if (!res.ok) throw await httpError('put', res)
     const data = (await res.json()) as { sha256: string }
@@ -304,7 +324,7 @@ export class HttpSyncTransport implements Transport {
     )
     if (commit.status === 409) {
       const body = (await commit.json().catch(() => ({}))) as any
-      throw new SyncConflictError(body?.detail?.current_sha)
+      throw conflict409(body)
     }
     if (!commit.ok) {
       throw await httpError('chunk commit', commit)

@@ -146,11 +146,20 @@ export class WorkspaceDavBackend implements WebdavBackend {
     return this.tmp
   }
 
+  /** 이 PC 의 클라우드 폴더 이름(서버가 정함). 루트 파일 거부 시 안내에 쓴다. */
+  private homeFolder = ''
+
   /** 루트가 될 사용자 클라우드 스토리지를 배선한다 (null = 미사용). */
   setUserStorage(api: WorkspaceApi | null): void {
     this.userApi = api
     this.trees.delete('')
     diag('dav', `사용자 클라우드 스토리지 ${api ? '배선' : '해제'}`)
+  }
+
+  /** 이 PC 의 홈 폴더 이름을 배선한다 — 루트 파일 거부 메시지가 정확히 어디에
+   *  저장하라고 안내할 수 있게. 서버가 정한 이름을 그대로 받는다(흉내 금지). */
+  setHomeFolder(folder: string): void {
+    this.homeFolder = (folder || '').replace(/^\/+|\/+$/g, '')
   }
 
   setAgents(list: BackendAgent[]): void {
@@ -413,6 +422,16 @@ export class WorkspaceDavBackend implements WebdavBackend {
     const [space, rel] = this.resolve(p)
     if (!space) throw new Error('클라우드 스토리지가 연결되어 있지 않습니다')
     if (!rel) throw new Error('루트에는 쓸 수 없습니다')
+    // 내 클라우드 루트는 **폴더(저장소) 단위로만** 이루어진다 — 클라우드 바로
+    // 아래(`클라우드/파일`)에 파일을 만들 수 없다. 폴더 안에 넣도록 막고, 이 PC
+    // 의 폴더를 정확히 안내한다(서버도 같은 규칙으로 409 를 낸다 — 클라이언트에서
+    // 미리 막아 커널 EIO 대신 뜻이 통하는 메시지를 준다).
+    if (space.isUser && !rel.includes('/')) {
+      const where = this.homeFolder
+        ? `${CLOUD_DIR}/${this.homeFolder}/ 폴더 안에 저장하세요 (이 PC 의 폴더).`
+        : `${CLOUD_DIR} 아래의 폴더 안에 저장하세요.`
+      throw new Error(`클라우드 루트에는 파일을 만들 수 없습니다. ${where}`)
+    }
     const local = join(this.ensureTmp(), `w-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     writeFileSync(local, data)
     try {

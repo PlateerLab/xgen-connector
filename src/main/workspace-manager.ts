@@ -286,6 +286,8 @@ export class WorkspaceManager {
         diag('workspace', `이 PC 의 클라우드 폴더: /${seen.homeFolder}`)
       }
       this.homeFolder = seen.homeFolder
+      // 백엔드가 루트 파일을 거부할 때 이 PC 의 폴더를 정확히 안내할 수 있게 전달.
+      this.backend.setHomeFolder(seen.homeFolder)
       if (!stale) await this.ensureHomeFolder(api)
     } catch {
       // 모르면 아무 말도 하지 않는다.
