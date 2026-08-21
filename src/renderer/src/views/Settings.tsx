@@ -10,7 +10,15 @@ import { HotkeyCapture } from './HotkeyCapture';
 import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
-import { BrowserIcon, MonitorIcon, ServerIcon, SpeakerIcon } from '../brand/icons';
+import {
+  BrowserIcon,
+  CloseIcon,
+  FolderIcon,
+  MonitorIcon,
+  PlusIcon,
+  ServerIcon,
+  SpeakerIcon,
+} from '../brand/icons';
 
 type Theme = NonNullable<ConnectorConfig['theme']>;
 
@@ -33,12 +41,16 @@ export const Settings: React.FC<{
 }> = ({ config, onClose, onChanged }) => {
   const [tab, setTab] = useState<Tab>('connection');
   const [serverUrl, setServerUrl] = useState(config.serverUrl);
-  const [allowPrivateCertificate, setAllowPrivateCertificate] = useState(config.allowPrivateCertificate ?? false);
+  const [allowPrivateCertificate, setAllowPrivateCertificate] = useState(
+    config.allowPrivateCertificate ?? false,
+  );
   const [ssoEnabled, setSsoEnabled] = useState(config.ssoEnabled ?? false);
   const [ssoPath, setSsoPath] = useState(config.ssoPath ?? '/sso/signin');
   const [theme, setTheme] = useState<Theme>(config.theme ?? 'system');
   const [autoUpdate, setAutoUpdate] = useState(config.autoUpdate ?? true);
-  const [updateServer, setUpdateServer] = useState<'github' | 'xgen'>(config.updateServer ?? 'github');
+  const [updateServer, setUpdateServer] = useState<'github' | 'xgen'>(
+    config.updateServer ?? 'github',
+  );
   const [overlay, setOverlay] = useState(config.avatarOverlay ?? false);
   const [subtitles, setSubtitles] = useState(config.subtitles !== false);
   const [charMs, setCharMs] = useState(config.subtitleCharMs ?? 50);
@@ -56,9 +68,12 @@ export const Settings: React.FC<{
   const [shellCwd, setShellCwd] = useState(ls.cwd ?? '');
   const [shellTimeoutS, setShellTimeoutS] = useState(Math.round((ls.timeoutMs ?? 120_000) / 1000));
   const [shellBlocked, setShellBlocked] = useState((ls.blocked ?? []).join(', '));
-  // 파일 도구(ReadFile/WriteFile/ListDir/Search)가 접근할 수 있는 폴더 (줄바꿈/쉼표 구분).
-  // 비우면 홈 폴더로 제한된다.
-  const [shellRoots, setShellRoots] = useState((ls.allowedRoots ?? []).join('\n'));
+  // 파일 도구(ReadFile/WriteFile/ListDir/Search)가 접근할 수 있는 폴더 목록.
+  // 비우면 홈 폴더로 제한된다. 손 타이핑이 아니라 [+ 폴더 추가]의 네이티브
+  // 선택기로만 늘어난다 — 오타 하나로 스코프가 빗나가는 일을 없앤다.
+  const [shellRoots, setShellRoots] = useState<string[]>(
+    (ls.allowedRoots ?? []).map((r) => String(r).trim()).filter(Boolean),
+  );
   const [browserOn, setBrowserOn] = useState(config.browser?.enabled === true);
   const [browserNewTabUrl, setBrowserNewTabUrl] = useState(config.browser?.newTabUrl ?? '');
   const savedBrowserNewTabUrl = useRef(config.browser?.newTabUrl ?? '');
@@ -81,20 +96,37 @@ export const Settings: React.FC<{
 
   // Any status message means the check is underway/done → drop the button spinner
   // (the message line then shows progress like "내려받는 중… 45%").
-  useEffect(() => xgen.updater.onMessage((m) => {
-    setUpdateMsg(m);
-    if (!/^업데이트 확인 중/.test(m)) setChecking(false);
-  }), []);
+  useEffect(
+    () =>
+      xgen.updater.onMessage((m) => {
+        setUpdateMsg(m);
+        if (!/^업데이트 확인 중/.test(m)) setChecking(false);
+      }),
+    [],
+  );
   useEffect(() => {
-    xgen.quickChat.getHotkey().then(setHotkey).catch(() => undefined);
-    xgen.appctl.getAutostart().then(setAutostart).catch(() => undefined);
-    xgen.updater.getVersion().then(setVersion).catch(() => undefined);
+    xgen.quickChat
+      .getHotkey()
+      .then(setHotkey)
+      .catch(() => undefined);
+    xgen.appctl
+      .getAutostart()
+      .then(setAutostart)
+      .catch(() => undefined);
+    xgen.updater
+      .getVersion()
+      .then(setVersion)
+      .catch(() => undefined);
   }, []);
 
   const changeHotkey = async (acc: string) => {
     const ok = await xgen.quickChat.setHotkey(acc);
     if (ok) setHotkey(acc);
-    else xgen.quickChat.getHotkey().then(setHotkey).catch(() => undefined);
+    else
+      xgen.quickChat
+        .getHotkey()
+        .then(setHotkey)
+        .catch(() => undefined);
   };
 
   const apply = async (patch: Partial<ConnectorConfig>) => {
@@ -104,7 +136,15 @@ export const Settings: React.FC<{
 
   // 셸 설정은 여러 필드가 하나의 localShell 객체를 이룬다 — 저장 시점의 상태를
   // 통째로 쓰되, 방금 바꾼 필드는 override 로 즉시 반영한다.
-  const commitShell = (over: Partial<{ enabled: boolean; cwd: string; timeoutS: number; blocked: string; roots: string }> = {}) => {
+  const commitShell = (
+    over: Partial<{
+      enabled: boolean;
+      cwd: string;
+      timeoutS: number;
+      blocked: string;
+      roots: string[];
+    }> = {},
+  ) => {
     const enabled = over.enabled ?? shellOn;
     const cwd = (over.cwd ?? shellCwd).trim();
     const timeoutS = Math.max(1, Math.round(over.timeoutS ?? shellTimeoutS));
@@ -112,11 +152,42 @@ export const Settings: React.FC<{
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const allowedRoots = (over.roots ?? shellRoots)
-      .split(/[\n,]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    void apply({ localShell: { enabled, cwd: cwd || undefined, timeoutMs: timeoutS * 1000, blocked, allowedRoots } });
+    const allowedRoots = (over.roots ?? shellRoots).map((s) => s.trim()).filter(Boolean);
+    void apply({
+      localShell: {
+        enabled,
+        cwd: cwd || undefined,
+        timeoutMs: timeoutS * 1000,
+        blocked,
+        allowedRoots,
+      },
+    });
+  };
+
+  /** 기본 작업 폴더 — 네이티브 선택기로 고른다 (타이핑 금지). */
+  const pickShellCwd = async () => {
+    const p = await xgen.appctl.pickFolder();
+    if (!p) return;
+    setShellCwd(p);
+    commitShell({ cwd: p });
+  };
+  const clearShellCwd = () => {
+    setShellCwd('');
+    commitShell({ cwd: '' });
+  };
+
+  /** 허용 폴더 — [+]로 하나씩 추가, 행의 ✕로 제거. */
+  const addShellRoot = async () => {
+    const p = await xgen.appctl.pickFolder();
+    if (!p || shellRoots.includes(p)) return;
+    const next = [...shellRoots, p];
+    setShellRoots(next);
+    commitShell({ roots: next });
+  };
+  const removeShellRoot = (idx: number) => {
+    const next = shellRoots.filter((_, i) => i !== idx);
+    setShellRoots(next);
+    commitShell({ roots: next });
   };
 
   const commitBrowser = (
@@ -239,8 +310,8 @@ export const Settings: React.FC<{
                 </div>
                 {confirmServer && (
                   <span className="small notice-warn">
-                    서버 주소를 변경하면 현재 세션이 종료되고 새 서버에 다시 로그인해야
-                    합니다. 계속하려면 버튼을 한 번 더 누르세요.
+                    서버 주소를 변경하면 현재 세션이 종료되고 새 서버에 다시 로그인해야 합니다.
+                    계속하려면 버튼을 한 번 더 누르세요.
                   </span>
                 )}
               </label>
@@ -304,7 +375,9 @@ export const Settings: React.FC<{
               <div className="field-row">
                 <span>빠른 채팅 (단축키)</span>
                 <div className="row">
-                  {quickChat && <HotkeyCapture value={hotkey} onCapture={(a) => void changeHotkey(a)} />}
+                  {quickChat && (
+                    <HotkeyCapture value={hotkey} onCapture={(a) => void changeHotkey(a)} />
+                  )}
                   <label className="switch">
                     <input
                       type="checkbox"
@@ -425,7 +498,13 @@ export const Settings: React.FC<{
                   </span>
                 </span>
                 <div className="seg">
-                  {([['느림', 90], ['보통', 50], ['빠름', 25]] as const).map(([label, ms]) => (
+                  {(
+                    [
+                      ['느림', 90],
+                      ['보통', 50],
+                      ['빠름', 25],
+                    ] as const
+                  ).map(([label, ms]) => (
                     <button
                       key={ms}
                       className={charMs === ms ? 'active' : ''}
@@ -448,7 +527,13 @@ export const Settings: React.FC<{
                   </span>
                 </span>
                 <div className="seg">
-                  {([['작음', 'sm'], ['중간', 'md'], ['큼', 'lg']] as const).map(([label, sz]) => (
+                  {(
+                    [
+                      ['작음', 'sm'],
+                      ['중간', 'md'],
+                      ['큼', 'lg'],
+                    ] as const
+                  ).map(([label, sz]) => (
                     <button
                       key={sz}
                       className={subtitleSize === sz ? 'active' : ''}
@@ -466,7 +551,9 @@ export const Settings: React.FC<{
               {/* 음성 — 아바타가 말하고 듣는 통로라 아바타 탭에 둔다. */}
               <div className="tool-card">
                 <div className="tool-card-main">
-                  <span className="tool-card-icon"><SpeakerIcon size={18} /></span>
+                  <span className="tool-card-icon">
+                    <SpeakerIcon size={18} />
+                  </span>
                   <div className="tool-card-text">
                     <div className="tool-card-title">음성 (STT/TTS)</div>
                     <div className="tool-card-desc">
@@ -486,13 +573,15 @@ export const Settings: React.FC<{
             <>
               <div className="tool-card">
                 <div className="tool-card-main">
-                  <span className="tool-card-icon"><BrowserIcon size={18} /></span>
+                  <span className="tool-card-icon">
+                    <BrowserIcon size={18} />
+                  </span>
                   <div className="tool-card-text">
                     <div className="tool-card-title">에이전트 브라우저 접근</div>
                     <div className="tool-card-desc">
-                      workflow별 격리 페이지를 열고 접근성 snapshot·클릭·입력·탐색을
-                      에이전트가 수행할 수 있게 합니다. 로그인 쿠키는 이 XGEN 계정 전용
-                      partition에만 저장됩니다.
+                      workflow별 격리 페이지를 열고 접근성 snapshot·클릭·입력·탐색을 에이전트가
+                      수행할 수 있게 합니다. 로그인 쿠키는 이 XGEN 계정 전용 partition에만
+                      저장됩니다.
                     </div>
                   </div>
                   <label className="switch">
@@ -532,8 +621,8 @@ export const Settings: React.FC<{
                       )}
                     </label>
                     <p className="settings-hint">
-                      프로토콜을 생략하면 https://를 자동으로 붙입니다. 이 설정은 새로 여는
-                      사용자 브라우저 탭에만 적용됩니다.
+                      프로토콜을 생략하면 https://를 자동으로 붙입니다. 이 설정은 새로 여는 사용자
+                      브라우저 탭에만 적용됩니다.
                     </p>
                     <div className="field-row">
                       <span>
@@ -576,9 +665,9 @@ export const Settings: React.FC<{
                     )}
                     <p className="settings-hint warn">
                       페이지 내용은 신뢰하지 않는 데이터로 처리됩니다. 쿠키·스토리지,
-                      업로드·다운로드, 클립보드, credentials, 요청 변조와 raw eval은
-                      실행 직전 이 PC에서 별도 승인을 요청합니다. 업로드·다운로드 경로는
-                      아래 로컬 파일 도구의 허용 폴더 범위를 함께 사용합니다.
+                      업로드·다운로드, 클립보드, credentials, 요청 변조와 raw eval은 실행 직전 이
+                      PC에서 별도 승인을 요청합니다. 업로드·다운로드 경로는 아래 로컬 파일 도구의
+                      허용 폴더 범위를 함께 사용합니다.
                     </p>
                   </div>
                 )}
@@ -591,13 +680,15 @@ export const Settings: React.FC<{
             <>
               <div className="tool-card">
                 <div className="tool-card-main">
-                  <span className="tool-card-icon"><MonitorIcon size={18} /></span>
+                  <span className="tool-card-icon">
+                    <MonitorIcon size={18} />
+                  </span>
                   <div className="tool-card-text">
                     <div className="tool-card-title">로컬 도구 접근 (셸 · 파일)</div>
                     <div className="tool-card-desc">
                       에이전트가 이 PC 의 셸(PowerShell/bash)로 명령을 실행하고, 파일
-                      읽기/쓰기·목록·검색·클립보드·알림 도구로 "내 컴퓨터"를 직접 다룰 수
-                      있게 합니다. 파일 도구는 아래 허용 폴더 범위로 제한됩니다.
+                      읽기/쓰기·목록·검색·클립보드·알림 도구로 "내 컴퓨터"를 직접 다룰 수 있게
+                      합니다. 파일 도구는 아래 허용 폴더 범위로 제한됩니다.
                     </div>
                   </div>
                   <label className="switch">
@@ -615,22 +706,34 @@ export const Settings: React.FC<{
 
                 {shellOn && (
                   <div className="tool-card-body">
-                    <label className="field">
-                      <span>기본 작업 폴더 <span className="small muted">(비우면 홈 디렉터리)</span></span>
-                      <input
-                        value={shellCwd}
-                        placeholder="예: /home/me/projects 또는 C:\\Users\\me"
-                        onChange={(e) => setShellCwd(e.target.value)}
-                        onBlur={() => commitShell()}
-                      />
+                    <div className="field">
+                      <span>기본 작업 폴더</span>
+                      <div className="picker-row">
+                        <span
+                          className={`picker-path ${shellCwd ? '' : 'muted'}`}
+                          title={shellCwd || undefined}
+                        >
+                          {shellCwd || '홈 디렉터리 (기본값)'}
+                        </span>
+                        <button className="secondary" onClick={() => void pickShellCwd()}>
+                          폴더 선택…
+                        </button>
+                        {shellCwd && (
+                          <button className="link" onClick={clearShellCwd}>
+                            기본값으로
+                          </button>
+                        )}
+                      </div>
                       <span className="small muted" style={{ marginTop: 4 }}>
-                        지정하면 <b>연결된 에이전트의 워크스페이스</b>가 이 폴더 아래로
-                        동기화됩니다 — 커넥터로 접속한 에이전트는 서버 sandbox 대신 그
-                        폴더를 자기 작업 공간으로 씁니다. (스토리지 탭에서 에이전트 연결)
+                        지정하면 <b>연결된 에이전트의 워크스페이스</b>가 이 폴더 아래로 동기화됩니다
+                        — 커넥터로 접속한 에이전트는 서버 sandbox 대신 그 폴더를 자기 작업 공간으로
+                        씁니다. (스토리지 탭에서 에이전트 연결)
                       </span>
-                    </label>
+                    </div>
                     <div className="field-row">
-                      <span>명령 시간 제한 <span className="small muted">(초)</span></span>
+                      <span>
+                        명령 시간 제한 <span className="small muted">(초)</span>
+                      </span>
                       <input
                         type="number"
                         min={1}
@@ -642,7 +745,9 @@ export const Settings: React.FC<{
                       />
                     </div>
                     <label className="field">
-                      <span>차단할 명령 <span className="small muted">(쉼표로 구분, 첫 단어 기준)</span></span>
+                      <span>
+                        차단할 명령 <span className="small muted">(쉼표로 구분, 첫 단어 기준)</span>
+                      </span>
                       <input
                         value={shellBlocked}
                         placeholder="예: rm, shutdown, format"
@@ -650,21 +755,49 @@ export const Settings: React.FC<{
                         onBlur={() => commitShell()}
                       />
                     </label>
-                    <label className="field">
-                      <span>허용 폴더 <span className="small muted">(파일 도구 접근 범위 · 줄바꿈/쉼표 구분 · 비우면 홈)</span></span>
-                      <textarea
-                        rows={2}
-                        value={shellRoots}
-                        placeholder={'예: /home/me/projects\n/home/me/Documents'}
-                        onChange={(e) => setShellRoots(e.target.value)}
-                        onBlur={() => commitShell()}
-                      />
-                    </label>
+                    <div className="field">
+                      <span>
+                        허용 폴더 <span className="small muted">(파일 도구 접근 범위)</span>
+                      </span>
+                      <div className="roots-list">
+                        {shellRoots.length === 0 && (
+                          <div className="roots-empty small muted">
+                            홈 디렉터리만 허용 (기본값)
+                            {shellCwd ? ' — 기본 작업 폴더는 항상 포함됩니다.' : ''}
+                          </div>
+                        )}
+                        {shellRoots.map((r, i) => (
+                          <div className="root-item" key={r}>
+                            <span className="root-icon">
+                              <FolderIcon size={14} />
+                            </span>
+                            <span className="root-path" title={r}>
+                              {r}
+                            </span>
+                            <button
+                              className="root-remove"
+                              title="허용 목록에서 제거"
+                              onClick={() => removeShellRoot(i)}
+                            >
+                              <CloseIcon size={13} />
+                            </button>
+                          </div>
+                        ))}
+                        <button className="root-add" onClick={() => void addShellRoot()}>
+                          <PlusIcon size={14} /> 폴더 추가…
+                        </button>
+                      </div>
+                      {shellRoots.length > 0 && shellCwd && (
+                        <span className="small muted" style={{ marginTop: 4 }}>
+                          기본 작업 폴더는 목록과 무관하게 항상 허용에 포함됩니다.
+                        </span>
+                      )}
+                    </div>
                     <p className="settings-hint warn">
                       ⚠ 켜면 파일 읽기/쓰기·목록·검색·클립보드·알림 도구와 셸이 에이전트에
-                      노출됩니다. 셸은 로그인 사용자 권한으로 실행되며, 되돌리기 어려운
-                      명령(rm -rf 등)은 실행 직전 확인을 요청합니다. 파일 도구는 위 허용
-                      폴더 범위로 제한됩니다. 실행 내역은 항상 도구 로그에 기록됩니다.
+                      노출됩니다. 셸은 로그인 사용자 권한으로 실행되며, 되돌리기 어려운 명령(rm -rf
+                      등)은 실행 직전 확인을 요청합니다. 파일 도구는 위 허용 폴더 범위로 제한됩니다.
+                      실행 내역은 항상 도구 로그에 기록됩니다.
                     </p>
                   </div>
                 )}
@@ -672,7 +805,9 @@ export const Settings: React.FC<{
 
               <div className="tool-card">
                 <div className="tool-card-main">
-                  <span className="tool-card-icon"><ServerIcon size={18} /></span>
+                  <span className="tool-card-icon">
+                    <ServerIcon size={18} />
+                  </span>
                   <div className="tool-card-text">
                     <div className="tool-card-title">로컬 MCP</div>
                     <div className="tool-card-desc">
@@ -767,8 +902,8 @@ export const Settings: React.FC<{
                   저장된 설정 초기화
                   {confirmSettingsReset && (
                     <span className="small notice-warn">
-                      서버, SSO, 업데이트, MCP, 워크스페이스 설정과 저장된 로그인 정보가 모두 삭제됩니다.
-                      앱은 설치본의 기본 설정으로 다시 시작됩니다.
+                      서버, SSO, 업데이트, MCP, 워크스페이스 설정과 저장된 로그인 정보가 모두
+                      삭제됩니다. 앱은 설치본의 기본 설정으로 다시 시작됩니다.
                     </span>
                   )}
                 </span>

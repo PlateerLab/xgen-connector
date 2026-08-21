@@ -95,6 +95,8 @@ export const CHANNELS = {
 
   // Window / app management (tray, autostart, reset, restart)
   openSettingsModal: 'app:openSettingsModal', // main → main-window (open settings modal)
+  /** 네이티브 폴더 선택 다이얼로그 — 고른 절대 경로 또는 null(취소). */
+  pickFolder: 'app:pickFolder',
   autostartGet: 'app:autostartGet',
   autostartSet: 'app:autostartSet',
   resetPositions: 'app:resetPositions',

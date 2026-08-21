@@ -2471,6 +2471,113 @@ button {
   flex-direction: column;
   gap: 4px;
 }
+/* 폴더 선택 행 — 경로 표시 + [폴더 선택…]. 타이핑 입력이 아니다. */
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.picker-path {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  /* 경로는 뒤가 중요하다 — 앞을 …로 줄인다 */
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+.picker-path.muted {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  direction: ltr;
+}
+
+/* 허용 폴더 목록 — [+]로 하나씩 추가, 행의 ✕로 제거. */
+.roots-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  padding: 6px;
+}
+.roots-empty {
+  padding: 4px 6px;
+}
+.root-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  min-width: 0;
+}
+.root-icon {
+  display: flex;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.root-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+.root-remove {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.root-remove:hover {
+  background: var(--error-bg);
+  color: var(--error);
+}
+.root-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.root-add:hover {
+  color: var(--primary);
+  border-color: var(--primary-soft-border);
+}
+
 .settings-hint {
   margin: 8px 0 2px;
   font-size: 12px;

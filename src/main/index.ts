@@ -1872,6 +1872,15 @@ ipcMain.on(CHANNELS.overlayOpenSettings, () => openMainSettings());
 ipcMain.on(CHANNELS.overlayHide, () => setOverlayEnabled(false));
 
 // ── IPC: app / window management ─────────────────────────────────
+/** 네이티브 폴더 선택 — 설정 화면(기본 작업 폴더·허용 폴더)이 쓴다. 경로를
+ *  타이핑하게 두면 오타 하나로 도구 스코프가 조용히 빗나간다 — 고르게 한다. */
+ipcMain.handle(CHANNELS.pickFolder, async () => {
+  const win = mainWindow;
+  const r = win
+    ? await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
+    : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+  return r.canceled ? null : (r.filePaths[0] ?? null);
+});
 ipcMain.handle(CHANNELS.autostartGet, () => loadConfig().autoLaunch === true);
 ipcMain.handle(CHANNELS.autostartSet, (_e, enabled: boolean) => {
   // 실효 결과를 저장·반환 — 리눅스 AppImage 임시 마운트 등 등록이 거부되면
