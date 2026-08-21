@@ -15,6 +15,7 @@ interface BrowserPageRuntime {
   contents: WebContents | null;
   window: BrowserWindow | null;
   proxy: CdpPageProxy | null;
+  automationReset: Promise<void> | null;
 }
 
 export class BrowserRuntimeError extends Error {
@@ -140,7 +141,13 @@ export class BrowserRuntime {
       partition: this.accountPartition,
       generation: 0,
     };
-    const runtime: BrowserPageRuntime = { info, contents: null, window: null, proxy: null };
+    const runtime: BrowserPageRuntime = {
+      info,
+      contents: null,
+      window: null,
+      proxy: null,
+      automationReset: null,
+    };
     this.pages.set(pageId, runtime);
     this.activeByWorkflow.set(workflowId, pageId);
     if (mode === 'background') {
@@ -206,10 +213,15 @@ export class BrowserRuntime {
 
   private bindContents(runtime: BrowserPageRuntime, contents: WebContents): void {
     if (runtime.contents?.id === contents.id) return;
+    if (runtime.contents && runtime.contents.id !== contents.id) {
+      runtime.info.generation += 1;
+      void this.resetAutomation(runtime);
+    }
     runtime.contents = contents;
+    const isCurrent = () => runtime.contents?.id === contents.id;
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
     const updateLocation = () => {
-      if (contents.isDestroyed()) return;
+      if (!isCurrent() || contents.isDestroyed()) return;
       const next = allowedBrowserUrl(contents.getURL());
       if (!next) return;
       this.patch(runtime, {
@@ -225,24 +237,26 @@ export class BrowserRuntime {
     contents.on('will-redirect', (event, url) => {
       if (!allowedBrowserUrl(url)) event.preventDefault();
     });
-    contents.on('did-start-loading', () =>
-      this.patch(runtime, { loading: 'loading', error: undefined }),
-    );
+    contents.on('did-start-loading', () => {
+      if (isCurrent()) this.patch(runtime, { loading: 'loading', error: undefined });
+    });
     contents.on('did-stop-loading', () => {
+      if (!isCurrent()) return;
       updateLocation();
       this.patch(runtime, { loading: 'idle', error: undefined });
     });
     const navigated = () => {
+      if (!isCurrent()) return;
       runtime.info.generation += 1;
       updateLocation();
     };
     contents.on('did-navigate', navigated);
     contents.on('did-navigate-in-page', navigated);
-    contents.on('page-title-updated', (_event, title) =>
-      this.patch(runtime, { title: title || runtime.info.title }),
-    );
+    contents.on('page-title-updated', (_event, title) => {
+      if (isCurrent()) this.patch(runtime, { title: title || runtime.info.title });
+    });
     contents.on('did-fail-load', (_event, code, description, validatedUrl, isMainFrame) => {
-      if (!isMainFrame || code === -3) return;
+      if (!isCurrent() || !isMainFrame || code === -3) return;
       this.patch(runtime, {
         loading: 'error',
         error: description,
@@ -250,16 +264,18 @@ export class BrowserRuntime {
       });
     });
     contents.on('render-process-gone', (_event, details) => {
+      if (!isCurrent()) return;
       runtime.info.generation += 1;
       this.patch(runtime, { loading: 'error', error: `renderer ${details.reason}` });
-      void runtime.proxy?.stop();
-      runtime.proxy = null;
+      // Keep the page-scoped CDP proxy alive. The same WebContents can recover
+      // after a renderer replacement/reload, and retaining its loopback port
+      // prevents agent-browser from racing a newly allocated port.
     });
     contents.once('destroyed', () => {
+      if (!isCurrent()) return;
       runtime.info.generation += 1;
       runtime.contents = null;
-      void runtime.proxy?.stop();
-      runtime.proxy = null;
+      void this.resetAutomation(runtime);
       if (runtime.info.mode === 'background') void this.close(runtime.info.pageId);
       else this.emit();
     });
@@ -270,6 +286,23 @@ export class BrowserRuntime {
   private patch(runtime: BrowserPageRuntime, patch: Partial<BrowserPageInfo>): void {
     runtime.info = { ...runtime.info, ...patch };
     this.emit();
+  }
+
+  private resetAutomation(runtime: BrowserPageRuntime): Promise<void> {
+    if (runtime.automationReset) return runtime.automationReset;
+    const proxy = runtime.proxy;
+    runtime.proxy = null;
+    let reset: Promise<void>;
+    reset = (async () => {
+      // Let agent-browser close while the old loopback port still exists; only
+      // then tear down the proxy. Reversing this order creates ECONNREFUSED.
+      await this.runner.cancelPage(runtime.info.pageId);
+      await proxy?.stop();
+    })().finally(() => {
+      if (runtime.automationReset === reset) runtime.automationReset = null;
+    });
+    runtime.automationReset = reset;
+    return reset;
   }
 
   list(workflowId?: string): BrowserPageInfo[] {
@@ -359,6 +392,7 @@ export class BrowserRuntime {
     generation?: number,
   ): Promise<{ page: BrowserPageInfo; result: unknown }> {
     const runtime = await this.resolvePage(workflowId, pageId, true);
+    await runtime.automationReset;
     if (generation !== undefined && generation !== runtime.info.generation) {
       throw new BrowserRuntimeError(
         'browser_stale_ref',
@@ -371,9 +405,6 @@ export class BrowserRuntime {
     if (!runtime.proxy) {
       runtime.proxy = new CdpPageProxy(runtime.info.pageId, runtime.contents, () => {
         runtime.info.generation += 1;
-        const detached = runtime.proxy;
-        runtime.proxy = null;
-        void detached?.stop();
         this.emit();
       });
     }
@@ -384,7 +415,16 @@ export class BrowserRuntime {
       this.emit();
     }
     try {
-      const result = await this.runner.run(runtime.info.pageId, runtime.proxy, command, timeoutMs);
+      const result = await this.runner.run(
+        runtime.info.pageId,
+        runtime.proxy,
+        command,
+        timeoutMs,
+        () => {
+          runtime.info.generation += 1;
+          this.emit();
+        },
+      );
       return { page: { ...runtime.info }, result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -408,6 +448,7 @@ export class BrowserRuntime {
     const runtime = this.pages.get(pageId);
     if (!runtime) return;
     this.pages.delete(pageId);
+    await runtime.automationReset;
     await this.runner.cancelPage(pageId);
     await runtime.proxy?.stop();
     runtime.proxy = null;
@@ -447,6 +488,7 @@ export class BrowserRuntime {
     this.activeByWorkflow.clear();
     this.downloadPermit = null;
     this.allowedSharedContents.clear();
+    await Promise.all(pages.map((runtime) => runtime.automationReset));
     await this.runner.closeAll();
     this.emit();
     await Promise.all(
