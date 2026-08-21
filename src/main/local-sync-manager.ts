@@ -226,6 +226,12 @@ export class LocalSyncManager {
     }
   }
 
+  /** 곧 동기화 — 브리지 실행(_Exec/_WriteBytes)이 파일을 만졌을 때 부른다.
+   *  워처보다 빠르게, 그러나 연타는 디바운스로 한 사이클에 합쳐진다. */
+  poke(workflowId: string): void {
+    this.schedule(workflowId, 800)
+  }
+
   /** 지금 동기화 — id 없으면 전부. */
   async syncNow(workflowId?: string): Promise<void> {
     const ids = workflowId ? [workflowId] : [...this.live.keys()];

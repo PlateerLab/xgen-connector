@@ -697,10 +697,17 @@ export function notifyToolSchema(): LocalToolSchema {
 export class LocalToolProvider {
   private cfg: Required<LocalShellConfig> = shellConfig(undefined);
   private delegate: LocalToolDelegate | null = null;
+  /** 서버 런타임이 이 PC 를 실행 환경으로 쓰는 내부 브리지 (workspace-bridge-tools). */
+  private workspaceBridge: LocalToolDelegate | null = null;
 
   configure(cfg: LocalShellConfig | undefined, delegate?: LocalToolDelegate): void {
     this.cfg = shellConfig(cfg);
     this.delegate = delegate ?? null;
+  }
+
+  /** 워크스페이스 브리지 배선 — 로컬 동기화 매니저가 준비된 뒤 한 번 건다. */
+  configureWorkspaceBridge(bridge: LocalToolDelegate | null): void {
+    this.workspaceBridge = bridge;
   }
 
   /** True iff this call frame belongs to a built-in tool (server === LOCAL_SERVER). */
@@ -723,12 +730,17 @@ export class LocalToolProvider {
           notifyToolSchema(),
         ]
       : [];
-    return [...shell, ...(this.delegate?.advertise() ?? [])];
+    // 워크스페이스 브리지(_Exec 등)는 로컬 도구와 같은 능력 등급이므로 같은
+    // 스위치에 묶인다. `_` 접두라 서버가 LLM 노출에서 걸러낸다 — 카탈로그에는
+    // 실려야 서버 어댑터가 존재를 확인한다.
+    const bridge = this.cfg.enabled ? (this.workspaceBridge?.advertise() ?? []) : [];
+    return [...shell, ...bridge, ...(this.delegate?.advertise() ?? [])];
   }
 
   async callTool(tool: string, args: unknown): Promise<LocalToolResult> {
     if (this.delegate?.owns(tool)) return this.delegate.callTool(tool, args);
     if (!this.cfg.enabled) throw new Error('로컬 도구 접근이 꺼져 있습니다 (설정 > 로컬 도구).');
+    if (this.workspaceBridge?.owns(tool)) return this.workspaceBridge.callTool(tool, args);
     if (tool === SHELL_TOOL) return this.shell(args);
     if (tool === SHELL_JOB_TOOL) return this.shellJob(args);
     if (tool === OPEN_TOOL) return this.open(args);
