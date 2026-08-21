@@ -154,7 +154,7 @@ export interface WorkspaceLayoutPersistConfig {
     id: string;
     tabs: Array<{
       id: string;
-      kind: 'chat' | 'browser' | 'avatar';
+      kind: 'chat' | 'browser' | 'avatar' | 'settings';
       sessionKey?: string;
       workflowId?: string;
       workflowName?: string;

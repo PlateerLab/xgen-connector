@@ -2471,6 +2471,29 @@ button {
   flex-direction: column;
   gap: 4px;
 }
+/* 설정 페이지 — 모달의 승격판. 메인 영역 탭 전체를 쓰고, 내용은 읽기 좋은
+   폭으로 가운데 정렬한다 (설정을 화면 폭 전체로 펴면 라벨↔컨트롤이 멀어진다). */
+.settings-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--app-bg);
+}
+.settings-page-inner {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 20px 28px 40px;
+}
+.settings-page .settings-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--app-bg);
+  margin: -20px -28px 14px;
+  padding: 12px 28px 0;
+  border-bottom: 1px solid var(--border);
+}
+
 /* 설정 안 섹션 구분 제목 — 탭을 합칠 때 문단 경계를 만든다. */
 .settings-section-title {
   margin-top: 18px;
