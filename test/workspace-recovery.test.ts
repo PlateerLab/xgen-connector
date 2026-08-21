@@ -225,6 +225,12 @@ test('레거시 페어 동기화 엔진의 흔적이 남아 있지 않다', asyn
   // 멈추는 것으로는 부족했다 — 재가동 경로가 다섯 군데였고 하나만 되살아나도
   // 증상이 돌아온다(지운 파일이 무한 부활). 코드에서 들어냈으므로, 배선이
   // 다시 들어오는 것을 여기서 막는다.
+  //
+  // ⚠ local-sync(-manager)는 레거시의 부활이 **아니다** — 레거시가 base 없이
+  // 자기 인덱스만 보고 되살리던 것과 달리, base 스냅숏을 갖는 3-way 로
+  // 부활 자체가 판정 불가능하게 설계됐고 그 계약을 sync-plan/local-sync
+  // 테스트("무한 부활 방지")가 고정한다. 여기서 막는 것은 레거시 모듈명과
+  // 레거시 설정 키다.
   const { readFileSync, existsSync } = await import('fs')
   for (const gone of ['sync-core.ts', 'sync-fs.ts', 'sync-manager.ts']) {
     assert.ok(!existsSync(new URL(`../src/main/${gone}`, import.meta.url)), `되살아남: ${gone}`)
@@ -232,7 +238,7 @@ test('레거시 페어 동기화 엔진의 흔적이 남아 있지 않다', asyn
   for (const f of ['index.ts', 'config.ts', 'ipc.ts']) {
     const src = readFileSync(new URL(`../src/main/${f}`, import.meta.url), 'utf-8')
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
-    for (const token of ['SyncManager', 'syncPairs', 'SyncPairPersistConfig']) {
+    for (const token of ['syncPairs', 'SyncPairPersistConfig', "from './sync-core'", "from './sync-fs'"]) {
       assert.ok(!code.includes(token), `${f} 에 레거시 배선이 남아 있다: ${token}`)
     }
   }

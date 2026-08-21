@@ -3,6 +3,8 @@ export const CHANNELS = {
   configGet: 'config:get',
   configSet: 'config:set',
   configChanged: 'config:changed',
+  /** 서버 주소 확정 — 스킴이 없으면 https → http 순으로 실제 연결해 정한다. */
+  configProbeServer: 'config:probeServer',
 
   authLogin: 'auth:login',
   authSsoLogin: 'auth:ssoLogin',
@@ -153,7 +155,14 @@ export const CHANNELS = {
 
   openExternal: 'shell:openExternal',
 
-  // Workspace 동기화 (에이전트 workflow ↔ 로컬 폴더 Drive형 동기화)
+  // 로컬 동기화 — 에이전트 workspace 저장소 ↔ 로컬 도구 기본 작업 폴더
+  syncStatus: 'sync:status',
+  syncStatusEvent: 'sync:statusEvent',
+  syncNow: 'sync:now',
+  /** 동기화된 에이전트 폴더의 직계 자식 (인앱 탐색기용, 로컬 fs). */
+  syncList: 'sync:list',
+  /** 동기화된 에이전트 폴더 안 경로를 OS 로 연다. */
+  syncOpenPath: 'sync:openPath',
 
   // 로그인 시크릿 저장 상태 (키체인/암호화 저장 불가 표면화)
   secureStorageStatus: 'secure:storageStatus',

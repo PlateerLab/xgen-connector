@@ -26,8 +26,8 @@ export const ServerSetup: React.FC<{
 
   const save = async () => {
     const trimmed = url.trim().replace(/\/+$/, '');
-    if (!/^https?:\/\//.test(trimmed)) {
-      setError('http:// 또는 https:// 로 시작하는 주소를 입력하세요.');
+    if (!trimmed) {
+      setError('서버 주소를 입력하세요.');
       return;
     }
     const normalizedSsoPath = ssoPath.trim();
@@ -38,8 +38,16 @@ export const ServerSetup: React.FC<{
     setBusy(true);
     setError(null);
     try {
+      // 스킴은 사용자가 몰라도 된다 — main 이 https → http 순으로 실제 연결해
+      // 확정한 주소를 저장한다. 입력창에도 결과를 되비춰 무엇이 저장됐는지 보인다.
+      const probed = await xgen.config.probeServer(trimmed);
+      if ('error' in probed) {
+        setError(probed.error);
+        return;
+      }
+      setUrl(probed.url);
       await xgen.config.set({
-        serverUrl: trimmed,
+        serverUrl: probed.url,
         allowPrivateCertificate,
         ssoEnabled,
         ssoPath: normalizedSsoPath || '/sso/signin',
@@ -66,8 +74,8 @@ export const ServerSetup: React.FC<{
         <label className="field">
           <span>서버 주소</span>
           <input
-            type="url"
-            placeholder="https://xgen.example.com"
+            type="text"
+            placeholder="xgen.example.com (https는 자동으로 붙습니다)"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void save()}
