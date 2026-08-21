@@ -8,6 +8,7 @@
 import { app } from 'electron';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { BrowserAddressSearchConfig } from '../core/browser';
 import { DEPLOYMENT_DEFAULTS } from './deployment-defaults';
 
 /** A local MCP server the connector hosts + proxies to the user's XGEN agents. */
@@ -142,6 +143,10 @@ export interface ConnectorConfig {
 export interface BrowserPersistConfig {
   /** Master switch. Default OFF because pages can contain private account data. */
   enabled?: boolean;
+  /** Initial URL for user-visible shared tabs. Empty means about:blank. */
+  newTabUrl?: string;
+  /** Optional omnibox search fallback. Default OFF. */
+  addressSearch?: BrowserAddressSearchConfig;
 }
 
 export interface WorkspaceLayoutPersistConfig {

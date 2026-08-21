@@ -243,6 +243,9 @@ function createWindow(): void {
   getBrowserRuntime().setStateListener((state) =>
     safeSend(mainWindow, CHANNELS.browserStateEvent, state),
   );
+  getBrowserRuntime().setConnectionListener((event) =>
+    safeSend(mainWindow, CHANNELS.browserConnectionEvent, event),
+  );
 
   mainWindow.on('ready-to-show', () => mainWindow?.show());
   mainWindow.on('close', (e) => {
@@ -1253,6 +1256,7 @@ function syncMcp(): void {
     enabled: cfg.browser?.enabled === true,
     serverUrl: normalizeServerUrl(cfg.serverUrl),
     userId: currentUserId() ?? undefined,
+    newTabUrl: cfg.browser?.newTabUrl,
   });
   const browserTools = getBrowserToolProvider(getBrowserRuntime());
   browserTools.configure(cfg.browser?.enabled === true, cfg.localShell?.allowedRoots ?? []);

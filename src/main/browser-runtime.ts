@@ -1,6 +1,7 @@
 import { BrowserWindow, session, webContents, type WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import type {
+  BrowserConnectionEvent,
   BrowserCreateRequest,
   BrowserNavigateRequest,
   BrowserPageInfo,
@@ -16,6 +17,14 @@ interface BrowserPageRuntime {
   window: BrowserWindow | null;
   proxy: CdpPageProxy | null;
   automationReset: Promise<void> | null;
+}
+
+interface PendingBrowserConnection {
+  promise: Promise<WebContents>;
+  resolve: (contents: WebContents) => void;
+  reject: (error: BrowserRuntimeError) => void;
+  noticeTimer?: ReturnType<typeof setTimeout>;
+  timeoutTimer?: ReturnType<typeof setTimeout>;
 }
 
 export class BrowserRuntimeError extends Error {
@@ -37,10 +46,14 @@ export class BrowserRuntimeError extends Error {
 export class BrowserRuntime {
   private enabled = false;
   private accountPartition = '';
+  private sharedNewTabUrl = 'about:blank';
   private pages = new Map<string, BrowserPageRuntime>();
   private activeByWorkflow = new Map<string, string>();
   private runner = new AgentBrowserRunner();
   private notify: (state: BrowserState) => void = () => {};
+  private notifyConnection: (event: BrowserConnectionEvent) => void = () => {};
+  private pendingConnections = new Map<string, PendingBrowserConnection>();
+  private alertedConnections = new Set<string>();
   private hardenedPartitions = new Set<string>();
   private allowedSharedContents = new Set<number>();
   private downloadPermit: { pageId: string; path: string; expiresAt: number } | null = null;
@@ -49,7 +62,17 @@ export class BrowserRuntime {
     this.notify = listener;
   }
 
-  configure(options: { enabled: boolean; serverUrl?: string; userId?: string }): void {
+  setConnectionListener(listener: (event: BrowserConnectionEvent) => void): void {
+    this.notifyConnection = listener;
+  }
+
+  configure(options: {
+    enabled: boolean;
+    serverUrl?: string;
+    userId?: string;
+    newTabUrl?: string;
+  }): void {
+    this.sharedNewTabUrl = allowedBrowserUrl(options.newTabUrl ?? 'about:blank') ?? 'about:blank';
     const partition =
       options.serverUrl && options.userId
         ? browserPartition(options.serverUrl, options.userId)
@@ -94,6 +117,88 @@ export class BrowserRuntime {
     }
   }
 
+  private emitConnection(runtime: BrowserPageRuntime, phase: BrowserConnectionEvent['phase']): void {
+    this.notifyConnection({
+      phase,
+      pageId: runtime.info.pageId,
+      workflowId: runtime.info.workflowId,
+      workflowName: runtime.info.workflowName,
+    });
+  }
+
+  private connectedContents(runtime: BrowserPageRuntime): WebContents | null {
+    const contents = runtime.contents;
+    return contents && !contents.isDestroyed() ? contents : null;
+  }
+
+  private requireConnectedContents(
+    runtime: BrowserPageRuntime,
+    timeoutMs = 15_000,
+  ): Promise<WebContents> {
+    const connected = this.connectedContents(runtime);
+    if (connected) return Promise.resolve(connected);
+    if (runtime.info.mode !== 'shared') {
+      return Promise.reject(
+        new BrowserRuntimeError('browser_no_page', '페이지가 아직 연결되지 않았습니다.'),
+      );
+    }
+    const existing = this.pendingConnections.get(runtime.info.pageId);
+    if (existing) return existing.promise;
+
+    let resolve!: (contents: WebContents) => void;
+    let reject!: (error: BrowserRuntimeError) => void;
+    const promise = new Promise<WebContents>((ok, fail) => {
+      resolve = ok;
+      reject = fail;
+    });
+    const pending: PendingBrowserConnection = { promise, resolve, reject };
+    pending.noticeTimer = setTimeout(() => {
+      if (this.pendingConnections.get(runtime.info.pageId) !== pending) return;
+      this.alertedConnections.add(runtime.info.pageId);
+      this.emitConnection(runtime, 'required');
+    }, 300);
+    pending.timeoutTimer = setTimeout(() => {
+      if (this.pendingConnections.get(runtime.info.pageId) !== pending) return;
+      this.pendingConnections.delete(runtime.info.pageId);
+      if (pending.noticeTimer) clearTimeout(pending.noticeTimer);
+      this.emitConnection(runtime, 'timeout');
+      reject(
+        new BrowserRuntimeError(
+          'browser_no_page',
+          '브라우저 연결 시간이 초과되었습니다. 연결된 에이전트를 연 뒤 다시 시도해 주세요.',
+        ),
+      );
+    }, timeoutMs);
+    this.pendingConnections.set(runtime.info.pageId, pending);
+    return promise;
+  }
+
+  private resolvePendingConnection(runtime: BrowserPageRuntime, contents: WebContents): void {
+    const pending = this.pendingConnections.get(runtime.info.pageId);
+    if (pending) {
+      this.pendingConnections.delete(runtime.info.pageId);
+      if (pending.noticeTimer) clearTimeout(pending.noticeTimer);
+      if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
+      pending.resolve(contents);
+    }
+    if (this.alertedConnections.delete(runtime.info.pageId)) {
+      this.emitConnection(runtime, 'connected');
+    }
+  }
+
+  private rejectPendingConnection(runtime: BrowserPageRuntime): void {
+    const pending = this.pendingConnections.get(runtime.info.pageId);
+    if (pending) {
+      this.pendingConnections.delete(runtime.info.pageId);
+      if (pending.noticeTimer) clearTimeout(pending.noticeTimer);
+      if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
+      pending.reject(new BrowserRuntimeError('browser_no_page', '브라우저 페이지가 닫혔습니다.'));
+    }
+    if (this.alertedConnections.delete(runtime.info.pageId)) {
+      this.emitConnection(runtime, 'cancelled');
+    }
+  }
+
   private hardenPartition(partition: string): void {
     const browserSession = session.fromPartition(partition);
     browserSession.setPermissionRequestHandler((_contents, _permission, callback) =>
@@ -121,7 +226,8 @@ export class BrowserRuntime {
     const workflowId = String(request.workflowId ?? '').trim();
     if (!workflowId) throw new BrowserRuntimeError('browser_no_page', 'workflow_id가 필요합니다.');
     const mode = request.mode === 'background' ? 'background' : 'shared';
-    const url = allowedBrowserUrl(request.url ?? 'about:blank');
+    const initialUrl = request.url ?? (mode === 'shared' ? this.sharedNewTabUrl : 'about:blank');
+    const url = allowedBrowserUrl(initialUrl);
     if (!url)
       throw new BrowserRuntimeError(
         'browser_denied',
@@ -218,6 +324,7 @@ export class BrowserRuntime {
       void this.resetAutomation(runtime);
     }
     runtime.contents = contents;
+    this.resolvePendingConnection(runtime, contents);
     const isCurrent = () => runtime.contents?.id === contents.id;
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
     const updateLocation = () => {
@@ -360,10 +467,7 @@ export class BrowserRuntime {
 
   async navigate(request: BrowserNavigateRequest): Promise<BrowserPageInfo> {
     const runtime = await this.resolvePage('', request.pageId, false);
-    const contents = runtime.contents;
-    if (!contents || contents.isDestroyed()) {
-      throw new BrowserRuntimeError('browser_no_page', '페이지가 아직 연결되지 않았습니다.');
-    }
+    const contents = await this.requireConnectedContents(runtime);
     if (request.action === 'goto') {
       const url = allowedBrowserUrl(request.url);
       if (!url)
@@ -399,11 +503,9 @@ export class BrowserRuntime {
         '페이지가 변경되어 snapshot ref가 만료되었습니다.',
       );
     }
-    if (!runtime.contents || runtime.contents.isDestroyed()) {
-      throw new BrowserRuntimeError('browser_no_page', '페이지가 아직 연결되지 않았습니다.');
-    }
+    const contents = await this.requireConnectedContents(runtime);
     if (!runtime.proxy) {
-      runtime.proxy = new CdpPageProxy(runtime.info.pageId, runtime.contents, () => {
+      runtime.proxy = new CdpPageProxy(runtime.info.pageId, contents, () => {
         runtime.info.generation += 1;
         this.emit();
       });
@@ -447,6 +549,7 @@ export class BrowserRuntime {
   async close(pageId: string): Promise<void> {
     const runtime = this.pages.get(pageId);
     if (!runtime) return;
+    this.rejectPendingConnection(runtime);
     this.pages.delete(pageId);
     await runtime.automationReset;
     await this.runner.cancelPage(pageId);
@@ -484,6 +587,7 @@ export class BrowserRuntime {
 
   async closeAll(): Promise<void> {
     const pages = [...this.pages.values()];
+    for (const runtime of pages) this.rejectPendingConnection(runtime);
     this.pages.clear();
     this.activeByWorkflow.clear();
     this.downloadPermit = null;

@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { BrowserPageInfo } from '../../../core/browser';
+import {
+  resolveBrowserAddress,
+  type BrowserAddressSearchConfig,
+  type BrowserPageInfo,
+} from '../../../core/browser';
 import { xgen } from '../bridge';
 import { useBrowserState } from '../browser-state';
 import {
@@ -22,8 +26,9 @@ export interface BrowserSurfaceRect {
 export const BrowserPane: React.FC<{
   workflowId: string;
   workflowName: string;
+  addressSearch?: BrowserAddressSearchConfig;
   onSurface: (pageId: string, rect: BrowserSurfaceRect | null) => void;
-}> = ({ workflowId, workflowName, onSurface }) => {
+}> = ({ workflowId, workflowName, addressSearch, onSurface }) => {
   const state = useBrowserState();
   const pages = useMemo(
     () => state.pages.filter((page) => page.workflowId === workflowId && page.mode === 'shared'),
@@ -32,6 +37,7 @@ export const BrowserPane: React.FC<{
   const preferred = state.activeByWorkflow[workflowId];
   const active = pages.find((page) => page.pageId === preferred) ?? pages[0] ?? null;
   const [address, setAddress] = useState(active?.url ?? '');
+  const [navigationError, setNavigationError] = useState('');
   const surfaceRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -39,7 +45,10 @@ export const BrowserPane: React.FC<{
     void xgen.browser.ensureShared(workflowId, workflowName);
   }, [state.enabled, pages.length, workflowId, workflowName]);
 
-  useEffect(() => setAddress(active?.url ?? ''), [active?.pageId, active?.url]);
+  useEffect(() => {
+    setAddress(active?.url ?? '');
+    setNavigationError('');
+  }, [active?.pageId, active?.url]);
 
   useEffect(() => {
     const element = surfaceRef.current;
@@ -65,9 +74,15 @@ export const BrowserPane: React.FC<{
   }, [active?.pageId, onSurface]);
 
   const navigate = useCallback(
-    (action: 'goto' | 'back' | 'forward' | 'reload' | 'stop', url?: string) => {
+    async (action: 'goto' | 'back' | 'forward' | 'reload' | 'stop', url?: string) => {
       if (!active) return;
-      void xgen.browser.navigate({ pageId: active.pageId, action, url }).catch(() => undefined);
+      setNavigationError('');
+      try {
+        await xgen.browser.navigate({ pageId: active.pageId, action, url });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        setNavigationError(detail || '페이지를 열지 못했습니다.');
+      }
     },
     [active],
   );
@@ -127,14 +142,23 @@ export const BrowserPane: React.FC<{
         className="browser-toolbar"
         onSubmit={(event) => {
           event.preventDefault();
-          navigate('goto', address);
+          const target = resolveBrowserAddress(address, addressSearch);
+          if (!target) {
+            setNavigationError(
+              addressSearch?.enabled
+                ? '올바른 http/https 주소 또는 검색어를 입력해 주세요.'
+                : '올바른 http/https 주소를 입력해 주세요. 주소창 검색은 설정에서 켤 수 있습니다.',
+            );
+            return;
+          }
+          void navigate('goto', target);
         }}
       >
         <button
           type="button"
           disabled={!active?.canGoBack}
           aria-label="뒤로"
-          onClick={() => navigate('back')}
+          onClick={() => void navigate('back')}
         >
           <BackIcon size={15} />
         </button>
@@ -142,25 +166,29 @@ export const BrowserPane: React.FC<{
           type="button"
           disabled={!active?.canGoForward}
           aria-label="앞으로"
-          onClick={() => navigate('forward')}
+          onClick={() => void navigate('forward')}
         >
           <ForwardIcon size={15} />
         </button>
         <button
           type="button"
           aria-label={active?.loading === 'loading' ? '중지' : '새로고침'}
-          onClick={() => navigate(active?.loading === 'loading' ? 'stop' : 'reload')}
+          onClick={() => void navigate(active?.loading === 'loading' ? 'stop' : 'reload')}
         >
           {active?.loading === 'loading' ? <StopIcon size={13} /> : <RefreshIcon size={15} />}
         </button>
         <input
           value={address}
-          onChange={(event) => setAddress(event.target.value)}
+          onChange={(event) => {
+            setAddress(event.target.value);
+            setNavigationError('');
+          }}
           aria-label="주소"
           spellCheck={false}
-          placeholder="URL 입력"
+          placeholder={addressSearch?.enabled ? 'URL 또는 검색어 입력' : 'URL 입력'}
         />
       </form>
+      {navigationError && <div className="browser-error">{navigationError}</div>}
       {active?.error && <div className="browser-error">{active.error}</div>}
       <div ref={surfaceRef} className="browser-surface-anchor">
         {!state.enabled && <div className="browser-empty">설정에서 브라우저 접근을 켜 주세요.</div>}
