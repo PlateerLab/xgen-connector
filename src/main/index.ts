@@ -85,6 +85,7 @@ import { createSsoWindowOptions } from './sso-window-options';
 import { getBrowserRuntime } from './browser-runtime';
 import { getBrowserToolProvider } from './browser-tools';
 import { allowedBrowserUrl } from './browser-security';
+import { systemMetricsSampler } from './system-metrics';
 
 const IS_LINUX = process.platform === 'linux';
 
@@ -1717,6 +1718,7 @@ ipcMain.handle(CHANNELS.updaterSetEnabled, (_e, enabled: boolean) => {
 });
 ipcMain.handle(CHANNELS.openExternal, (_e, url: string) => shell.openExternal(url));
 ipcMain.handle(CHANNELS.appVersion, () => app.getVersion());
+ipcMain.handle(CHANNELS.systemMetrics, () => systemMetricsSampler.sample());
 
 // ── IPC: floating avatar overlay ─────────────────────────────────
 ipcMain.handle(CHANNELS.overlayGetEnabled, () => !!loadConfig().avatarOverlay);

@@ -64,6 +64,7 @@ export const CHANNELS = {
   updaterSetEnabled: 'updater:setEnabled',
   updaterMessage: 'updater:message',
   appVersion: 'app:version',
+  systemMetrics: 'system:metrics',
 
   // Floating avatar overlay (Geny-style)
   overlayGetEnabled: 'overlay:getEnabled',
