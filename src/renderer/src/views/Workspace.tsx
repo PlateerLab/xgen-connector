@@ -14,6 +14,7 @@ import { ExplorerPanel } from './ExplorerPanel';
 import { TabBar } from './TabBar';
 import { BrowserPane, type BrowserSurfaceRect } from './BrowserPane';
 import { BrowserSurface } from './BrowserSurface';
+import { SystemMonitorFooter } from './SystemMonitorFooter';
 import { XgenMark } from '../brand/Logo';
 import { chatTabs } from './tab-model';
 import {
@@ -627,6 +628,7 @@ export const Workspace: React.FC<{
           ))}
         </div>
       </main>
+      <SystemMonitorFooter />
 
       {browserConnection ? (
         <div className="workspace-notice actionable" role="alert">

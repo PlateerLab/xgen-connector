@@ -21,6 +21,7 @@ import type {
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
 import type { ConnectorConfig, McpServerConfig } from '../main/config';
+import type { SystemMetrics } from '../core/system-metrics';
 import type {
   BrowserConnectionEvent,
   BrowserCreateRequest,
@@ -524,6 +525,10 @@ const api = {
     },
     /** The running app version (package.json). */
     getVersion: (): Promise<string> => ipcRenderer.invoke(CHANNELS.appVersion),
+  },
+
+  system: {
+    metrics: (): Promise<SystemMetrics> => ipcRenderer.invoke(CHANNELS.systemMetrics),
   },
 
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke(CHANNELS.openExternal, url),

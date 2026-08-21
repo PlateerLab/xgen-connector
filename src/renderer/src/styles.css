@@ -77,6 +77,7 @@
   /* Shared bar heights so the sidebar and chat columns align at top and bottom. */
   --header-h: 61px;
   --footer-h: 84px;
+  --system-footer-h: 26px;
 
   color-scheme: light;
 }
@@ -528,10 +529,103 @@ button {
 
 /* ─── Workspace layout — VS Code 식 3열: 액티비티 바 · 사이드바 · 메인 ─── */
 .workspace {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) var(--system-footer-h);
   height: 100%;
   overflow: hidden;
   background: var(--app-bg);
+}
+
+/* PC 리소스 모니터 — 브라우저 웹뷰 아래에 항상 남는 전역 상태 표시줄. */
+.system-monitor-footer {
+  position: relative;
+  z-index: 45;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  height: var(--system-footer-h);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  min-width: 0;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.system-monitor-state,
+.system-metric {
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+.system-monitor-state {
+  margin-right: auto;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.system-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 14%, transparent);
+}
+.system-monitor-state.offline .system-live-dot {
+  background: var(--error);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 14%, transparent);
+}
+.system-metric {
+  gap: 6px;
+  padding: 0 12px;
+  border-left: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+.system-metric-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.system-metric-value {
+  min-width: 28px;
+  color: var(--text-secondary);
+  font-weight: 650;
+}
+.system-meter {
+  width: 34px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--border);
+}
+.system-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary-grad);
+  transition: width 0.35s ease;
+}
+.system-network {
+  gap: 8px;
+  padding-right: 2px;
+}
+.system-network .system-metric-value {
+  min-width: 72px;
+}
+.network-down { color: var(--primary); }
+.network-up { color: var(--text-secondary); }
+
+@media (max-width: 940px) {
+  .system-monitor-footer { padding: 0 8px; }
+  .system-metric { padding: 0 8px; gap: 5px; }
+  .system-meter { display: none; }
+  .system-monitor-state > span:last-child { display: none; }
 }
 
 /* 액티비티 바 — 왼쪽 고정 48px 아이콘 스트립. */
@@ -1274,7 +1368,7 @@ button {
 .workspace-notice {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  bottom: calc(24px + var(--system-footer-h));
   z-index: 520;
   transform: translateX(-50%);
   max-width: min(480px, calc(100vw - 40px));
