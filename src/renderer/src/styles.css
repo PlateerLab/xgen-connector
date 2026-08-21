@@ -2471,6 +2471,91 @@ button {
   flex-direction: column;
   gap: 4px;
 }
+/* 설정 안 섹션 구분 제목 — 탭을 합칠 때 문단 경계를 만든다. */
+.settings-section-title {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* 숫자 + 단위 — 라벨 위/입력 아래의 공통 필드 결을 따른다. */
+.unit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.unit-row .unit {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 차단 명령 — 프리셋 줄 + 칩 목록 + 직접 입력. */
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.cmd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  min-height: 38px;
+}
+.cmd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 9px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.cmd-chip-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+.cmd-chip-x:hover {
+  background: var(--error-bg);
+  color: var(--error);
+}
+.cmd-add-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.cmd-add-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* MCP 임베드 — 모달 본문을 설정 탭 안에 그대로 얹는다. */
+.mcp-embed {
+  display: flex;
+  flex-direction: column;
+}
+
 /* 폴더 선택 행 — 경로 표시 + [폴더 선택…]. 타이핑 입력이 아니다. */
 .picker-row {
   display: flex;

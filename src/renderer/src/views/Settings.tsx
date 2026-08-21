@@ -16,22 +16,32 @@ import {
   FolderIcon,
   MonitorIcon,
   PlusIcon,
-  ServerIcon,
   SpeakerIcon,
 } from '../brand/icons';
 
 type Theme = NonNullable<ConnectorConfig['theme']>;
 
 // 비슷한 기능끼리 탭으로 묶는다 — 세로로만 길어지던 설정을 폭을 넓혀 분류한다.
-type Tab = 'connection' | 'general' | 'avatar' | 'browser' | 'local' | 'storage' | 'updates';
+// 업데이트는 일반의 한 섹션이고(따로 탭일 만큼 크지 않다), 옛 [로컬 도구]는
+// 성격이 다른 두 기능이 섞여 있어 [PC 컨트롤](셸·파일)과 [MCP]로 가른다.
+type Tab = 'connection' | 'general' | 'avatar' | 'browser' | 'pc' | 'mcp' | 'storage';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'connection', label: '연결' },
   { id: 'general', label: '일반' },
   { id: 'avatar', label: '아바타' },
   { id: 'browser', label: '브라우저' },
-  { id: 'local', label: '로컬 도구' },
+  { id: 'pc', label: 'PC 컨트롤' },
+  { id: 'mcp', label: 'MCP' },
   { id: 'storage', label: '스토리지' },
-  { id: 'updates', label: '업데이트' },
+];
+
+/** 차단 명령 프리셋 — 누르면 그 묶음이 목록에 추가된다 (첫 단어 기준 매칭). */
+const BLOCK_PRESETS: { label: string; cmds: string[] }[] = [
+  { label: '삭제', cmds: ['rm', 'rmdir', 'del'] },
+  { label: '전원·재부팅', cmds: ['shutdown', 'reboot', 'poweroff', 'halt'] },
+  { label: '디스크·포맷', cmds: ['format', 'mkfs', 'diskpart', 'fdisk', 'dd'] },
+  { label: '권한 상승', cmds: ['sudo', 'su', 'runas'] },
+  { label: '프로세스 종료', cmds: ['kill', 'killall', 'pkill', 'taskkill'] },
 ];
 
 export const Settings: React.FC<{
@@ -67,7 +77,11 @@ export const Settings: React.FC<{
   const [shellOn, setShellOn] = useState(ls.enabled === true);
   const [shellCwd, setShellCwd] = useState(ls.cwd ?? '');
   const [shellTimeoutS, setShellTimeoutS] = useState(Math.round((ls.timeoutMs ?? 120_000) / 1000));
-  const [shellBlocked, setShellBlocked] = useState((ls.blocked ?? []).join(', '));
+  // 차단 명령 — 칩 목록 + 프리셋(누르면 추가) + 직접 입력. 첫 단어 기준 매칭.
+  const [shellBlocked, setShellBlocked] = useState<string[]>(
+    (ls.blocked ?? []).map((b) => String(b).trim()).filter(Boolean),
+  );
+  const [blockedDraft, setBlockedDraft] = useState('');
   // 파일 도구(ReadFile/WriteFile/ListDir/Search)가 접근할 수 있는 폴더 목록.
   // 비우면 홈 폴더로 제한된다. 손 타이핑이 아니라 [+ 폴더 추가]의 네이티브
   // 선택기로만 늘어난다 — 오타 하나로 스코프가 빗나가는 일을 없앤다.
@@ -91,7 +105,6 @@ export const Settings: React.FC<{
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [showMcp, setShowMcp] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
 
   // Any status message means the check is underway/done → drop the button spinner
@@ -141,17 +154,14 @@ export const Settings: React.FC<{
       enabled: boolean;
       cwd: string;
       timeoutS: number;
-      blocked: string;
+      blocked: string[];
       roots: string[];
     }> = {},
   ) => {
     const enabled = over.enabled ?? shellOn;
     const cwd = (over.cwd ?? shellCwd).trim();
     const timeoutS = Math.max(1, Math.round(over.timeoutS ?? shellTimeoutS));
-    const blocked = (over.blocked ?? shellBlocked)
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const blocked = (over.blocked ?? shellBlocked).map((s) => s.trim()).filter(Boolean);
     const allowedRoots = (over.roots ?? shellRoots).map((s) => s.trim()).filter(Boolean);
     void apply({
       localShell: {
@@ -163,6 +173,27 @@ export const Settings: React.FC<{
       },
     });
   };
+
+  /** 차단 목록에 명령들을 얹는다 (중복 무시, 소문자 정규화). */
+  const addBlocked = (cmds: string[]) => {
+    const clean = cmds.map((c) => c.trim().toLowerCase()).filter(Boolean);
+    const next = [...shellBlocked];
+    for (const c of clean) if (!next.includes(c)) next.push(c);
+    if (next.length === shellBlocked.length) return;
+    setShellBlocked(next);
+    commitShell({ blocked: next });
+  };
+  const removeBlocked = (idx: number) => {
+    const next = shellBlocked.filter((_, i) => i !== idx);
+    setShellBlocked(next);
+    commitShell({ blocked: next });
+  };
+  const addBlockedDraft = () => {
+    // 쉼표/공백으로 여러 개를 한 번에 받아도 흡수한다.
+    addBlocked(blockedDraft.split(/[\s,]+/));
+    setBlockedDraft('');
+  };
+  const presetAdded = (p: { cmds: string[] }) => p.cmds.every((c) => shellBlocked.includes(c));
 
   /** 기본 작업 폴더 — 네이티브 선택기로 고른다 (타이핑 금지). */
   const pickShellCwd = async () => {
@@ -258,7 +289,6 @@ export const Settings: React.FC<{
     setTimeout(() => setSaved(false), 1500);
   };
 
-  if (showMcp) return <McpSettings onClose={() => setShowMcp(false)} />;
   if (showVoice) return <VoiceSettings onClose={() => setShowVoice(false)} />;
 
   return (
@@ -676,7 +706,8 @@ export const Settings: React.FC<{
           )}
 
           {/* ─── 로컬 도구 ─── */}
-          {tab === 'local' && (
+          {/* ─── PC 컨트롤 (셸·파일 — 에이전트가 이 PC 를 다룬다) ─── */}
+          {tab === 'pc' && (
             <>
               <div className="tool-card">
                 <div className="tool-card-main">
@@ -730,31 +761,6 @@ export const Settings: React.FC<{
                         씁니다. (스토리지 탭에서 에이전트 연결)
                       </span>
                     </div>
-                    <div className="field-row">
-                      <span>
-                        명령 시간 제한 <span className="small muted">(초)</span>
-                      </span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={3600}
-                        className="num-input"
-                        value={shellTimeoutS}
-                        onChange={(e) => setShellTimeoutS(Number(e.target.value) || 120)}
-                        onBlur={() => commitShell()}
-                      />
-                    </div>
-                    <label className="field">
-                      <span>
-                        차단할 명령 <span className="small muted">(쉼표로 구분, 첫 단어 기준)</span>
-                      </span>
-                      <input
-                        value={shellBlocked}
-                        placeholder="예: rm, shutdown, format"
-                        onChange={(e) => setShellBlocked(e.target.value)}
-                        onBlur={() => commitShell()}
-                      />
-                    </label>
                     <div className="field">
                       <span>
                         허용 폴더 <span className="small muted">(파일 도구 접근 범위)</span>
@@ -793,6 +799,81 @@ export const Settings: React.FC<{
                         </span>
                       )}
                     </div>
+                    <div className="field">
+                      <span>
+                        차단할 명령{' '}
+                        <span className="small muted">(첫 단어 기준 — 편의용 가드)</span>
+                      </span>
+                      {/* 프리셋 — 누르면 그 묶음이 아래 목록에 추가된다. 전부
+                          이미 있으면 ✓ 로 표시하고 다시 눌러도 변화 없다. */}
+                      <div className="preset-row">
+                        {BLOCK_PRESETS.map((p) => {
+                          const added = presetAdded(p);
+                          return (
+                            <button
+                              key={p.label}
+                              className={`chip ${added ? 'active' : ''}`}
+                              title={p.cmds.join(', ')}
+                              onClick={() => addBlocked(p.cmds)}
+                            >
+                              {added ? '✓ ' : '+ '}
+                              {p.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="cmd-chips">
+                        {shellBlocked.length === 0 && (
+                          <span className="small muted">차단하는 명령이 없습니다.</span>
+                        )}
+                        {shellBlocked.map((c, i) => (
+                          <span className="cmd-chip" key={c}>
+                            {c}
+                            <button
+                              className="cmd-chip-x"
+                              title="차단 해제"
+                              onClick={() => removeBlocked(i)}
+                            >
+                              <CloseIcon size={11} />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="cmd-add-row">
+                        <input
+                          value={blockedDraft}
+                          placeholder="직접 입력 (쉼표/공백으로 여러 개)"
+                          onChange={(e) => setBlockedDraft(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addBlockedDraft()}
+                        />
+                        <button
+                          className="secondary"
+                          disabled={!blockedDraft.trim()}
+                          onClick={addBlockedDraft}
+                        >
+                          추가
+                        </button>
+                      </div>
+                    </div>
+                    <div className="field">
+                      <span>명령 시간 제한</span>
+                      <div className="unit-row">
+                        <input
+                          type="number"
+                          min={1}
+                          max={3600}
+                          className="num-input"
+                          value={shellTimeoutS}
+                          onChange={(e) => setShellTimeoutS(Number(e.target.value) || 120)}
+                          onBlur={() => commitShell()}
+                        />
+                        <span className="unit">초</span>
+                      </div>
+                      <span className="small muted" style={{ marginTop: 4 }}>
+                        한 명령이 이 시간을 넘으면 중단됩니다. background 실행(ShellJob)은 제한을
+                        받지 않습니다.
+                      </span>
+                    </div>
                     <p className="settings-hint warn">
                       ⚠ 켜면 파일 읽기/쓰기·목록·검색·클립보드·알림 도구와 셸이 에이전트에
                       노출됩니다. 셸은 로그인 사용자 권한으로 실행되며, 되돌리기 어려운 명령(rm -rf
@@ -802,25 +883,11 @@ export const Settings: React.FC<{
                   </div>
                 )}
               </div>
-
-              <div className="tool-card">
-                <div className="tool-card-main">
-                  <span className="tool-card-icon">
-                    <ServerIcon size={18} />
-                  </span>
-                  <div className="tool-card-text">
-                    <div className="tool-card-title">로컬 MCP</div>
-                    <div className="tool-card-desc">
-                      내 PC 에서 호스팅하는 MCP 서버의 도구를 에이전트에 연결합니다.
-                    </div>
-                  </div>
-                  <button className="secondary" onClick={() => setShowMcp(true)}>
-                    관리
-                  </button>
-                </div>
-              </div>
             </>
           )}
+
+          {/* ─── MCP — 내 PC 에서 호스팅하는 MCP 서버 관리 (임베드) ─── */}
+          {tab === 'mcp' && <McpSettings embedded onClose={() => undefined} />}
 
           {/* ─── 스토리지 ─── */}
           {/* 예전에는 카드 + [관리] 버튼을 한 번 더 눌러야 전체 설정이 떴다.
@@ -828,9 +895,10 @@ export const Settings: React.FC<{
               임베드해 한 단계 클릭을 없앤다. */}
           {tab === 'storage' && <SyncSettings embedded />}
 
-          {/* ─── 업데이트 ─── */}
-          {tab === 'updates' && (
+          {/* ─── 업데이트 — 일반 탭의 한 섹션 (따로 탭일 만큼 크지 않다) ─── */}
+          {tab === 'general' && (
             <>
+              <div className="settings-section-title">업데이트</div>
               <div className="field-row">
                 <span>
                   업데이트 서버
