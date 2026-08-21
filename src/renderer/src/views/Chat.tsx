@@ -24,7 +24,18 @@ import { Markdown } from './Markdown';
 import { ToolLogModal } from './ToolLogModal';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
-import { ChatIcon, CloseIcon, DocIcon, MicIcon, MonitorIcon, PanelLeftIcon, PlusIcon, SendIcon, SpeakerIcon, SpeakerOffIcon, StopIcon } from '../brand/icons';
+import {
+  ChatIcon,
+  CloseIcon,
+  DocIcon,
+  MicIcon,
+  MonitorIcon,
+  PlusIcon,
+  SendIcon,
+  SpeakerIcon,
+  SpeakerOffIcon,
+  StopIcon,
+} from '../brand/icons';
 
 /** 도구 활동 표시 — **한 번에 하나**만 보여주고 다음 것으로 스르륵 교체된다.
  *
@@ -44,7 +55,10 @@ interface ToolSlot {
   ev: ToolEvent;
 }
 
-const ToolActivity: React.FC<{ events: ToolEvent[]; streaming: boolean }> = ({ events, streaming }) => {
+const ToolActivity: React.FC<{ events: ToolEvent[]; streaming: boolean }> = ({
+  events,
+  streaming,
+}) => {
   // 연속 동일 도구 이벤트를 한 단계로 접는다 (마지막 상태만 유지).
   const steps = useMemo(() => collapseToolSteps(events), [events]);
 
@@ -58,7 +72,10 @@ const ToolActivity: React.FC<{ events: ToolEvent[]; streaming: boolean }> = ({ e
   // 밀린 단계 전진 — 많이 밀렸으면 최신으로 점프 (여러 도구를 빠르게 쓰면 슥 지나감).
   useEffect(() => {
     if (!steps.length) return;
-    if (idx > steps.length - 1) { setIdx(steps.length - 1); return; }
+    if (idx > steps.length - 1) {
+      setIdx(steps.length - 1);
+      return;
+    }
     if (idx === steps.length - 1) return;
     const t = setTimeout(() => setIdx((i) => nextToolIndex(i, steps.length)), TOOL_STEP_MS);
     return () => clearTimeout(t);
@@ -100,7 +117,9 @@ const ToolActivity: React.FC<{ events: ToolEvent[]; streaming: boolean }> = ({ e
     >
       <span className="tname">{slot.ev.toolName ?? 'tool'}</span>
       {!leaving && steps.length > 1 && (
-        <span className="tstep">{Math.min(slot.key + 1, steps.length)}/{steps.length}</span>
+        <span className="tstep">
+          {Math.min(slot.key + 1, steps.length)}/{steps.length}
+        </span>
       )}
     </span>
   );
@@ -143,10 +162,8 @@ const AGENT_KIND: Record<string, string> = { canvas: 'Canvas', harness: 'Harness
 
 export const Chat: React.FC<{
   session: SessionState;
-  collapsed?: boolean;
   mcpDebug?: boolean;
-  onExpandSidebar?: () => void;
-}> = ({ session, collapsed, mcpDebug = false, onExpandSidebar }) => {
+}> = ({ session, mcpDebug = false }) => {
   const { agent } = session;
   const messages = session.messages;
   const streaming = session.streaming;
@@ -370,7 +387,8 @@ export const Chat: React.FC<{
       //
       // 실패해도 대화를 막지 않는다 — 캡처는 덤이고, 못 찍었다고 사용자의 질문이
       // 사라지면 그게 더 나쁘다. 대신 **조용히 넘어가지 않고** 이유를 남긴다.
-      let shot: { dataUrl?: string; sourceName?: string; width?: number; height?: number } | null = null;
+      let shot: { dataUrl?: string; sourceName?: string; width?: number; height?: number } | null =
+        null;
       if (screenCaptureOn) {
         try {
           const r = await xgen.capture.screen();
@@ -485,7 +503,8 @@ export const Chat: React.FC<{
       setLocalVoice({ input: cfg.voiceInput !== false, output: cfg.voiceOutput !== false });
       volumeRef.current = typeof cfg.voiceVolume === 'number' ? cfg.voiceVolume : 100;
       // 재생 중에도 즉시 반영
-      if (gainRef.current) gainRef.current.gain.value = Math.max(0, Math.min(300, volumeRef.current)) / 100;
+      if (gainRef.current)
+        gainRef.current.gain.value = Math.max(0, Math.min(300, volumeRef.current)) / 100;
     });
     return () => {
       alive = false;
@@ -582,15 +601,6 @@ export const Chat: React.FC<{
     <div className="chat">
       <div className="chat-header">
         <div className="chat-title">
-          {collapsed && (
-            <button
-              className="icon-btn sidebar-toggle"
-              title="사이드바 펼치기"
-              onClick={onExpandSidebar}
-            >
-              <PanelLeftIcon size={18} />
-            </button>
-          )}
           <span className="agent-mark">
             <XgenMark height={18} variant="color" />
           </span>
@@ -628,7 +638,11 @@ export const Chat: React.FC<{
               {muted ? <SpeakerOffIcon size={15} /> : <SpeakerIcon size={15} />}
             </button>
           )}
-          <button className="secondary end-chat" onClick={endChat} title="이 대화를 종료하고 목록으로 돌아갑니다">
+          <button
+            className="secondary end-chat"
+            onClick={endChat}
+            title="이 대화를 종료하고 목록으로 돌아갑니다"
+          >
             <CloseIcon size={14} /> 채팅 종료
           </button>
           <button className="secondary" onClick={newConversation}>
@@ -662,7 +676,10 @@ export const Chat: React.FC<{
           ) : (
             <div className="mcp-runtime-log-list">
               {[...mcpLogs].reverse().map((entry) => (
-                <div className={`mcp-runtime-log-entry ${entry.ok === false ? 'error' : ''}`} key={entry.id}>
+                <div
+                  className={`mcp-runtime-log-entry ${entry.ok === false ? 'error' : ''}`}
+                  key={entry.id}
+                >
                   <time>{new Date(entry.timestamp).toLocaleTimeString()}</time>
                   <span className="mcp-runtime-log-kind">{entry.kind}</span>
                   <span className="mcp-runtime-log-message">

@@ -526,59 +526,187 @@ button {
   white-space: nowrap;
 }
 
-/* ─── Workspace layout ─── */
+/* ─── Workspace layout — VS Code 식 3열: 액티비티 바 · 사이드바 · 메인 ─── */
 .workspace {
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  /* minmax(0, 1fr): 그리드 행의 기본 min-height:auto 는 내용(긴 채팅 로그)
-     만큼 행을 늘려 100vh 를 넘겨 버린다 — 행을 뷰포트에 고정해 내부
-     컨테이너(.chat-log)만 스크롤되게 한다. */
-  grid-template-rows: minmax(0, 1fr);
+  display: flex;
   height: 100%;
   overflow: hidden;
   background: var(--app-bg);
 }
-.workspace.collapsed {
-  grid-template-columns: 1fr;
+
+/* 액티비티 바 — 왼쪽 고정 48px 아이콘 스트립. */
+.activity-bar {
+  width: 48px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0 12px;
 }
+.ab-logo {
+  display: flex;
+  margin-bottom: 10px;
+}
+.ab-top {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ab-bottom {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ab-btn {
+  position: relative;
+  width: 100%;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+.ab-btn:hover {
+  color: var(--text);
+}
+.ab-btn.active,
+.ab-btn.on {
+  color: var(--primary);
+}
+/* 활성 뷰 표시 — 패널을 향한 모서리의 2px 바 (VS Code 관용구). */
+.ab-ind {
+  position: absolute;
+  left: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 2px;
+  background: var(--primary-grad);
+  border-radius: 0 2px 2px 0;
+}
+.ab-account {
+  position: relative;
+  margin-top: 8px;
+}
+.ab-badge {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+  border: none;
+  cursor: pointer;
+}
+.ab-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.ab-menu {
+  position: absolute;
+  left: 42px;
+  bottom: 0;
+  z-index: 61;
+  min-width: 168px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+}
+.ab-menu-name {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ab-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+.ab-menu-item:hover {
+  background: var(--panel-2);
+}
+
+/* 사이드바 — 액티비티 바가 뷰를 바꾸고, 접히면 통째로 사라진다(마운트는 유지). */
 .sidebar {
+  position: relative;
+  flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--panel);
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-.sidebar-head {
-  height: var(--header-h);
-  padding: 0 12px 0 16px;
+.sidebar.hidden {
+  display: none;
+}
+.panel-host,
+.side-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 리사이즈 핸들 — 드래그 중에는 DOM 폭에만 쓰고 놓을 때 커밋한다. */
+.sidebar-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+.sidebar-resize:hover,
+.sidebar-resize:active {
+  background: var(--primary-soft-border);
+}
+/* 패널 제목 줄 — VS Code 사이드바 타이틀(작은 대문자). */
+.sidebar-title {
+  height: 36px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  padding: 0 8px 0 16px;
 }
-.sidebar-head-actions {
+.sidebar-title-text {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sidebar-title-actions {
   display: flex;
   align-items: center;
   gap: 2px;
 }
-.brand-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text);
-}
-.brand-tag {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
-  letter-spacing: 0.02em;
-  padding-top: 3px;
-}
-.account {
-  display: flex;
-  gap: 10px;
-  align-items: center;
+.icon-btn.sm {
+  padding: 4px;
 }
 .avatar-badge {
   width: 30px;
@@ -612,32 +740,6 @@ button {
 .icon-btn.active {
   background: var(--primary-soft);
   color: var(--primary);
-}
-
-/* Tabs: 에이전트 / 대화 기록 */
-.side-tabs {
-  display: flex;
-  padding: 8px 12px 0;
-  gap: 4px;
-}
-.side-tab {
-  flex: 1;
-  border: none;
-  background: none;
-  padding: 9px 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: color 0.12s ease, border-color 0.12s ease;
-}
-.side-tab:hover {
-  color: var(--text);
-}
-.side-tab.active {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
 }
 
 .sidebar-search {
@@ -850,67 +952,6 @@ button {
   color: #fff;
 }
 
-/* "진행 중인 대화" strip on the agent list (level 1). */
-.open-sessions {
-  padding: 4px 8px 6px;
-  border-bottom: 1px solid var(--border-soft);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 34vh;
-  overflow-y: auto;
-}
-.open-item {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  text-align: left;
-  border: none;
-  border-radius: var(--radius-md);
-  padding: 8px 9px;
-  cursor: pointer;
-  color: var(--text);
-  background: none;
-  transition: background-color 0.12s ease;
-}
-.open-item:hover {
-  background: var(--panel-2);
-}
-.open-item.active {
-  background: var(--primary-soft);
-}
-.open-body {
-  min-width: 0;
-  flex: 1;
-}
-.open-name {
-  font-weight: 600;
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.open-meta {
-  margin-top: 1px;
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.open-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--gray-300, #cbd2dc);
-  flex-shrink: 0;
-}
-.open-dot.live {
-  background: var(--success);
-  animation: livePulse 1.4s ease-in-out infinite;
-}
-
 /* Streaming/open marker (live-dot inside a name, agent-live on the agent row). */
 .live-dot {
   display: inline-block;
@@ -954,7 +995,6 @@ button {
   opacity: 0;
   transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
 }
-.open-item:hover .conv-end,
 .conv-item:hover .conv-end {
   opacity: 1;
 }
@@ -983,26 +1023,305 @@ button {
   opacity: 0.4;
   cursor: default;
 }
-/* Compact account/logout row — sized to the chat composer's send-button scale
-   (not the full --footer-h), so the bottom of the sidebar reads as a light
-   account strip rather than a tall empty band. */
-.sidebar-foot {
-  height: 56px;
-  flex-shrink: 0;
-  padding: 0 12px;
-  border-top: 1px solid var(--border);
+/* ─── 탐색기 (사이드바 [탐색기] 뷰) ─── */
+.explorer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+/* 섹션 헤더 — [XgenCloud], [<에이전트>]. 접기 가능. */
+.section-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 5px 8px 5px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: left;
+  min-width: 0;
+}
+.section-head:hover {
+  background: var(--panel-2);
+}
+.section-icon {
+  display: flex;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.section-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.section-loading {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--warning);
+  margin-left: 6px;
+  flex-shrink: 0;
+  animation: livePulse 1.4s ease-in-out infinite;
+}
+.section-body {
+  padding: 1px 0 4px;
+}
+/* 트리 행 — 들여쓰기는 인라인 padding-left (depth × 14 + 8). */
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  padding-right: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+  min-width: 0;
+}
+.tree-row:hover {
+  background: var(--panel-2);
+}
+.tree-row.selected {
+  background: var(--primary-soft);
+}
+.tree-row.muted {
+  color: var(--muted);
+  cursor: default;
+  font-size: 12px;
+}
+.tree-row.muted:hover {
+  background: none;
+}
+.tree-chevron {
+  width: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  transition: transform 0.1s ease;
+}
+.tree-chevron.open {
+  transform: rotate(90deg);
+}
+.tree-icon {
+  display: flex;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-size {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+/* 드라이브가 안 서는 사유 + 조치 버튼. */
+.explorer-notice {
+  margin: 10px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.explorer-notice p {
+  margin: 0;
+}
+.explorer-notice.error-tone {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+}
+.primary-sm {
+  align-self: flex-start;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.primary-sm:hover {
+  filter: brightness(1.06);
+}
+/* 마운트 상태 푸터 — 경로는 뒤가 중요하니 앞을 …로 줄인다. */
+.explorer-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.mount-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--gray-400);
+  flex-shrink: 0;
+}
+.mount-dot.on {
+  background: var(--success);
+}
+/* 앞부분 말줄임 — rtl 방향 + plaintext 로 표시 순서는 그대로 둔다.
+   (나중에 "연결된 폴더" 경로 헤더에도 그대로 쓴다.) */
+.path-ellipsis {
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+  min-width: 0;
 }
 
 /* ─── Main pane / welcome ─── */
 .main-pane {
+  flex: 1;
   min-width: 0;
-  min-height: 0; /* 그리드 아이템이 내용만큼 늘어나 창을 밀어내지 않도록 */
+  min-height: 0; /* 내용(긴 채팅 로그)이 창을 밀어내지 않도록 */
   display: flex;
   flex-direction: column;
   background: var(--app-bg);
+}
+.pane-fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── 메인 영역 탭 줄 (VS Code 식) ─── */
+.tab-strip {
+  height: 38px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  background: var(--app-bg);
+  border-bottom: 1px solid var(--border);
+}
+.tab-strip-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none; /* 좁은 줄에서 가로 스크롤바가 탭을 가린다 */
+}
+.tab-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+  min-width: 120px;
+  max-width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12.5px;
+  user-select: none;
+}
+.tab-item:hover {
+  color: var(--text);
+}
+.tab-item.active {
+  background: var(--panel);
+  color: var(--text);
+}
+.tab-item.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--primary-grad);
+}
+.tab-icon {
+  display: flex;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.tab-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 닫기 ✕ — 스트리밍 중엔 라이브 점이 대신 앉고, 올리면 ✕ 로 바뀐다. */
+.tab-close {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+.tab-close:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.tab-close-x {
+  display: flex;
+}
+.tab-close.live .tab-close-x {
+  display: none;
+}
+.tab-close.live:hover .tab-close-x {
+  display: flex;
+}
+.tab-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--success);
+  animation: livePulse 1.4s ease-in-out infinite;
+}
+.tab-close.live:hover .tab-live-dot {
+  display: none;
+}
+.tab-new {
+  width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tab-new:hover {
+  color: var(--text);
+  background: var(--panel-2);
 }
 .welcome {
   flex: 1;
@@ -1030,7 +1349,7 @@ button {
 .chat {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1; /* 탭 줄 아래 남은 공간을 채운다 — height:100% 는 탭 줄만큼 넘친다 */
   min-height: 0;
   position: relative;
 }
@@ -1050,9 +1369,6 @@ button {
   align-items: center;
   gap: 10px;
   min-width: 0;
-}
-.sidebar-toggle {
-  flex-shrink: 0;
 }
 .chat-title .agent-mark {
   width: 36px;
@@ -2599,6 +2915,7 @@ button {
 .avset {
   display: flex;
   flex-direction: column;
+  flex: 1; /* .pane-fill(탭 콘텐츠) 안에서 남은 높이를 채운다 */
   height: 100%;
   min-height: 0;
 }

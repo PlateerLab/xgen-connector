@@ -205,3 +205,34 @@ export const CopyIcon: React.FC<P> = ({ size = 16, className }) => (
     <path d="M5 15V5a2 2 0 0 1 2-2h10" />
   </svg>
 );
+
+/** 탐색기(액티비티 바) — 겹친 문서 두 장, VS Code 의 Explorer 관용구. */
+export const FilesIcon: React.FC<P> = ({ size = 18, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M15 2H9a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6Z" />
+    <path d="M15 2v4h4" />
+    <path d="M5 8H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-1" />
+  </svg>
+);
+export const FolderIcon: React.FC<P> = ({ size = 15, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+  </svg>
+);
+export const FolderOpenIcon: React.FC<P> = ({ size = 15, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+  </svg>
+);
+/** 트리 펼침 셰브런 — 펼치면 CSS 로 90° 돌린다. */
+export const ChevronRightIcon: React.FC<P> = ({ size = 14, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="m9 18 6-6-6-6" />
+  </svg>
+);
+/** XgenCloud 섹션 — 클라우드 스토리지. */
+export const CloudIcon: React.FC<P> = ({ size = 15, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+  </svg>
+);
