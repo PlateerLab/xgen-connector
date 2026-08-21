@@ -2480,17 +2480,20 @@ button {
   background: var(--app-bg);
 }
 .settings-page-inner {
-  max-width: 880px;
-  margin: 0 auto;
-  padding: 20px 28px 40px;
+  /* 넓게 쓴다 — 좁은/중간 창에서는 폭을 꽉 채우고, 초광폭 모니터에서만
+     상한(1240px)에 걸려 **좌측 정렬로 남는 공간을 오른쪽에 둔다**
+     (가운데로 몰면 양옆이 다 비어 낭비다). */
+  max-width: 1240px;
+  margin: 0;
+  padding: 20px 40px 44px;
 }
 .settings-page .settings-tabs {
   position: sticky;
   top: 0;
   z-index: 5;
   background: var(--app-bg);
-  margin: -20px -28px 14px;
-  padding: 12px 28px 0;
+  margin: -20px -40px 14px;
+  padding: 12px 40px 0;
   border-bottom: 1px solid var(--border);
 }
 
