@@ -127,6 +127,17 @@ export interface WorkspaceStatus {
    * 든다. 서버 문구를 그대로 실어 무엇을 켜야 하는지 알린다.
    */
   storageOff?: string
+  /**
+   * RAG 시스템 통제 — 이 PC 의 클라우드 연결(cloud.device_link)이 관리자
+   * **승인 대기중/거절** 상태. 서버가 403 사유에 실어 준다.
+   *
+   * storageOff("꺼짐")와 구분한다 — 대기는 관리자가 승인하면 저절로 풀리는
+   * 상태라, "권한을 확인하라"는 안내가 오히려 사용자를 헤매게 한다.
+   * 에이전트 폴더 동기화는 이 상태와 무관하게 동작한다.
+   */
+  cloudApproval?: 'pending' | 'rejected'
+  /** 서버가 준 사유 원문 (표시용). */
+  cloudApprovalDetail?: string
   agents: Array<{ workflowId: string; label: string; folder: string }>
 }
 
@@ -161,6 +172,8 @@ export class WorkspaceManager {
   private lastHint: string | undefined
   /** 클라우드 스토리지가 꺼져 있을 때의 사유 (오류가 아니다). */
   private storageOff: string | undefined
+  private cloudApproval: 'pending' | 'rejected' | undefined
+  private cloudApprovalDetail: string | undefined
   private needsReconnect = false
   /** 클라우드 안 이 PC 의 폴더 이름. 서버가 정한다 — 모르면 빈 문자열. */
   private homeFolder = ''
@@ -202,7 +215,7 @@ export class WorkspaceManager {
       wants && this.mountedPath === null && this.support.supported && !this.inFlight
         ? '드라이브를 연결하지 못했습니다 (원인 미상 — 진단 로그를 확인하세요)'
         : undefined
-    const error = this.lastError ?? (this.storageOff ? undefined : unexplained)
+    const error = this.lastError ?? (this.storageOff || this.cloudApproval ? undefined : unexplained)
     return {
       supported: this.support.supported,
       reason: this.support.reason,
@@ -214,6 +227,8 @@ export class WorkspaceManager {
       error,
       errorHint: this.lastHint,
       storageOff: this.storageOff,
+      cloudApproval: this.cloudApproval,
+      cloudApprovalDetail: this.cloudApprovalDetail,
       needsReconnect: this.needsReconnect,
       reconnectReason: this.reconnectReason,
       homeFolder: this.homeFolder || undefined,
@@ -318,19 +333,46 @@ export class WorkspaceManager {
   private async probeUserStorage(api: WorkspaceApi | null): Promise<WorkspaceApi | null> {
     if (!api) {
       this.storageOff = undefined
+      this.cloudApproval = undefined
+      this.cloudApprovalDetail = undefined
       return null
     }
     try {
       await api.changes(0)
       this.storageOff = undefined
+      this.cloudApproval = undefined
+      this.cloudApprovalDetail = undefined
       await this.checkReconnect(api)
       return api
     } catch (e) {
       const status = (e as { status?: number }).status
       if (status === 403) {
         const why = (e as Error).message || '클라우드 스토리지가 꺼져 있습니다'
+        // RAG 시스템 통제 — 관리자 승인 게이트의 403 은 "꺼짐"이 아니라
+        // **대기/거절**이다. 서버 detail 문구로 판별한다 (게이트의 문구:
+        // "관리자 승인 대기 중" / "관리자에 의해 거절"). 원문에서
+        // "changes HTTP 403:" 접두는 표시용으로 걷어낸다.
+        const detail = why.replace(/^.*HTTP\s*403:\s*/, '').trim() || why
+        if (why.includes('승인 대기')) {
+          if (this.cloudApproval !== 'pending')
+            diag('workspace', `클라우드 연결 승인 대기중: ${detail}`)
+          this.cloudApproval = 'pending'
+          this.cloudApprovalDetail = detail
+          this.storageOff = undefined
+          return null
+        }
+        if (why.includes('거절')) {
+          if (this.cloudApproval !== 'rejected')
+            diag('workspace', `클라우드 연결 거절됨: ${detail}`)
+          this.cloudApproval = 'rejected'
+          this.cloudApprovalDetail = detail
+          this.storageOff = undefined
+          return null
+        }
         if (this.storageOff !== why) diag('workspace', `사용자 클라우드 스토리지 꺼짐: ${why}`)
         this.storageOff = why
+        this.cloudApproval = undefined
+        this.cloudApprovalDetail = undefined
         return null
       }
       // 일시적 실패 — 백엔드의 트리 캐시가 알아서 버틴다.
@@ -669,6 +711,8 @@ export class WorkspaceManager {
         mounted: false,
         error: this.lastError,
         storageOff: this.storageOff,
+      cloudApproval: this.cloudApproval,
+      cloudApprovalDetail: this.cloudApprovalDetail,
         agents: [],
       })
       return

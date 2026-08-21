@@ -114,9 +114,16 @@ export const SyncSettings: React.FC<{ onClose?: () => void; embedded?: boolean }
               <div className="row" style={{ justifyContent: 'space-between' }}>
                 <span style={{ fontWeight: 600 }}>
                   위치
-                  {ws?.mounted && (
+                  {/* 승인 대기/거절은 '연결됨'보다 우선해 보여준다 — 드라이브가
+                      (에이전트 폴더로) 마운트돼 있어도 내 클라우드는 아직 잠겨
+                      있다는 사실이 한눈에 보여야 한다. */}
+                  {ws?.cloudApproval === 'pending' ? (
+                    <span className="small notice-warn" style={{ marginLeft: 8 }}>승인 대기중</span>
+                  ) : ws?.cloudApproval === 'rejected' ? (
+                    <span className="small error" style={{ marginLeft: 8 }}>연결 거절됨</span>
+                  ) : ws?.mounted ? (
                     <span className="small notice-ok" style={{ marginLeft: 8 }}>연결됨</span>
-                  )}
+                  ) : null}
                 </span>
                 <div className="row" style={{ gap: 8 }}>
                   {ws?.mounted && (
@@ -197,6 +204,28 @@ export const SyncSettings: React.FC<{ onClose?: () => void; embedded?: boolean }
                   보여주면 사용자는 파일이 사라진 줄 안다. 다만 "켜라"고 하지
                   않는다. 지금 막히는 경우는 권한 문제이고, 그건 관리자의 일이다.
               */}
+              {/* RAG 시스템 통제 — 관리자 승인 게이트. '꺼짐'(storageOff)과 다르다:
+                  대기는 관리자가 승인하면 저절로 풀리고, 사용자가 할 일은 기다림
+                  (또는 관리자 문의)뿐이다. 권한 안내로 보내면 헤맨다. */}
+              {ws?.cloudApproval === 'pending' && (
+                <div className="small" style={{ marginTop: 4 }}>
+                  <div className="notice-warn">클라우드 연결이 관리자 승인 대기중입니다</div>
+                  <div className="muted" style={{ marginTop: 2 }}>
+                    관리자가 [승인 관리]에서 이 PC 의 연결을 승인하면 내 클라우드 폴더
+                    동기화가 자동으로 시작됩니다. 에이전트 폴더는 승인과 무관하게 그대로
+                    동작합니다.
+                  </div>
+                </div>
+              )}
+              {ws?.cloudApproval === 'rejected' && (
+                <div className="small" style={{ marginTop: 4 }}>
+                  <div className="error">클라우드 연결이 관리자에 의해 거절되었습니다</div>
+                  <div className="muted" style={{ marginTop: 2 }}>
+                    {ws.cloudApprovalDetail || '이 PC 의 클라우드 연결 요청이 거절되었습니다.'}{' '}
+                    필요하면 관리자에게 문의해 주세요. 에이전트 폴더는 그대로 동작합니다.
+                  </div>
+                </div>
+              )}
               {ws?.storageOff && (
                 <div className="small muted" style={{ marginTop: 4 }}>
                   <div>내 클라우드 폴더를 열 수 없습니다: {ws.storageOff}</div>

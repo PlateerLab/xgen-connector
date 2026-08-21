@@ -311,3 +311,54 @@ test('꺼져 있는 것은 실패로 보고하지 않는다', async () => {
   assert.ok(s.storageOff, '꺼짐 사유가 없다')
   assert.equal(s.error, undefined, '꺼진 것을 오류로 표시했다')
 })
+
+// ── RAG 시스템 통제 — 승인 게이트 403 은 '꺼짐'이 아니라 '대기/거절'이다 ──
+//
+// 서버 게이트(_device_link_blocked_reason)의 403 사유 문구를 그대로 분류한다.
+// 대기를 storageOff 로 흘리면 "권한을 확인하라"는 엉뚱한 안내가 되고,
+// 사용자가 할 일(승인을 기다림)이 화면에서 사라진다.
+
+test('승인 대기 403 은 cloudApproval=pending 으로 분류되고 storageOff 가 아니다', async () => {
+  const m = manager(null)
+  const denied = api({
+    status: 403,
+    message: 'changes HTTP 403: 클라우드 로컬 연결이 관리자 승인 대기 중입니다.',
+  })
+  assert.equal(await probeOf(m)(denied), null)
+  assert.equal(m.status().cloudApproval, 'pending')
+  assert.equal(m.status().storageOff, undefined)
+  // 표시용 사유에서 "HTTP 403:" 노이즈는 걷혀 있다.
+  assert.match(m.status().cloudApprovalDetail ?? '', /^클라우드 로컬 연결이 관리자 승인 대기 중/)
+})
+
+test('거절 403 은 cloudApproval=rejected 로 분류된다', async () => {
+  const m = manager(null)
+  const denied = api({
+    status: 403,
+    message: 'changes HTTP 403: 클라우드 로컬 연결이 관리자에 의해 거절되었습니다.',
+  })
+  assert.equal(await probeOf(m)(denied), null)
+  assert.equal(m.status().cloudApproval, 'rejected')
+  assert.equal(m.status().storageOff, undefined)
+})
+
+test('승인이 떨어지면(성공 응답) 대기 상태가 걷힌다', async () => {
+  const m = manager(null)
+  const denied = api({
+    status: 403,
+    message: '클라우드 로컬 연결이 관리자 승인 대기 중입니다.',
+  })
+  await probeOf(m)(denied)
+  assert.equal(m.status().cloudApproval, 'pending')
+  await probeOf(m)(api())
+  assert.equal(m.status().cloudApproval, undefined)
+})
+
+test('승인 게이트가 아닌 403(스토리지 꺼짐)은 기존대로 storageOff 다', async () => {
+  const m = manager(null)
+  const denied = api({ status: 403, message: '클라우드 스토리지 기능이 비활성화되어 있습니다' })
+  await probeOf(m)(denied)
+  assert.equal(m.status().cloudApproval, undefined)
+  assert.match(m.status().storageOff ?? '', /비활성화/)
+})
+
