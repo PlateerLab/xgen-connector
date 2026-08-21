@@ -2319,6 +2319,23 @@ function wireLocalSync(): void {
     onStatus: (s) => safeSend(mainWindow, CHANNELS.syncStatusEvent, s),
   });
   localSync.reconcile();
+
+  // 워크스페이스 브리지 — 서버의 ConnectorLocalSandbox 가 이 PC 를 실행
+  // 환경으로 쓰는 내부 도구(_Exec 등). 로컬 동기화 매니저와 같은 수명이다.
+  const { WorkspaceBridge } = require('./workspace-bridge-tools') as
+    typeof import('./workspace-bridge-tools');
+  getLocalToolProvider().configureWorkspaceBridge(
+    new WorkspaceBridge({
+      infoFor: (workflowId: string) => {
+        const dir = localSync?.dirFor(workflowId);
+        if (!dir) return null;
+        const agent = localSync?.status().agents.find((a) => a.workflowId === workflowId);
+        return { dir, label: agent?.label ?? workflowId };
+      },
+      cloudDir: () => getWorkspaceManager()?.status()?.path ?? null,
+      poke: (workflowId: string) => localSync?.poke(workflowId),
+    }),
+  );
 }
 
 ipcMain.handle(CHANNELS.syncStatus, () => {
