@@ -630,6 +630,8 @@ button {
 
 /* 액티비티 바 — 왼쪽 고정 48px 아이콘 스트립. */
 .activity-bar {
+  grid-column: 1;
+  grid-row: 1;
   width: 48px;
   flex-shrink: 0;
   background: var(--panel);
@@ -746,6 +748,8 @@ button {
 
 /* 사이드바 — 액티비티 바가 뷰를 바꾸고, 접히면 통째로 사라진다(마운트는 유지). */
 .sidebar {
+  grid-column: 2;
+  grid-row: 1;
   position: relative;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
@@ -1290,6 +1294,8 @@ button {
 
 /* ─── Main pane / welcome ─── */
 .main-pane {
+  grid-column: 3;
+  grid-row: 1;
   flex: 1;
   min-width: 0;
   min-height: 0; /* 내용(긴 채팅 로그)이 창을 밀어내지 않도록 */
