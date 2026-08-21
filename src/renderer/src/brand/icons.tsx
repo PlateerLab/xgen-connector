@@ -230,6 +230,12 @@ export const ChevronRightIcon: React.FC<P> = ({ size = 14, className }) => (
     <path d="m9 18 6-6-6-6" />
   </svg>
 );
+/** 셀렉터 트리거 셰브런 — 열리면 CSS 로 180° 돌린다. */
+export const ChevronDownIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+);
 /** XgenCloud 섹션 — 클라우드 스토리지. */
 export const CloudIcon: React.FC<P> = ({ size = 15, className }) => (
   <svg {...base(size)} className={className}>
