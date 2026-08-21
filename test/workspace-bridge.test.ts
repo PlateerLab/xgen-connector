@@ -2,7 +2,7 @@
 // 쓰는 내부 도구(_WorkspaceInfo/_Exec/_ReadBytes/_WriteBytes)를 검증한다.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -57,12 +57,15 @@ test('_Exec — bash 명령이 워크스페이스 cwd 에서 돌고 출력이 �
   const r = parse(
     await bridge.callTool(EXEC_TOOL, {
       workflowId: 'wf-1',
-      argv: ['bash', '-lc', 'pwd && echo 안녕 && echo err >&2'],
+      // cwd 검증은 pwd 문자열 비교가 아니라 **파일 마커**로 한다 — Windows
+      // Git Bash 의 pwd 는 POSIX 표기(/tmp/…)를 내놓아 실경로와 문자열이
+      // 다르다 (v1.52.0 CI 실증). 마커가 실폴더에 생기면 cwd 가 맞은 것이다.
+      argv: ['bash', '-lc', 'touch cwd-마커 && echo 안녕 && echo err >&2'],
     }),
   );
   assert.equal(r.code, 0);
+  assert.ok(existsSync(join(dir, 'cwd-마커')), 'cwd 가 워크스페이스가 아니다');
   const out = Buffer.from(String(r.stdoutB64), 'base64').toString();
-  assert.ok(out.includes(dir), `cwd 가 워크스페이스가 아니다: ${out}`);
   assert.ok(out.includes('안녕'));
   assert.ok(Buffer.from(String(r.stderrB64), 'base64').toString().includes('err'));
   assert.deepEqual(pokes, ['wf-1']); // 실행 후 동기화 예약
