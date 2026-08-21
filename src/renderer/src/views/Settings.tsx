@@ -5,7 +5,7 @@ import { HotkeyCapture } from './HotkeyCapture';
 import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
-import { MonitorIcon, ServerIcon, SpeakerIcon } from '../brand/icons';
+import { BrowserIcon, MonitorIcon, ServerIcon, SpeakerIcon } from '../brand/icons';
 
 type Theme = NonNullable<ConnectorConfig['theme']>;
 
@@ -53,6 +53,7 @@ export const Settings: React.FC<{
   // 파일 도구(ReadFile/WriteFile/ListDir/Search)가 접근할 수 있는 폴더 (줄바꿈/쉼표 구분).
   // 비우면 홈 폴더로 제한된다.
   const [shellRoots, setShellRoots] = useState((ls.allowedRoots ?? []).join('\n'));
+  const [browserOn, setBrowserOn] = useState(config.browser?.enabled === true);
 
   const [resetDone, setResetDone] = useState(false);
   const [confirmSettingsReset, setConfirmSettingsReset] = useState(false);
@@ -435,6 +436,42 @@ export const Settings: React.FC<{
           {/* ─── 로컬 도구 ─── */}
           {tab === 'local' && (
             <>
+              <div className="tool-card">
+                <div className="tool-card-main">
+                  <span className="tool-card-icon"><BrowserIcon size={18} /></span>
+                  <div className="tool-card-text">
+                    <div className="tool-card-title">에이전트 브라우저 접근</div>
+                    <div className="tool-card-desc">
+                      workflow별 격리 페이지를 열고 접근성 snapshot·클릭·입력·탐색을
+                      에이전트가 수행할 수 있게 합니다. 로그인 쿠키는 이 XGEN 계정 전용
+                      partition에만 저장됩니다.
+                    </div>
+                  </div>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={browserOn}
+                      onChange={(event) => {
+                        const enabled = event.target.checked;
+                        setBrowserOn(enabled);
+                        void apply({ browser: { enabled } });
+                      }}
+                    />
+                    <span className="track" />
+                  </label>
+                </div>
+                {browserOn && (
+                  <div className="tool-card-body">
+                    <p className="settings-hint warn">
+                      페이지 내용은 신뢰하지 않는 데이터로 처리됩니다. 쿠키·스토리지,
+                      업로드·다운로드, 클립보드, credentials, 요청 변조와 raw eval은
+                      실행 직전 이 PC에서 별도 승인을 요청합니다. 업로드·다운로드 경로는
+                      아래 로컬 파일 도구의 허용 폴더 범위를 함께 사용합니다.
+                    </p>
+                  </div>
+                )}
+              </div>
+
               <div className="tool-card">
                 <div className="tool-card-main">
                   <span className="tool-card-icon"><MonitorIcon size={18} /></span>

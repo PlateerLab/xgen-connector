@@ -111,6 +111,8 @@ export interface ConnectorConfig {
   screenCapture?: boolean;
   /** 캡처할 화면/창의 id. 비우면 주 디스플레이. */
   screenCaptureSource?: string;
+  /** Sandboxed Electron browser + agent automation. Separate opt-in capability. */
+  browser?: BrowserPersistConfig;
   /** Enable hosting local MCP servers + bridging their tools to your agents. */
   mcp?: boolean;
   /** 채팅창 로컬 MCP 상태·실행 로그 디버그 UI. connector.json 직접 설정, 기본 false. */
@@ -128,8 +130,35 @@ export interface ConnectorConfig {
   deviceId?: string;
   /** Linux 전용: 오버레이 클릭 통과 옵트인 ({forward:true} 미지원 플랫폼 안전장치). */
   linuxClickThrough?: boolean;
-  /** 메인 창 크롬 상태 — 액티비티 바에서 고른 사이드 뷰, 사이드바 접힘/너비. */
-  ui?: { sideView?: 'agent' | 'explorer'; sidebarCollapsed?: boolean; sidebarWidth?: number };
+  /** 메인 창 크롬 상태와 두 패널 탭 배치. */
+  ui?: {
+    sideView?: 'agent' | 'explorer';
+    sidebarCollapsed?: boolean;
+    sidebarWidth?: number;
+    workspaceLayout?: WorkspaceLayoutPersistConfig;
+  };
+}
+
+export interface BrowserPersistConfig {
+  /** Master switch. Default OFF because pages can contain private account data. */
+  enabled?: boolean;
+}
+
+export interface WorkspaceLayoutPersistConfig {
+  groups: Array<{
+    id: string;
+    tabs: Array<{
+      id: string;
+      kind: 'chat' | 'browser' | 'avatar';
+      sessionKey?: string;
+      workflowId?: string;
+      workflowName?: string;
+    }>;
+    activeTabId: string | null;
+  }>;
+  direction: 'horizontal' | 'vertical';
+  ratio: number;
+  focusedGroupId: string;
 }
 
 /** 로컬 셸 접근 설정 (영속). local-tools.LocalShellConfig 와 구조 동일 —
@@ -168,6 +197,7 @@ const DEFAULTS: ConnectorConfig = {
   ssoPath: '/sso/signin',
   ssoDebug: false,
   mcpDebug: false,
+  browser: { enabled: false },
   theme: 'system',
   lang: 'ko',
   autoUpdate: true,

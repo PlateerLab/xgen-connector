@@ -82,6 +82,9 @@ import {
   shouldIgnorePrivateCertificateError,
 } from './connection-security';
 import { createSsoWindowOptions } from './sso-window-options';
+import { getBrowserRuntime } from './browser-runtime';
+import { getBrowserToolProvider } from './browser-tools';
+import { allowedBrowserUrl } from './browser-security';
 
 const IS_LINUX = process.platform === 'linux';
 
@@ -140,6 +143,12 @@ function loadRendererPage(win: BrowserWindow, page: string): void {
   else void win.loadFile(join(__dirname, `../renderer/${page}`));
 }
 
+function handleAuthFailure(): void {
+  getMcpBridge().stop();
+  getBrowserRuntime().configure({ enabled: false });
+  safeSend(mainWindow, CHANNELS.authFailed);
+}
+
 function getClient(): XgenClient {
   const cfg = loadConfig();
   if (!client) {
@@ -147,7 +156,7 @@ function getClient(): XgenClient {
       baseUrl: normalizeServerUrl(cfg.serverUrl),
       // Chromium 네트워크 스택을 사용해 OS 프록시·인증서 정책을 공유한다.
       fetch: (input, init) => net.fetch(input, init),
-      onAuthFailure: () => safeSend(mainWindow, CHANNELS.authFailed),
+      onAuthFailure: handleAuthFailure,
       // 토큰이 회전되는 **모든** 지점에서 keychain 을 즉시 갱신한다. 게이트웨이는
       // 회전 시 이전 토큰의 세션 키를 지우므로, 여기서 놓치면 keychain 을 읽는
       // 장수명 소비자(WS 브릿지·워크스페이스 동기화)가 폐기된 토큰으로 접속하다
@@ -203,8 +212,37 @@ function createWindow(): void {
       // 퀵 챗은 메인 창을 깨우지 않고 메시지를 전달한다 — 최소화/숨김 상태의
       // 렌더러도 스트림 이벤트를 즉시 처리하도록 스로틀링을 끈다.
       backgroundThrottling: false,
+      // Shared browser pages are sandboxed <webview>s. Attachment is separately
+      // allowlisted below; enabling the tag alone grants no URL/partition.
+      webviewTag: true,
     },
   });
+
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    const runtime = getBrowserRuntime();
+    const expectedPartition = runtime.partition();
+    const safeUrl = allowedBrowserUrl(params.src);
+    if (!runtime.isEnabled() || !expectedPartition || params.partition !== expectedPartition || !safeUrl) {
+      event.preventDefault();
+      return;
+    }
+    // Never accept preferences supplied by page markup. The guest has no Node,
+    // preload, popup or web-security escape hatch.
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+  });
+  mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
+    guest.setWindowOpenHandler(() => ({ action: 'deny' }));
+    getBrowserRuntime().registerSharedGuest(guest);
+  });
+  getBrowserRuntime().setStateListener((state) =>
+    safeSend(mainWindow, CHANNELS.browserStateEvent, state),
+  );
 
   mainWindow.on('ready-to-show', () => mainWindow?.show());
   mainWindow.on('close', (e) => {
@@ -1209,8 +1247,16 @@ function syncMcp(): void {
   mcp.setCatalogChangeListener(() => {
     void getMcpBridge().refreshCatalog();
   });
-  // Connector-hosted built-ins (local shell) share the bridge catalog.
-  getLocalToolProvider().configure(cfg.localShell);
+  // Browser pages and connector-hosted tools share the bridge catalog. Browser
+  // state is account-scoped; without a live user configure() tears pages down.
+  getBrowserRuntime().configure({
+    enabled: cfg.browser?.enabled === true,
+    serverUrl: normalizeServerUrl(cfg.serverUrl),
+    userId: currentUserId() ?? undefined,
+  });
+  const browserTools = getBrowserToolProvider(getBrowserRuntime());
+  browserTools.configure(cfg.browser?.enabled === true, cfg.localShell?.allowedRoots ?? []);
+  getLocalToolProvider().configure(cfg.localShell, browserTools);
   const bridge = getMcpBridge();
   if (!mcpStatusWired) {
     mcpStatusWired = true;
@@ -1225,8 +1271,8 @@ function syncMcp(): void {
   // connector's built-in local tools. Start it when EITHER is on — the local
   // shell capability must reach the agent even if the user configured no MCP
   // servers (it is the out-of-the-box default).
-  const shellOn = getLocalToolProvider().advertise().length > 0;
-  if ((cfg.mcp || shellOn) && userId) {
+  const builtinOn = getLocalToolProvider().advertise().length > 0;
+  if ((cfg.mcp || builtinOn) && userId) {
     // start() is idempotent for the same target: it refreshes the catalog on a
     // live socket instead of tearing it down, so repeated syncMcp() (e.g. on
     // token refresh / restore) never flaps the connection status.
@@ -1286,6 +1332,8 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     normalizeServerUrl(patch.serverUrl) !== prevServer;
   if (serverChanged) {
     getMcpBridge().stop();
+    await getBrowserRuntime().closeAll();
+    getBrowserRuntime().configure({ enabled: false });
     void client?.logout().catch(() => undefined); // 구 서버 세션 무효화 (rebind 전 호출)
     client = null; // in-memory user/token 을 남기지 않도록 새 인스턴스로
     // ⚠ **client 를 비운 뒤에** 걷는다. 앞에서 부르면 아직 살아 있는
@@ -1314,7 +1362,7 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
   if (patch.updateServer !== undefined) setUpdateServer(patch.updateServer);
   // 로컬 셸 접근 토글/설정: 프로바이더를 재구성하고 카탈로그를 다시 광고한다
   // (켜면 브릿지가 없던 경우 뜨고, 끄면 도구가 카탈로그에서 빠진다).
-  if (patch.localShell !== undefined) syncMcp();
+  if (patch.localShell !== undefined || patch.browser !== undefined) syncMcp();
   if (patch.theme) nativeTheme.themeSource = patch.theme;
   if (patch.linuxClickThrough !== undefined) {
     // 즉시 재적용: 클릭 통과가 켜진 오버레이는 마우스 이벤트를 못 받아
@@ -1512,6 +1560,8 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
 
 ipcMain.handle(CHANNELS.authLogout, async () => {
   getMcpBridge().stop();
+  await getBrowserRuntime().closeAll();
+  getBrowserRuntime().configure({ enabled: false });
   if (client) await client.logout();
   await tokenStore.clear();
   // 가상 드라이브는 로그인 상태에서만 존재한다 — 로그아웃하면 걷어낸다.
@@ -1628,6 +1678,28 @@ ipcMain.handle(CHANNELS.chatStart, async (e, streamId: string, req) => {
 ipcMain.handle(CHANNELS.chatCancel, (_e, streamId: string) => {
   aborters.get(streamId)?.abort();
   aborters.delete(streamId);
+  return true;
+});
+
+// ── IPC: browser runtime ─────────────────────────────────────────
+ipcMain.handle(CHANNELS.browserState, () => getBrowserRuntime().state());
+ipcMain.handle(CHANNELS.browserCreate, (_e, request) => getBrowserRuntime().create(request));
+ipcMain.handle(
+  CHANNELS.browserEnsureShared,
+  (_e, workflowId: string, workflowName?: string) =>
+    getBrowserRuntime().ensureShared(workflowId, workflowName),
+);
+ipcMain.handle(CHANNELS.browserBindShared, (_e, pageId: string, webContentsId: number) =>
+  getBrowserRuntime().bindSharedPage(pageId, webContentsId),
+);
+ipcMain.handle(CHANNELS.browserNavigate, (_e, request) => getBrowserRuntime().navigate(request));
+ipcMain.handle(CHANNELS.browserActivate, (_e, pageId: string) => getBrowserRuntime().activate(pageId));
+ipcMain.handle(CHANNELS.browserClose, async (_e, pageId: string) => {
+  await getBrowserRuntime().close(pageId);
+  return true;
+});
+ipcMain.handle(CHANNELS.browserCloseWorkflow, async (_e, workflowId: string) => {
+  await getBrowserRuntime().closeWorkflow(workflowId);
   return true;
 });
 
@@ -2431,6 +2503,7 @@ if (!gotLock) {
     globalShortcut.unregisterAll();
     disposeUpdater();
     getMcpBridge().stop();
+    void getBrowserRuntime().closeAll();
     void getMcpManager().closeAll();
     // ⚠ 마운트를 남긴 채 죽으면 폴더가 스테일 상태로 먹통이 된다.
     void getWorkspaceManager()?.stop();

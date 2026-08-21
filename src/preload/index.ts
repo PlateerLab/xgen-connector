@@ -21,6 +21,12 @@ import type {
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
 import type { ConnectorConfig, McpServerConfig } from '../main/config';
+import type {
+  BrowserCreateRequest,
+  BrowserNavigateRequest,
+  BrowserPageInfo,
+  BrowserState,
+} from '../core/browser';
 
 /** 가상 드라이브 상태 (main workspace-manager.WorkspaceStatus 미러). */
 export interface WorkspaceStatusLike {
@@ -203,6 +209,28 @@ const api = {
     turns: (workflowId: string, interactionId: string, name?: string): Promise<HistoryTurn[]> =>
       ipcRenderer.invoke(CHANNELS.historyTurns, workflowId, interactionId, name),
     conversations: (): Promise<Conversation[]> => ipcRenderer.invoke(CHANNELS.historyConversations),
+  },
+
+  browser: {
+    state: (): Promise<BrowserState> => ipcRenderer.invoke(CHANNELS.browserState),
+    create: (request: BrowserCreateRequest): Promise<BrowserPageInfo> =>
+      ipcRenderer.invoke(CHANNELS.browserCreate, request),
+    ensureShared: (workflowId: string, workflowName?: string): Promise<BrowserPageInfo> =>
+      ipcRenderer.invoke(CHANNELS.browserEnsureShared, workflowId, workflowName),
+    bindShared: (pageId: string, webContentsId: number): Promise<BrowserPageInfo> =>
+      ipcRenderer.invoke(CHANNELS.browserBindShared, pageId, webContentsId),
+    navigate: (request: BrowserNavigateRequest): Promise<BrowserPageInfo> =>
+      ipcRenderer.invoke(CHANNELS.browserNavigate, request),
+    activate: (pageId: string): Promise<BrowserPageInfo> =>
+      ipcRenderer.invoke(CHANNELS.browserActivate, pageId),
+    close: (pageId: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.browserClose, pageId),
+    closeWorkflow: (workflowId: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.browserCloseWorkflow, workflowId),
+    onState: (cb: (state: BrowserState) => void): (() => void) => {
+      const handler = (_event: unknown, state: BrowserState) => cb(state);
+      ipcRenderer.on(CHANNELS.browserStateEvent, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.browserStateEvent, handler);
+    },
   },
 
   chat: {
