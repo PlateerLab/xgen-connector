@@ -38,6 +38,9 @@ export interface WorkspaceStatusLike {
   errorHint?: string;
   /** 클라우드 스토리지가 꺼져 있는 사유 (오류가 아니다). */
   storageOff?: string;
+  /** RAG 통제 — 이 PC 의 클라우드 연결이 관리자 승인 대기중/거절 상태. */
+  cloudApproval?: 'pending' | 'rejected';
+  cloudApprovalDetail?: string;
   /**
    * 이 PC 가 **재연결** 대상이다 — 서버가 이름 없이 알고 있다.
    *
