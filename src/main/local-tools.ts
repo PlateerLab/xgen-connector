@@ -87,6 +87,12 @@ export interface LocalToolResult {
   isError?: boolean;
 }
 
+export interface LocalToolDelegate {
+  advertise(): LocalToolSchema[];
+  owns(tool: string): boolean;
+  callTool(tool: string, args: unknown): Promise<LocalToolResult>;
+}
+
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 60 * 60_000;
@@ -663,9 +669,11 @@ export function notifyToolSchema(): LocalToolSchema {
 
 export class LocalToolProvider {
   private cfg: Required<LocalShellConfig> = shellConfig(undefined);
+  private delegate: LocalToolDelegate | null = null;
 
-  configure(cfg: LocalShellConfig | undefined): void {
+  configure(cfg: LocalShellConfig | undefined, delegate?: LocalToolDelegate): void {
     this.cfg = shellConfig(cfg);
+    this.delegate = delegate ?? null;
   }
 
   /** True iff this call frame belongs to a built-in tool (server === LOCAL_SERVER). */
@@ -675,21 +683,24 @@ export class LocalToolProvider {
 
   /** Tools advertised into the catalog. Empty when the capability is off. */
   advertise(): LocalToolSchema[] {
-    if (!this.cfg.enabled) return [];
-    return [
-      shellToolSchema(),
-      shellJobToolSchema(),
-      openToolSchema(),
-      readFileToolSchema(),
-      writeFileToolSchema(),
-      listDirToolSchema(),
-      searchToolSchema(),
-      clipboardToolSchema(),
-      notifyToolSchema(),
-    ];
+    const shell = this.cfg.enabled
+      ? [
+          shellToolSchema(),
+          shellJobToolSchema(),
+          openToolSchema(),
+          readFileToolSchema(),
+          writeFileToolSchema(),
+          listDirToolSchema(),
+          searchToolSchema(),
+          clipboardToolSchema(),
+          notifyToolSchema(),
+        ]
+      : [];
+    return [...shell, ...(this.delegate?.advertise() ?? [])];
   }
 
   async callTool(tool: string, args: unknown): Promise<LocalToolResult> {
+    if (this.delegate?.owns(tool)) return this.delegate.callTool(tool, args);
     if (!this.cfg.enabled) throw new Error('로컬 도구 접근이 꺼져 있습니다 (설정 > 로컬 도구).');
     if (tool === SHELL_TOOL) return this.shell(args);
     if (tool === SHELL_JOB_TOOL) return this.shellJob(args);

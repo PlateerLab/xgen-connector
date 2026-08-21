@@ -34,6 +34,10 @@ asarUnpack:
   # resolve outside the asar at runtime.
   - '**/node_modules/ws/**'
   - '**/node_modules/@modelcontextprotocol/**'
+  # Pinned Apache-2.0 native browser automation helper. Executables cannot run
+  # from inside app.asar; the npm package carries verified OS/arch binaries.
+  - '**/node_modules/agent-browser/bin/**'
+  - '**/node_modules/agent-browser/LICENSE'
 # Hyphenated, space-free artifact names. productName has a space ("XGEN
 # Connector"), and electron-updater 404s when the built file, latest*.yml and
 # the GitHub asset disagree on how spaces are encoded — a literal hyphenated

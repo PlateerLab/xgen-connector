@@ -22,6 +22,7 @@
  * wires the real bridge + a React subscription in `session.ts`.
  */
 import type { Agent, ChatEvent, ChatRequest, Citation, ToolEvent } from '../../core/index';
+import { stripBrowserContext } from '../../core/browser';
 
 /** One rendered chat message (mirrors the old Chat.Msg shape). */
 export interface ChatMsg {
@@ -248,7 +249,9 @@ export class SessionStore {
       for (const tn of turns) {
         // 최종 방어: text 는 무조건 문자열이어야 렌더가 안전하다 (transport 가
         // 이미 문자열화하지만, 다른 주입 경로가 생겨도 여기서 못 뚫게 한다).
-        const input = typeof tn.input === 'string' ? tn.input : tn.input == null ? '' : String(tn.input);
+        const input = stripBrowserContext(
+          typeof tn.input === 'string' ? tn.input : tn.input == null ? '' : String(tn.input),
+        );
         const output = typeof tn.output === 'string' ? tn.output : tn.output == null ? '' : String(tn.output);
         if (input) msgs.push({ role: 'user', text: input });
         if (output) msgs.push({ role: 'assistant', text: output });

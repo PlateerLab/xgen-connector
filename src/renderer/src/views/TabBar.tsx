@@ -1,114 +1,77 @@
-/**
- * TabBar — 메인 영역 상단의 VS Code 식 탭 줄.
- *
- * 채팅 탭은 세션 스토어의 열린 세션과 1:1 이다 (삽입 순서 — tab-model 참고).
- * 스트리밍 중인 탭은 닫기 버튼 자리에 라이브 점이 앉고, 마우스를 올리면
- * 닫기로 바뀐다 (VS Code 의 dirty-dot 관용구). 아바타 설정은 세션이 아닌
- * 특수 탭 하나로 같은 줄에 선다.
- */
 import React from 'react';
 import type { SessionState } from '../session-store';
-import { chatTabs, tabTitle } from './tab-model';
-import { AvatarIcon, ChatIcon, CloseIcon, PlusIcon } from '../brand/icons';
+import { AvatarIcon, BrowserIcon, ChatIcon, CloseIcon, PlusIcon } from '../brand/icons';
+import type { WorkspaceGroup, WorkspaceTab } from './workspace-layout';
+
+function label(tab: WorkspaceTab, sessions: Map<string, SessionState>): string {
+  if (tab.kind === 'avatar') return '아바타 설정';
+  if (tab.kind === 'browser') return `${tab.workflowName || 'Agent'} 브라우저`;
+  return sessions.get(tab.sessionKey ?? '')?.agent.workflowName || tab.workflowName || '대화';
+}
 
 export const TabBar: React.FC<{
-  sessions: SessionState[];
-  activeKey: string | null;
-  /** 지금 메인 영역이 채팅인가 아바타 설정인가. */
-  mainView: 'chat' | 'avatar';
-  avatarOpen: boolean;
-  onSelect: (key: string) => void;
-  onClose: (key: string) => void;
-  onSelectAvatar: () => void;
-  onCloseAvatar: () => void;
-  onNewTab: () => void;
-}> = ({
-  sessions,
-  activeKey,
-  mainView,
-  avatarOpen,
-  onSelect,
-  onClose,
-  onSelectAvatar,
-  onCloseAvatar,
-  onNewTab,
-}) => {
-  const tabs = chatTabs(sessions, activeKey);
-  if (tabs.length === 0 && !avatarOpen) return null;
-
-  return (
-    <div className="tab-strip">
-      <div className="tab-strip-scroll">
-        {tabs.map((s) => {
-          const active = mainView === 'chat' && s.key === activeKey;
-          return (
-            <div
-              key={s.key}
-              className={`tab-item ${active ? 'active' : ''}`}
-              role="tab"
-              aria-selected={active}
-              tabIndex={0}
-              onClick={() => onSelect(s.key)}
-              onKeyDown={(e) => e.key === 'Enter' && onSelect(s.key)}
-              onAuxClick={(e) => {
-                // 휠 클릭으로 닫기 — 탭 UI 의 보편 규칙.
-                if (e.button === 1) onClose(s.key);
-              }}
-              title={tabTitle(s)}
-            >
-              <span className="tab-icon">
-                <ChatIcon size={13} />
-              </span>
-              <span className="tab-label">{tabTitle(s)}</span>
-              <button
-                className={`tab-close ${s.streaming ? 'live' : ''}`}
-                title="채팅 종료"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose(s.key);
-                }}
-              >
-                <span className="tab-close-x">
-                  <CloseIcon size={12} />
-                </span>
-                {s.streaming && <span className="tab-live-dot" />}
-              </button>
-            </div>
-          );
-        })}
-
-        {avatarOpen && (
+  group: WorkspaceGroup;
+  sessions: Map<string, SessionState>;
+  onSelect: (tabId: string) => void;
+  onClose: (tab: WorkspaceTab) => void;
+  onOpenBrowser: () => void;
+  onTabPointerDown: (event: React.PointerEvent, tab: WorkspaceTab) => void;
+}> = ({ group, sessions, onSelect, onClose, onOpenBrowser, onTabPointerDown }) => (
+  <div className="tab-strip" role="tablist" aria-label="열린 탭">
+    <div className="tab-strip-scroll">
+      {group.tabs.map((tab) => {
+        const session = tab.kind === 'chat' ? sessions.get(tab.sessionKey ?? '') : undefined;
+        const active = group.activeTabId === tab.id;
+        return (
           <div
-            className={`tab-item ${mainView === 'avatar' ? 'active' : ''}`}
+            key={tab.id}
+            className={`tab-item ${active ? 'active' : ''}`}
             role="tab"
-            aria-selected={mainView === 'avatar'}
-            tabIndex={0}
-            onClick={onSelectAvatar}
-            onKeyDown={(e) => e.key === 'Enter' && onSelectAvatar()}
-            title="아바타 설정"
+            aria-selected={active}
+            tabIndex={active ? 0 : -1}
+            data-tab-id={tab.id}
+            onClick={() => onSelect(tab.id)}
+            onKeyDown={(event) => event.key === 'Enter' && onSelect(tab.id)}
+            onPointerDown={(event) => onTabPointerDown(event, tab)}
+            onAuxClick={(event) => event.button === 1 && onClose(tab)}
+            title={label(tab, sessions)}
           >
             <span className="tab-icon">
-              <AvatarIcon size={13} />
+              {tab.kind === 'chat' ? (
+                <ChatIcon size={13} />
+              ) : tab.kind === 'browser' ? (
+                <BrowserIcon size={13} />
+              ) : (
+                <AvatarIcon size={13} />
+              )}
             </span>
-            <span className="tab-label">아바타 설정</span>
+            <span className="tab-label">{label(tab, sessions)}</span>
             <button
-              className="tab-close"
-              title="닫기"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCloseAvatar();
+              className={`tab-close ${session?.streaming ? 'live' : ''}`}
+              title={tab.kind === 'chat' ? '채팅 종료' : '닫기'}
+              aria-label={tab.kind === 'chat' ? '채팅 종료' : '탭 닫기'}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onClose(tab);
               }}
             >
               <span className="tab-close-x">
                 <CloseIcon size={12} />
               </span>
+              {session?.streaming && <span className="tab-live-dot" />}
             </button>
           </div>
-        )}
-      </div>
-      <button className="tab-new" title="새 대화" onClick={onNewTab}>
-        <PlusIcon size={15} />
-      </button>
+        );
+      })}
     </div>
-  );
-};
+    <button
+      className="tab-new"
+      title="브라우저 열기"
+      aria-label="브라우저 열기"
+      onClick={onOpenBrowser}
+    >
+      <PlusIcon size={15} />
+    </button>
+  </div>
+);

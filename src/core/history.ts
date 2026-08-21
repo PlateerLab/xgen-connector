@@ -6,6 +6,7 @@
  */
 import { HttpClient } from './client';
 import type { Conversation, HistoryTurn } from './types';
+import { stripBrowserContext } from './browser';
 
 interface RawIoLog {
   log_id: number;
@@ -31,7 +32,7 @@ interface RawIoLog {
  */
 export function toDisplayText(v: unknown): string {
   if (v == null) return '';
-  if (typeof v === 'string') return v;
+  if (typeof v === 'string') return stripBrowserContext(v);
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (Array.isArray(v)) {
     const parts = v.map((b) => {
@@ -50,7 +51,7 @@ export function toDisplayText(v: unknown): string {
       }
       return String(b);
     });
-    return parts.filter(Boolean).join('\n');
+    return stripBrowserContext(parts.filter(Boolean).join('\n'));
   }
   try {
     return JSON.stringify(v, null, 2);

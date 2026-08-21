@@ -15,6 +15,45 @@ const path = require('node:path');
 
 const fs = require('node:fs');
 
+/** Keep only the native helper(s) that can run in this artifact. The npm
+ * package contains every OS binary; shipping all of them adds ~55MB and makes
+ * code-signing/auditing needlessly broad. Linux keeps glibc+musl for the target
+ * arch because the package format may run on either libc. */
+function pruneAgentBrowser(context) {
+  const platform = context.electronPlatformName;
+  const archNames = { 1: 'x64', 3: 'arm64', 4: 'universal' };
+  const arch = archNames[context.arch] || 'x64';
+  const appName = context.packager.appInfo.productFilename;
+  const resources =
+    platform === 'darwin'
+      ? path.join(context.appOutDir, `${appName}.app`, 'Contents', 'Resources')
+      : path.join(context.appOutDir, 'resources');
+  const binDir = path.join(resources, 'app.asar.unpacked', 'node_modules', 'agent-browser', 'bin');
+  if (!fs.existsSync(binDir)) throw new Error(`agent-browser package missing: ${binDir}`);
+  const arches = arch === 'universal' ? ['arm64', 'x64'] : [arch];
+  const allowed = new Set(['agent-browser.js', '.install-method']);
+  for (const cpu of arches) {
+    if (platform === 'linux') {
+      allowed.add(`agent-browser-linux-${cpu}`);
+      allowed.add(`agent-browser-linux-musl-${cpu}`);
+    } else if (platform === 'darwin') {
+      allowed.add(`agent-browser-darwin-${cpu}`);
+    } else if (platform === 'win32') {
+      allowed.add(`agent-browser-win32-${cpu}.exe`);
+    }
+  }
+  for (const name of fs.readdirSync(binDir)) {
+    if (name.startsWith('agent-browser-') && !allowed.has(name)) {
+      fs.rmSync(path.join(binDir, name), { force: true });
+    }
+  }
+  for (const name of allowed) {
+    const file = path.join(binDir, name);
+    if (fs.existsSync(file) && platform !== 'win32') fs.chmodSync(file, 0o755);
+  }
+  console.log(`[afterPack] agent-browser ${platform}/${arch}: ${[...allowed].join(', ')}`);
+}
+
 // Linux launcher shim (geny-connector 이식). Chromium's zygote + SUID-sandbox
 // helper check run BEFORE any app JS (appendSwitch('no-sandbox') in the main
 // module is already too late), so the only place to decide "can this machine
@@ -79,6 +118,7 @@ exit $STATUS
 }
 
 module.exports = async function afterPack(context) {
+  pruneAgentBrowser(context);
   if (context.electronPlatformName === 'linux') {
     wrapLinuxExecutable(context);
     return;

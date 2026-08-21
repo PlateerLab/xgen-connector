@@ -47,6 +47,17 @@ export const CHANNELS = {
   chatCancel: 'chat:cancel',
   chatEvent: 'chat:event',
 
+  // Sandboxed browser pages + stable main-process runtime.
+  browserState: 'browser:state',
+  browserStateEvent: 'browser:stateEvent',
+  browserCreate: 'browser:create',
+  browserEnsureShared: 'browser:ensureShared',
+  browserBindShared: 'browser:bindShared',
+  browserNavigate: 'browser:navigate',
+  browserActivate: 'browser:activate',
+  browserClose: 'browser:close',
+  browserCloseWorkflow: 'browser:closeWorkflow',
+
   updaterCheck: 'updater:check',
   updaterGetEnabled: 'updater:getEnabled',
   updaterSetEnabled: 'updater:setEnabled',

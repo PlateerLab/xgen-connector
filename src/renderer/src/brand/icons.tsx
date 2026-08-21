@@ -236,3 +236,18 @@ export const CloudIcon: React.FC<P> = ({ size = 15, className }) => (
     <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
   </svg>
 );
+
+/** Sandboxed agent browser page. */
+export const BrowserIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+  </svg>
+);
+
+export const ForwardIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="m12 5 7 7-7 7" />
+    <path d="M5 12h14" />
+  </svg>
+);

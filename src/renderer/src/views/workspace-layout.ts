@@ -1,0 +1,235 @@
+/** Pure, persistence-safe model for the two-group workspace. */
+
+export type WorkspaceTabKind = 'chat' | 'browser' | 'avatar';
+export type SplitDirection = 'horizontal' | 'vertical';
+export type DropEdge = 'center' | 'left' | 'right' | 'top' | 'bottom';
+
+export interface WorkspaceTab {
+  id: string;
+  kind: WorkspaceTabKind;
+  sessionKey?: string;
+  workflowId?: string;
+  workflowName?: string;
+}
+
+export interface WorkspaceGroup {
+  id: string;
+  tabs: WorkspaceTab[];
+  activeTabId: string | null;
+}
+
+export interface WorkspaceLayout {
+  groups: WorkspaceGroup[];
+  direction: SplitDirection;
+  ratio: number;
+  focusedGroupId: string;
+}
+
+export const MIN_SPLIT_RATIO = 0.2;
+export const MAX_SPLIT_RATIO = 0.8;
+
+export function newWorkspaceLayout(groupId = 'group-a'): WorkspaceLayout {
+  return {
+    groups: [{ id: groupId, tabs: [], activeTabId: null }],
+    direction: 'horizontal',
+    ratio: 0.5,
+    focusedGroupId: groupId,
+  };
+}
+
+export function clampSplitRatio(ratio: number): number {
+  if (!Number.isFinite(ratio)) return 0.5;
+  return Math.max(MIN_SPLIT_RATIO, Math.min(MAX_SPLIT_RATIO, ratio));
+}
+
+function cleanTab(raw: unknown): WorkspaceTab | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const tab = raw as Partial<WorkspaceTab>;
+  if (typeof tab.id !== 'string' || !['chat', 'browser', 'avatar'].includes(String(tab.kind))) {
+    return null;
+  }
+  return {
+    id: tab.id,
+    kind: tab.kind as WorkspaceTabKind,
+    sessionKey: typeof tab.sessionKey === 'string' ? tab.sessionKey : undefined,
+    workflowId: typeof tab.workflowId === 'string' ? tab.workflowId : undefined,
+    workflowName: typeof tab.workflowName === 'string' ? tab.workflowName : undefined,
+  };
+}
+
+/** Validate old/corrupt config and enforce the hard two-group limit. */
+export function normalizeWorkspaceLayout(raw: unknown): WorkspaceLayout {
+  if (!raw || typeof raw !== 'object') return newWorkspaceLayout();
+  const value = raw as Partial<WorkspaceLayout>;
+  const seen = new Set<string>();
+  const groups = (Array.isArray(value.groups) ? value.groups : [])
+    .slice(0, 2)
+    .flatMap((candidate, index): WorkspaceGroup[] => {
+      if (!candidate || typeof candidate !== 'object') return [];
+      const group = candidate as Partial<WorkspaceGroup>;
+      const id = typeof group.id === 'string' && group.id ? group.id : `group-${index + 1}`;
+      const tabs = (Array.isArray(group.tabs) ? group.tabs : []).flatMap((tab) => {
+        const clean = cleanTab(tab);
+        if (!clean || seen.has(clean.id)) return [];
+        seen.add(clean.id);
+        return [clean];
+      });
+      const active = tabs.some((tab) => tab.id === group.activeTabId)
+        ? String(group.activeTabId)
+        : (tabs[0]?.id ?? null);
+      return [{ id, tabs, activeTabId: active }];
+    });
+  const nonEmpty = groups.filter((group) => group.tabs.length > 0);
+  const normalized = nonEmpty.length ? nonEmpty : groups.slice(0, 1);
+  if (!normalized.length) return newWorkspaceLayout();
+  const focused = normalized.some((group) => group.id === value.focusedGroupId)
+    ? String(value.focusedGroupId)
+    : normalized[0].id;
+  return {
+    groups: normalized,
+    direction: value.direction === 'vertical' ? 'vertical' : 'horizontal',
+    ratio: clampSplitRatio(Number(value.ratio)),
+    focusedGroupId: focused,
+  };
+}
+
+export function findTab(
+  layout: WorkspaceLayout,
+  tabId: string,
+): { group: WorkspaceGroup; tab: WorkspaceTab } | null {
+  for (const group of layout.groups) {
+    const tab = group.tabs.find((item) => item.id === tabId);
+    if (tab) return { group, tab };
+  }
+  return null;
+}
+
+export function selectWorkspaceTab(
+  layout: WorkspaceLayout,
+  groupId: string,
+  tabId: string,
+): WorkspaceLayout {
+  if (
+    !layout.groups.some(
+      (group) => group.id === groupId && group.tabs.some((tab) => tab.id === tabId),
+    )
+  ) {
+    return layout;
+  }
+  return {
+    ...layout,
+    focusedGroupId: groupId,
+    groups: layout.groups.map((group) =>
+      group.id === groupId ? { ...group, activeTabId: tabId } : group,
+    ),
+  };
+}
+
+export function addWorkspaceTab(
+  layout: WorkspaceLayout,
+  groupId: string,
+  tab: WorkspaceTab,
+): WorkspaceLayout {
+  const existing = findTab(layout, tab.id);
+  if (existing) return selectWorkspaceTab(layout, existing.group.id, tab.id);
+  const target = layout.groups.some((group) => group.id === groupId)
+    ? groupId
+    : layout.focusedGroupId;
+  return {
+    ...layout,
+    focusedGroupId: target,
+    groups: layout.groups.map((group) =>
+      group.id === target ? { ...group, tabs: [...group.tabs, tab], activeTabId: tab.id } : group,
+    ),
+  };
+}
+
+export function removeWorkspaceTab(layout: WorkspaceLayout, tabId: string): WorkspaceLayout {
+  const groups = layout.groups
+    .map((group) => {
+      const index = group.tabs.findIndex((tab) => tab.id === tabId);
+      if (index < 0) return group;
+      const tabs = group.tabs.filter((tab) => tab.id !== tabId);
+      const fallback = tabs[Math.min(index, tabs.length - 1)]?.id ?? null;
+      return {
+        ...group,
+        tabs,
+        activeTabId: group.activeTabId === tabId ? fallback : group.activeTabId,
+      };
+    })
+    .filter((group) => group.tabs.length > 0);
+  if (!groups.length) return newWorkspaceLayout(layout.groups[0]?.id ?? 'group-a');
+  return {
+    ...layout,
+    groups,
+    ratio: groups.length === 1 ? 0.5 : layout.ratio,
+    focusedGroupId: groups.some((group) => group.id === layout.focusedGroupId)
+      ? layout.focusedGroupId
+      : groups[0].id,
+  };
+}
+
+let groupSequence = 0;
+function nextGroupId(layout: WorkspaceLayout): string {
+  let id = '';
+  do id = `group-${Date.now().toString(36)}-${++groupSequence}`;
+  while (layout.groups.some((group) => group.id === id));
+  return id;
+}
+
+/** Move a tab to a group, or create the only allowed split from an edge drop. */
+export function dropWorkspaceTab(
+  layout: WorkspaceLayout,
+  tabId: string,
+  targetGroupId: string,
+  edge: DropEdge,
+  index?: number,
+): WorkspaceLayout {
+  const found = findTab(layout, tabId);
+  if (!found || !layout.groups.some((group) => group.id === targetGroupId)) return layout;
+  if (edge !== 'center' && layout.groups.length >= 2) return layout;
+
+  const without = layout.groups.map((group) => ({
+    ...group,
+    tabs: group.tabs.filter((tab) => tab.id !== tabId),
+    activeTabId:
+      group.activeTabId === tabId
+        ? (group.tabs.filter((tab) => tab.id !== tabId)[0]?.id ?? null)
+        : group.activeTabId,
+  }));
+
+  if (edge === 'center') {
+    const moved = without.map((group) => {
+      if (group.id !== targetGroupId) return group;
+      const at = Math.max(0, Math.min(group.tabs.length, index ?? group.tabs.length));
+      const tabs = group.tabs.slice();
+      tabs.splice(at, 0, found.tab);
+      return { ...group, tabs, activeTabId: tabId };
+    });
+    const groups = moved.filter((group) => group.tabs.length > 0);
+    return {
+      ...layout,
+      groups,
+      ratio: groups.length === 1 ? 0.5 : layout.ratio,
+      focusedGroupId: targetGroupId,
+    };
+  }
+
+  const targetIndex = without.findIndex((group) => group.id === targetGroupId);
+  const fresh: WorkspaceGroup = { id: nextGroupId(layout), tabs: [found.tab], activeTabId: tabId };
+  const target = without[targetIndex];
+  const rest = without.filter((group) => group.id !== targetGroupId && group.tabs.length > 0);
+  const before = edge === 'left' || edge === 'top';
+  const groups = before ? [fresh, target, ...rest] : [target, fresh, ...rest];
+  return {
+    ...layout,
+    groups: groups.filter((group) => group.tabs.length > 0).slice(0, 2),
+    direction: edge === 'left' || edge === 'right' ? 'horizontal' : 'vertical',
+    ratio: 0.5,
+    focusedGroupId: fresh.id,
+  };
+}
+
+export function setWorkspaceRatio(layout: WorkspaceLayout, ratio: number): WorkspaceLayout {
+  return { ...layout, ratio: clampSplitRatio(ratio) };
+}

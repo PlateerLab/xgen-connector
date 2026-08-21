@@ -38,6 +38,13 @@ enter your **XGEN server URL** and **account**, then pick an agent and chat.
   like the XGEN grid.
 - **Chat** — pick an agent and chat with live token streaming, tool-activity
   chips, and multi-turn continuity (one conversation id per session).
+- **Two-panel tabs** — drag chat, browser and avatar tabs between groups or onto
+  a left/right/top/bottom edge. At most two groups stay live; the divider,
+  direction, tab order and group focus are restored after restart.
+- **Agent browser (opt-in)** — each workflow gets an isolated browser tab with
+  multiple visible pages plus a private background page for untargeted agent
+  calls. Account cookies persist in an account-hashed Electron partition, while
+  page state remains workflow-scoped. Enable it in Settings → 로컬 도구.
 - **Auto-update** — via GitHub Releases (`electron-updater`); toggle in settings.
 - **Settings** — server URL, theme (system/light/dark), auto-update.
 - **Floating avatar overlay** — a Geny-style transparent, always-on-top,
@@ -81,6 +88,7 @@ src/
     history.ts   io-logs + interaction list
     index.ts     XgenClient facade
   main/        # Electron main: window, connector.json config, keychain, updater, IPC
+               # browser runtime, one-page CDP proxies, agent-browser command queues
   preload/     # contextBridge → window.xgen (the only renderer↔native surface)
   renderer/    # React UI: ServerSetup → Login → Workspace(agent list + Chat)
 ```
@@ -175,3 +183,7 @@ Apache-2.0
 
 Bundled font **Pretendard** (`src/renderer/src/assets/fonts/PretendardVariable.woff2`)
 is © Kil Hyung-jin, licensed under the SIL Open Font License 1.1.
+
+The pinned `agent-browser` 0.27.3 native helper is bundled under its Apache-2.0
+license. Packaging retains only the binaries required by the target OS/arch
+(Linux retains glibc and musl variants).

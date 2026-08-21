@@ -8,9 +8,10 @@
 import { useSyncExternalStore } from 'react';
 import { xgen } from './bridge';
 import { SessionStore, type StoreSnapshot } from './session-store';
+import { browserStateStore } from './browser-state';
 
 export const sessionStore = new SessionStore({
-  stream: (req, onEvent) => xgen.chat.stream(req, onEvent),
+  stream: (req, onEvent) => xgen.chat.stream(browserStateStore.contextualize(req), onEvent),
   historyTurns: (workflowId, interactionId, name) =>
     xgen.history.turns(workflowId, interactionId, name),
 });
