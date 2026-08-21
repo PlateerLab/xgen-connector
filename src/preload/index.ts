@@ -406,6 +406,8 @@ const api = {
       ipcRenderer.on(CHANNELS.openSettingsModal, h);
       return () => ipcRenderer.removeListener(CHANNELS.openSettingsModal, h);
     },
+    /** 네이티브 폴더 선택 다이얼로그 — 절대 경로 또는 null(취소). */
+    pickFolder: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.pickFolder),
     getAutostart: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.autostartGet),
     setAutostart: (enabled: boolean): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.autostartSet, enabled),
