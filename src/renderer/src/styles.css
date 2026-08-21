@@ -1157,6 +1157,27 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 동기화 오류 배지 — 섹션 헤더 우측의 작은 경고. */
+.section-err {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--error-bg);
+  color: var(--error);
+  font-size: 10px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+}
+.foot-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  flex-shrink: 0;
+}
 .section-loading {
   width: 6px;
   height: 6px;

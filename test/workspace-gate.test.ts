@@ -170,52 +170,50 @@ function withPresence(userApi: WorkspaceApi | null, agents: string[] = []) {
   return { m: new WorkspaceManager(deps), made }
 }
 
-type Sync = (u: WorkspaceApi | null, a: Array<{ workflowId: string; folder: string }>) => void
+type Sync = (u: WorkspaceApi | null) => void
 const syncOf = (m: WorkspaceManager): Sync =>
   (m as unknown as { syncPresence: Sync }).syncPresence.bind(m)
 
-test('마운트된 저장소마다 접속 표시를 연다 (사용자 + 에이전트)', async () => {
+test('드라이브는 사용자 스토리지 접속 표시만 연다 (에이전트는 local-sync 소유)', async () => {
+  // 드라이브가 에이전트를 서빙하던 시절에는 여기서 에이전트 WS 도 열었다.
+  // 이제 에이전트 워크스페이스는 local-sync 가 실제 폴더로 다루고 접속 표시도
+  // 그쪽이 연다 — 드라이브가 겹쳐 열면 PC 가 두 대로 보인다.
   const { m, made } = withPresence(api(), ['wf-1'])
-  syncOf(m)(api(), [{ workflowId: 'wf-1', folder: 'XGeny' }])
-  const owners = made.map((p) => p.owner).sort()
-  assert.deepEqual(owners, ['user:7', 'wf-1'], `열린 저장소: ${owners}`)
+  syncOf(m)(api())
+  const owners = made.map((p) => p.owner)
+  assert.deepEqual(owners, ['user:7'], `열린 저장소: ${owners}`)
   assert.ok(made.every((p) => p.started), '시작되지 않은 접속 표시가 있다')
 })
 
-test('변경 알림이 오면 해당 저장소 캐시만 버린다', () => {
-  const { m, made } = withPresence(api(), ['wf-1'])
-  syncOf(m)(api(), [{ workflowId: 'wf-1', folder: 'XGeny' }])
+test('변경 알림이 오면 사용자 스토리지 캐시를 버린다', () => {
+  const { m, made } = withPresence(api())
+  syncOf(m)(api())
   const dropped: string[] = []
   const backend = (m as unknown as { backend: { invalidateSpace: (k: string) => void } }).backend
   backend.invalidateSpace = (k: string) => dropped.push(k)
   made.find((p) => p.owner === 'user:7')!.onChanged()
-  made.find((p) => p.owner === 'wf-1')!.onChanged()
-  // 사용자 스토리지는 빈 키, 에이전트는 폴더명
-  assert.deepEqual(dropped.sort(), ['', 'XGeny'])
+  assert.deepEqual(dropped, ['']) // 사용자 스토리지의 캐시 키는 빈 문자열
 })
 
-test('에이전트를 떼면 그 접속 표시만 닫힌다', () => {
-  const { m, made } = withPresence(api(), ['wf-1'])
-  syncOf(m)(api(), [{ workflowId: 'wf-1', folder: 'XGeny' }])
-  syncOf(m)(api(), [])
-  const wf = made.find((p) => p.owner === 'wf-1')!
+test('클라우드가 걷히면 사용자 접속 표시를 닫는다', () => {
+  const { m, made } = withPresence(api())
+  syncOf(m)(api())
+  syncOf(m)(null)
   const user = made.find((p) => p.owner === 'user:7')!
-  assert.equal(wf.stopped, true, '뗀 에이전트의 접속 표시가 남아 있다')
-  assert.equal(user.stopped, false, '사용자 스토리지 접속 표시까지 닫혔다')
+  assert.equal(user.stopped, true, '드라이브가 없는데 접속 표시가 남아 있다')
 })
 
 test('같은 저장소로 두 번 열지 않는다 (PC 가 두 대로 보인다)', () => {
-  const { m, made } = withPresence(api(), ['wf-1'])
-  const agents = [{ workflowId: 'wf-1', folder: 'XGeny' }]
-  syncOf(m)(api(), agents)
-  syncOf(m)(api(), agents)
-  assert.equal(made.length, 2, `중복 등록: ${made.map((p) => p.owner)}`)
+  const { m, made } = withPresence(api())
+  syncOf(m)(api())
+  syncOf(m)(api())
+  assert.equal(made.length, 1, `중복 등록: ${made.map((p) => p.owner)}`)
 })
 
-test('클라우드 스토리지가 꺼져 있으면 사용자 접속 표시도 열지 않는다', () => {
+test('클라우드 스토리지가 꺼져 있으면 접속 표시를 아예 열지 않는다', () => {
   const { m, made } = withPresence(null, ['wf-1'])
-  syncOf(m)(null, [{ workflowId: 'wf-1', folder: 'XGeny' }])
-  assert.deepEqual(made.map((p) => p.owner), ['wf-1'])
+  syncOf(m)(null)
+  assert.deepEqual(made.map((p) => p.owner), [])
 })
 
 // ── "연결 안 됨인데 이유도 없음" 은 존재해선 안 된다 ────────────────

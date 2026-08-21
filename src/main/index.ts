@@ -61,7 +61,10 @@ import {
   getWorkspaceManager,
 } from './workspace-manager';
 import { makeWorkspaceApi } from './workspace-api';
-import { WorkspaceWsClient } from './sync-transport';
+import { HttpSyncTransport, WorkspaceWsClient } from './sync-transport';
+import { LocalSyncManager } from './local-sync-manager';
+import type { SyncRemote } from './local-sync';
+import { isSafeRelPath } from './sync-plan';
 import { hostname, userInfo } from 'os';
 import { defaultDeviceName } from './device-name';
 import { accountKey, describeAccount, moveRoot, rootConflict, rootOf } from './workspace';
@@ -1325,6 +1328,18 @@ function ensureDeviceId(): string {
 
 // ── IPC: config ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.configGet, () => loadConfig());
+/** 서버 주소 확정 — 스킴이 없으면 https → http 순으로 실제로 두드려 정한다. */
+ipcMain.handle(CHANNELS.configProbeServer, async (_e, input: string) => {
+  const { resolveServerUrl } = await import('./server-probe');
+  return resolveServerUrl(String(input ?? ''), async (url) => {
+    // 상태코드는 무엇이든 좋다 — fetch 가 resolve 만 하면 그 스킴은 살아 있다.
+    await fetch(url, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(4000),
+    });
+  });
+});
 ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) => {
   // 서버 전환 = 계정 공간 전환: 구 서버의 세션/저장 자격 증명은 새 서버에서
   // 무의미하므로 여기서 전부 정리하고 재로그인을 요구한다. 원격 로그아웃은
@@ -1368,6 +1383,8 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
   // 로컬 셸 접근 토글/설정: 프로바이더를 재구성하고 카탈로그를 다시 광고한다
   // (켜면 브릿지가 없던 경우 뜨고, 끄면 도구가 카탈로그에서 빠진다).
   if (patch.localShell !== undefined || patch.browser !== undefined) syncMcp();
+  // 기본 작업 폴더/토글 변경 → 에이전트 workspace 로컬 동기화도 따라간다.
+  if (patch.localShell !== undefined) localSync?.reconcile();
   if (patch.theme) nativeTheme.themeSource = patch.theme;
   if (patch.linuxClickThrough !== undefined) {
     // 즉시 재적용: 클릭 통과가 켜진 오버레이는 마우스 이벤트를 못 받아
@@ -1490,7 +1507,16 @@ ipcMain.on(CHANNELS.authSsoComplete, (event, payload: unknown) => {
 
 ipcMain.handle(CHANNELS.authLogin, async (_e, email: string, password: string, remember?: boolean) => {
   const c = getClient();
-  const res = await c.login(email, password);
+  let res;
+  try {
+    res = await c.login(email, password);
+  } catch (e) {
+    // 예외를 그대로 던지면 렌더러에는 IPC 래핑 원문("Error invoking remote
+    // method 'auth:login': ApiError: POST /api/auth/login → 401")이 보인다.
+    // 구조화된 결과로 돌려 사람이 읽을 문장을 화면이 정하게 한다.
+    const { loginErrorMessage } = await import('./server-probe');
+    return { user: null, error: loginErrorMessage(e) };
+  }
   const tokenPersisted = await afterAuthSuccess(res.refreshToken);
   // Remember (or forget) credentials for auto-login, per the login-form checkbox.
   let credsPersisted = true;
@@ -2209,10 +2235,137 @@ function wireWorkspaceManager(): void {
         homeFolder: (body.devices ?? []).find((d) => d.device_id === me)?.home_folder ?? '',
       };
     },
-    onStatus: (s: unknown) => safeSend(mainWindow, CHANNELS.workspaceStatusEvent, s),
+    onStatus: (s: unknown) => {
+      safeSend(mainWindow, CHANNELS.workspaceStatusEvent, s);
+      // 연결 목록·로그인 상태가 바뀌면 로컬 동기화도 따라간다 (리컨사일은
+      // 멱등·저렴 — 목록 diff 뿐이다).
+      localSync?.reconcile();
+    },
   });
   void getWorkspaceManager()?.reconcile();
 }
+
+// ── 로컬 동기화 (에이전트 workspace ↔ 로컬 도구 기본 작업 폴더) ────────
+//
+// 커넥터로 접속한 에이전트는 서버 sandbox 대신 이 폴더를 워크스페이스로 쓴다.
+// sandbox 는 같은 인덱스를 attach/publish 하므로, 이 동기화가 곧 sandbox 와의
+// 동기화다 (웹 세션 ↔ 커넥터 세션이 같은 파일을 본다).
+let localSync: LocalSyncManager | null = null;
+
+/** 동기화 엔진용 전송 — 드라이브의 apiFor 와 같은 자격·주소, latest_seq 포함 타입. */
+function syncRemoteFor(workflowId: string): SyncRemote {
+  const transport = () =>
+    new HttpSyncTransport(
+      {
+        baseUrl: normalizeServerUrl(loadConfig().serverUrl),
+        token: liveAccessToken,
+        refreshAuth: refreshAuthToken,
+        workflowId,
+        deviceId: ensureDeviceId(),
+        fetch: (input, init) => net.fetch(input, init),
+        allowPrivateCertificate: loadConfig().allowPrivateCertificate === true,
+      },
+      join(app.getPath('userData'), 'sync-staging'),
+    );
+  return {
+    changes: (since) => transport().changes(since),
+    download: (path, toAbs) => transport().download(path, toAbs),
+    put: (path, fromAbs, baseSha) => transport().put(path, fromAbs, baseSha),
+    del: (path, baseSha, opts) => transport().del(path, baseSha, opts),
+    mkdir: (path) => transport().mkdir(path),
+  };
+}
+
+function wireLocalSync(): void {
+  localSync = new LocalSyncManager({
+    config: () => {
+      const cfg = loadConfig();
+      const shell = cfg.localShell ?? {};
+      return {
+        enabled: shell.enabled === true,
+        root: (shell.cwd ?? '').trim(),
+        targets: (currentWorkspace()?.agents ?? []).map((a) => ({
+          workflowId: a.workflowId,
+          label: a.label,
+          folder: a.folder,
+        })),
+      };
+    },
+    loggedIn: () => !!client?.user,
+    remoteFor: syncRemoteFor,
+    presenceFor: (owner: string, onChanged: () => void) =>
+      new WorkspaceWsClient(
+        {
+          baseUrl: normalizeServerUrl(loadConfig().serverUrl).replace(/\/$/, ''),
+          token: liveAccessToken,
+          refreshAuth: refreshAuthToken,
+          workflowId: owner,
+          deviceId: ensureDeviceId(),
+          deviceName: deviceNameOf(),
+          fetch: (input, init) => net.fetch(input, init),
+          allowPrivateCertificate: loadConfig().allowPrivateCertificate === true,
+        },
+        deviceNameOf(),
+        () => onChanged(),
+        () => undefined,
+      ),
+    stateDir: () =>
+      join(
+        app.getPath('userData'),
+        'local-sync',
+        (currentAccountKey() ?? 'anon').replace(/[^A-Za-z0-9._-]/g, '_'),
+      ),
+    deviceName: deviceNameOf(),
+    onStatus: (s) => safeSend(mainWindow, CHANNELS.syncStatusEvent, s),
+  });
+  localSync.reconcile();
+}
+
+ipcMain.handle(CHANNELS.syncStatus, () => {
+  return localSync?.status() ?? { enabled: false, reason: 'disabled', agents: [] };
+});
+ipcMain.handle(CHANNELS.syncNow, async (_e, workflowId?: unknown) => {
+  await localSync?.syncNow(typeof workflowId === 'string' ? workflowId : undefined);
+  return localSync?.status();
+});
+/** 동기화된 에이전트 폴더 나열 — 인앱 탐색기가 로컬 실파일을 그대로 본다. */
+ipcMain.handle(CHANNELS.syncList, async (_e, workflowId: unknown, rel: unknown) => {
+  const dir = typeof workflowId === 'string' ? localSync?.dirFor(workflowId) : null;
+  if (!dir) return [];
+  const relPath = typeof rel === 'string' ? rel : '';
+  if (relPath && !isSafeRelPath(relPath)) return [];
+  const abs = join(dir, ...relPath.split('/').filter(Boolean));
+  try {
+    const { readdir, stat } = await import('fs/promises');
+    const entries = await readdir(abs, { withFileTypes: true });
+    const out: Array<{ name: string; isDir: boolean; size: number; mtime: number }> = [];
+    for (const e of entries) {
+      if (e.name === '.xgeny-session') continue;
+      try {
+        const st = await stat(join(abs, e.name));
+        out.push({
+          name: e.name,
+          isDir: e.isDirectory(),
+          size: e.isFile() ? st.size : 0,
+          mtime: Math.floor(st.mtimeMs),
+        });
+      } catch {
+        /* 나열 도중 사라진 항목 */
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+});
+ipcMain.handle(CHANNELS.syncOpenPath, (_e, workflowId: unknown, rel: unknown) => {
+  const dir = typeof workflowId === 'string' ? localSync?.dirFor(workflowId) : null;
+  if (!dir) return { ok: false };
+  const relPath = typeof rel === 'string' ? rel : '';
+  if (relPath && !isSafeRelPath(relPath)) return { ok: false };
+  openInFileManager(join(dir, ...relPath.split('/').filter(Boolean)));
+  return { ok: true };
+});
 
 /** 워크스페이스 설정 변경 → 저장 + 마운트 리컨사일. */
 async function saveWorkspace(next: unknown): Promise<unknown> {
@@ -2475,6 +2628,7 @@ if (!gotLock) {
     createWindow();
     if (startHidden) mainWindow?.removeAllListeners('ready-to-show');
     wireWorkspaceManager();
+    wireLocalSync();
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
       createQuickChat();

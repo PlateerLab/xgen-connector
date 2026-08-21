@@ -40,8 +40,13 @@ export const Login: React.FC<{
     setBusy(true);
     setError(null);
     try {
-      const { user, tokenPersisted, credsPersisted } = await xgen.auth.login(email, password, remember);
-      if (!user) throw new Error('이메일 또는 비밀번호가 올바르지 않습니다.');
+      const { user, tokenPersisted, credsPersisted, error } = await xgen.auth.login(
+        email,
+        password,
+        remember,
+      );
+      // main 이 실패 사유를 구조화해 돌려준다 — IPC 예외 원문이 화면에 새지 않는다.
+      if (!user) throw new Error(error || '이메일 또는 비밀번호가 올바르지 않습니다.');
       // 저장 실패 표면화 (무음 금지, geny-connector saved===false 동형):
       // 로그인은 됐지만 세션이 이 실행에만 유지된다 — 리눅스 키링 부재 등.
       // 화면 전환으로 경고가 묻히지 않게 [계속] 확인 후 진입한다.
@@ -72,7 +77,9 @@ export const Login: React.FC<{
     try {
       const { user, tokenPersisted } = await xgen.auth.ssoLogin();
       if (tokenPersisted === false) {
-        setWarn('SSO 로그인은 되었지만 보안 저장소를 사용할 수 없어 앱을 재시작하면 다시 로그인해야 합니다.');
+        setWarn(
+          'SSO 로그인은 되었지만 보안 저장소를 사용할 수 없어 앱을 재시작하면 다시 로그인해야 합니다.',
+        );
         setPendingUser(user);
         return;
       }
@@ -135,7 +142,11 @@ export const Login: React.FC<{
           </label>
 
           <label className="remember">
-            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+            />
             <span>자동 로그인</span>
           </label>
 

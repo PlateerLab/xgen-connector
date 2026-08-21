@@ -16,7 +16,7 @@ import { randomUUID } from 'crypto'
 import { diag } from './diag-log'
 import { clearStale, preflight, rescueStrays } from './fuse-mount'
 import { mountWebdav, unmountWebdav } from './mount-runner'
-import { WorkspaceDavBackend, type BackendAgent, type WorkspaceApi } from './workspace-backend'
+import { WorkspaceDavBackend, type WorkspaceApi } from './workspace-backend'
 import { startDavServer, type DavServerHandle } from './webdav-server'
 import { detectMountSupport, type MountSupport } from './workspace-mounts'
 import {
@@ -711,17 +711,14 @@ export class WorkspaceManager {
       await clearStale(path)
     }
 
-    // 붙은 에이전트가 없으면 **플랫폼 판정조차 하지 않는다** — 판정이
-    // 네이티브 바인딩을 로드하므로, 갓 설치한 사용자가 앱을 켜자마자
-    // 그것 때문에 죽는 일이 없어야 한다.
-    // 에이전트가 하나도 없어도 **사용자 클라우드 스토리지가 있으면 마운트**한다
-    // — 내 스토리지를 쓰는 데 에이전트 연결이 전제일 이유가 없다.
-    // 로그인 상태에서만 서버에 물어본다 (로그아웃이면 어차피 걷는다).
+    // 드라이브는 **사용자 클라우드 스토리지만** 서빙한다 — 에이전트 워크스페이스는
+    // local-sync 가 실제 폴더로 다룬다. 클라우드가 없으면(로그아웃·게이트 꺼짐)
+    // 마운트할 것이 없다. 플랫폼 판정(네이티브 바인딩 로드)도 그때까지 미룬다 —
+    // 갓 설치한 사용자가 앱을 켜자마자 그것 때문에 죽는 일이 없어야 한다.
     const userApi = this.deps.loggedIn()
       ? await this.probeUserStorage(this.deps.userApi?.() ?? null)
       : null
-    const hasUser = !!userApi
-    if ((agents.length === 0 && !hasUser) || !this.deps.loggedIn()) {
+    if (!userApi || !this.deps.loggedIn()) {
       if (this.mountedPath) await this.teardown()
       this.deps.onStatus?.({
         supported: this.supportCache?.supported ?? true,
@@ -731,9 +728,10 @@ export class WorkspaceManager {
         mounted: false,
         error: this.lastError,
         storageOff: this.storageOff,
-      cloudApproval: this.cloudApproval,
-      cloudApprovalDetail: this.cloudApprovalDetail,
-        agents: [],
+        cloudApproval: this.cloudApproval,
+        cloudApprovalDetail: this.cloudApprovalDetail,
+        // 연결 목록(사본)은 그대로 알린다 — local-sync 와 UI 가 이 목록을 쓴다.
+        agents: agents.map((a) => ({ workflowId: a.workflowId, label: a.label, folder: a.folder })),
       })
       return
     }
@@ -744,22 +742,17 @@ export class WorkspaceManager {
       return
     }
 
-    // 백엔드는 마운트 유무와 무관하게 항상 최신 목록을 들고 있어야 한다.
-    // 루트 = 사용자 클라우드 스토리지, 그 안에 연결된 에이전트가 폴더로.
+    // 백엔드는 마운트 유무와 무관하게 항상 최신 배선을 들고 있어야 한다.
+    // 루트 = 사용자 클라우드 스토리지 그 자체.
     this.backend.setUserStorage(userApi)
-    const wired: BackendAgent[] = agents.map((a) => ({
-      folder: a.folder,
-      api: this.deps.apiFor(a.workflowId),
-    }))
-    this.backend.setAgents(wired)
 
     if (this.mountedPath) {
-      this.syncPresence(userApi, agents)
-      this.emit() // 이미 붙어 있다 — 목록만 갱신되면 된다
+      this.syncPresence(userApi)
+      this.emit() // 이미 붙어 있다 — 배선만 갱신되면 된다
       return
     }
     await this.setup()
-    if (this.mountedPath) this.syncPresence(userApi, agents)
+    if (this.mountedPath) this.syncPresence(userApi)
     this.emit()
   }
 
@@ -769,15 +762,13 @@ export class WorkspaceManager {
    * 마운트되어 있는 동안만 유지한다 — 드라이브가 없는데 "이 PC 가 붙어 있다"고
    * 알리면 웹에서 연결된 것처럼 보이는데 실제로는 아무것도 동기화되지 않는다.
    */
-  private syncPresence(
-    userApi: WorkspaceApi | null,
-    agents: Array<{ workflowId: string; folder: string }>,
-  ): void {
+  private syncPresence(userApi: WorkspaceApi | null): void {
     if (!this.deps.presenceFor) return
     const want = new Map<string, string>() // owner → 캐시 키
     const userOwner = userApi ? (this.deps.userOwner?.() ?? null) : null
     if (userOwner) want.set(userOwner, '')
-    for (const a of agents) want.set(a.workflowId, a.folder)
+    // 에이전트 owner 의 접속 표시는 local-sync 가 소유한다 — 여기는 드라이브가
+    // 실제로 서빙하는 사용자 스토리지 하나만 알린다.
 
     for (const [owner, p] of [...this.presence]) {
       if (!want.has(owner)) {

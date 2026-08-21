@@ -72,6 +72,29 @@ export interface WorkspaceEntryLike {
   mtime: number;
 }
 
+/** 로컬 동기화 상태 (main local-sync-manager.LocalSyncStatus 미러). */
+export interface LocalSyncStatusLike {
+  enabled: boolean;
+  reason?: 'disabled' | 'no-root' | 'logged-out';
+  root?: string;
+  agents: Array<{
+    workflowId: string;
+    label: string;
+    folder: string;
+    dir: string;
+    syncing: boolean;
+    lastSyncAt?: number;
+    lastError?: string;
+    last?: {
+      downloaded: number;
+      uploaded: number;
+      deletedLocal: number;
+      deletedRemote: number;
+      conflicts: number;
+    };
+  }>;
+}
+
 /** Local-MCP bridge status pushed to the settings UI. */
 export interface McpBridgeStatusLike {
   enabled: boolean;
@@ -117,6 +140,9 @@ const api = {
     get: (): Promise<ConnectorConfig> => ipcRenderer.invoke(CHANNELS.configGet),
     set: (patch: Partial<ConnectorConfig>): Promise<ConnectorConfig> =>
       ipcRenderer.invoke(CHANNELS.configSet, patch),
+    /** 서버 주소 확정 — 스킴이 없으면 main 이 https → http 순으로 두드려 정한다. */
+    probeServer: (input: string): Promise<{ url: string } | { error: string }> =>
+      ipcRenderer.invoke(CHANNELS.configProbeServer, input),
     onChange: (cb: (c: ConnectorConfig) => void): (() => void) => {
       const h = (_e: unknown, c: ConnectorConfig) => cb(c);
       ipcRenderer.on(CHANNELS.configChanged, h);
@@ -129,8 +155,13 @@ const api = {
       email: string,
       password: string,
       remember?: boolean,
-    ): Promise<{ user: CurrentUser | null; tokenPersisted?: boolean; credsPersisted?: boolean }> =>
-      ipcRenderer.invoke(CHANNELS.authLogin, email, password, remember),
+    ): Promise<{
+      user: CurrentUser | null;
+      tokenPersisted?: boolean;
+      credsPersisted?: boolean;
+      /** 로그인 거절/실패 사유 — 있으면 user 는 null 이고 화면에 이 문장을 보인다. */
+      error?: string;
+    }> => ipcRenderer.invoke(CHANNELS.authLogin, email, password, remember),
     ssoLogin: (): Promise<{ user: CurrentUser; tokenPersisted: boolean }> =>
       ipcRenderer.invoke(CHANNELS.authSsoLogin),
     restore: (): Promise<{ user: CurrentUser | null; offline?: boolean }> =>
@@ -408,7 +439,7 @@ const api = {
     /** 연결된 에이전트 목록만 다시 읽는다 — 파일 캐시는 건드리지 않는다. */
     refreshAgents: (): Promise<WorkspaceStatusLike> =>
       ipcRenderer.invoke(CHANNELS.workspaceRefreshAgents),
-    /** 인앱 탐색기 — 드라이브 폴더(`/클라우드/…`, `/에이전트/<폴더>/…`) 직계 자식. */
+    /** 인앱 탐색기 — 드라이브(=클라우드 루트) 폴더의 직계 자식. */
     list: (path: string): Promise<WorkspaceEntryLike[]> =>
       ipcRenderer.invoke(CHANNELS.workspaceList, path),
     /** 드라이브 안 경로를 OS 파일 관리자/기본 앱으로 연다 (마운트 시에만). */
@@ -418,6 +449,25 @@ const api = {
       const h = (_e: unknown, s: WorkspaceStatusLike) => cb(s);
       ipcRenderer.on(CHANNELS.workspaceStatusEvent, h);
       return () => ipcRenderer.removeListener(CHANNELS.workspaceStatusEvent, h);
+    },
+  },
+
+  /** 로컬 동기화 — 에이전트 workspace 저장소 ↔ 로컬 도구 기본 작업 폴더. */
+  sync: {
+    status: (): Promise<LocalSyncStatusLike> => ipcRenderer.invoke(CHANNELS.syncStatus),
+    /** 지금 동기화 — workflowId 없으면 전부. */
+    now: (workflowId?: string): Promise<LocalSyncStatusLike> =>
+      ipcRenderer.invoke(CHANNELS.syncNow, workflowId),
+    /** 동기화된 에이전트 폴더의 직계 자식 (로컬 실파일). */
+    list: (workflowId: string, rel?: string): Promise<WorkspaceEntryLike[]> =>
+      ipcRenderer.invoke(CHANNELS.syncList, workflowId, rel ?? ''),
+    /** 동기화 폴더 안 경로를 OS 로 연다. */
+    openPath: (workflowId: string, rel?: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.syncOpenPath, workflowId, rel ?? ''),
+    onStatus: (cb: (s: LocalSyncStatusLike) => void): (() => void) => {
+      const h = (_e: unknown, s: LocalSyncStatusLike) => cb(s);
+      ipcRenderer.on(CHANNELS.syncStatusEvent, h);
+      return () => ipcRenderer.removeListener(CHANNELS.syncStatusEvent, h);
     },
   },
 

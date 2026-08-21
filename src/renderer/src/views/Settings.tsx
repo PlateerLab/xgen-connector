@@ -623,6 +623,11 @@ export const Settings: React.FC<{
                         onChange={(e) => setShellCwd(e.target.value)}
                         onBlur={() => commitShell()}
                       />
+                      <span className="small muted" style={{ marginTop: 4 }}>
+                        지정하면 <b>연결된 에이전트의 워크스페이스</b>가 이 폴더 아래로
+                        동기화됩니다 — 커넥터로 접속한 에이전트는 서버 sandbox 대신 그
+                        폴더를 자기 작업 공간으로 씁니다. (스토리지 탭에서 에이전트 연결)
+                      </span>
                     </label>
                     <div className="field-row">
                       <span>명령 시간 제한 <span className="small muted">(초)</span></span>
