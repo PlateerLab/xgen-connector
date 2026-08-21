@@ -111,7 +111,6 @@ export const Workspace: React.FC<{
   const [layout, setLayout] = useState<WorkspaceLayout>(() =>
     normalizeWorkspaceLayout(config.ui?.workspaceLayout ?? newWorkspaceLayout()),
   );
-  const [showSettings, setShowSettings] = useState(false);
   const [overlayOn, setOverlayOn] = useState(config.avatarOverlay ?? false);
   const [notice, setNotice] = useState('');
   const [browserConnection, setBrowserConnection] = useState<BrowserConnectionEvent | null>(null);
@@ -236,8 +235,6 @@ export const Workspace: React.FC<{
   }, [overlayOn, onConfigChange]);
 
   useEffect(() => xgen.config.onChange((next) => setOverlayOn(!!next.avatarOverlay)), []);
-  useEffect(() => xgen.appctl.onOpenSettings(() => setShowSettings(true)), []);
-
   const pressAvatar = useCallback(() => {
     setLayout((current) => {
       const existing = findTab(current, 'avatar');
@@ -252,6 +249,36 @@ export const Workspace: React.FC<{
       return addWorkspaceTab(current, current.focusedGroupId, { id: 'avatar', kind: 'avatar' });
     });
   }, []);
+
+  // 설정은 모달이 아니라 **메인 영역 탭**이다 — 전체 영역을 쓰고, 다른 탭과
+  // 같은 규칙(선택·닫기·분할 이동)을 따른다. 열려 있으면 포커스, 활성 상태에서
+  // 다시 누르면 닫힘 (아바타 탭과 같은 토글 규칙).
+  const pressSettings = useCallback(() => {
+    setLayout((current) => {
+      const existing = findTab(current, 'settings');
+      if (
+        existing &&
+        current.focusedGroupId === existing.group.id &&
+        existing.group.activeTabId === 'settings'
+      ) {
+        return removeWorkspaceTab(current, 'settings');
+      }
+      if (existing) return selectWorkspaceTab(current, existing.group.id, 'settings');
+      return addWorkspaceTab(current, current.focusedGroupId, { id: 'settings', kind: 'settings' });
+    });
+  }, []);
+
+  /** 설정 탭을 연다 (토글 아님 — 안내 배너·탐색기 버튼·트레이용). */
+  const openSettings = useCallback(() => {
+    setLayout((current) => {
+      const existing = findTab(current, 'settings');
+      if (existing) return selectWorkspaceTab(current, existing.group.id, 'settings');
+      return addWorkspaceTab(current, current.focusedGroupId, { id: 'settings', kind: 'settings' });
+    });
+  }, []);
+
+  // 트레이/오버레이의 "설정 열기"도 이제 탭을 연다.
+  useEffect(() => xgen.appctl.onOpenSettings(openSettings), [openSettings]);
 
   const selectTab = useCallback((groupId: string, tabId: string) => {
     if (suppressClickRef.current) {
@@ -293,8 +320,8 @@ export const Workspace: React.FC<{
         return;
       }
       if (!browserState.enabled) {
-        setNotice('설정 > 로컬 도구에서 브라우저 접근을 먼저 켜 주세요.');
-        setShowSettings(true);
+        setNotice('설정 > 브라우저에서 브라우저 접근을 먼저 켜 주세요.');
+        openSettings();
         return;
       }
       const tabId = `browser:${workflow.id}`;
@@ -423,11 +450,11 @@ export const Workspace: React.FC<{
       window.removeEventListener('pointerup', up, true);
       window.removeEventListener('pointercancel', up, true);
       document.body.classList.remove('workspace-tab-dragging');
-        if (started && preview) {
-          suppressClickRef.current = true;
-          setTimeout(() => {
-            suppressClickRef.current = false;
-          }, 0);
+      if (started && preview) {
+        suppressClickRef.current = true;
+        setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
         setLayout((current) =>
           dropWorkspaceTab(
             current,
@@ -503,6 +530,9 @@ export const Workspace: React.FC<{
   const avatarActive = layout.groups.some(
     (group) => group.id === layout.focusedGroupId && group.activeTabId === 'avatar',
   );
+  const settingsActive = layout.groups.some(
+    (group) => group.id === layout.focusedGroupId && group.activeTabId === 'settings',
+  );
 
   const renderGroupContent = (group: WorkspaceGroup) => {
     const active = group.tabs.find((tab) => tab.id === group.activeTabId) ?? null;
@@ -518,6 +548,18 @@ export const Workspace: React.FC<{
           addressSearch={config.browser?.addressSearch}
           onSurface={reportSurface}
         />
+      );
+    }
+    if (active?.kind === 'settings') {
+      return (
+        <div className="pane-fill">
+          <Settings
+            embedded
+            config={config}
+            onClose={() => closeTab(active)}
+            onChanged={onConfigChange}
+          />
+        </div>
       );
     }
     if (active?.kind === 'avatar') {
@@ -554,7 +596,8 @@ export const Workspace: React.FC<{
         onToggleOverlay={() => void toggleOverlay()}
         avatarActive={avatarActive}
         onOpenAvatar={pressAvatar}
-        onOpenSettings={() => setShowSettings(true)}
+        settingsActive={settingsActive}
+        onOpenSettings={pressSettings}
         userName={displayName}
         onLogout={onLogout}
       />
@@ -571,7 +614,7 @@ export const Workspace: React.FC<{
           className="panel-host"
           style={{ display: sideView === 'explorer' ? undefined : 'none' }}
         >
-          <ExplorerPanel onOpenSettings={() => setShowSettings(true)} />
+          <ExplorerPanel onOpenSettings={openSettings} />
         </div>
         <div className="sidebar-resize" onMouseDown={startSidebarResize} />
       </aside>
@@ -652,10 +695,12 @@ export const Workspace: React.FC<{
             ×
           </button>
         </div>
-      ) : notice && (
-        <div className="workspace-notice" role="status">
-          {notice}
-        </div>
+      ) : (
+        notice && (
+          <div className="workspace-notice" role="status">
+            {notice}
+          </div>
+        )
       )}
       {drag && (
         <div className="workspace-drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>
@@ -668,14 +713,6 @@ export const Workspace: React.FC<{
         dragging={!!drag || resizingSplit}
         onFocusPage={focusBrowserPage}
       />
-
-      {showSettings && (
-        <Settings
-          config={config}
-          onClose={() => setShowSettings(false)}
-          onChanged={onConfigChange}
-        />
-      )}
     </div>
   );
 };

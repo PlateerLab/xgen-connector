@@ -29,6 +29,8 @@ export const ActivityBar: React.FC<{
   onToggleOverlay: () => void;
   avatarActive: boolean;
   onOpenAvatar: () => void;
+  /** 설정 탭이 지금 보이는가 — 아이콘에 활성 표시. */
+  settingsActive: boolean;
   onOpenSettings: () => void;
   userName: string;
   onLogout: () => void;
@@ -40,6 +42,7 @@ export const ActivityBar: React.FC<{
   onToggleOverlay,
   avatarActive,
   onOpenAvatar,
+  settingsActive,
   onOpenSettings,
   userName,
   onLogout,
@@ -87,7 +90,12 @@ export const ActivityBar: React.FC<{
           {avatarActive && <span className="ab-ind" />}
           <AvatarIcon size={21} />
         </button>
-        <button className="ab-btn" title="설정" onClick={onOpenSettings}>
+        <button
+          className={`ab-btn ${settingsActive ? 'active' : ''}`}
+          title="설정"
+          onClick={onOpenSettings}
+        >
+          {settingsActive && <span className="ab-ind" />}
           <SettingsIcon size={21} />
         </button>
         <div className="ab-account">
