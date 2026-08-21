@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { xgen } from '../bridge';
 import type { McpServerConfig } from '../../../main/config';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
+import { Selector } from './Selector';
 import {
   McpImportError,
   parseMcpConfig,
@@ -879,17 +880,18 @@ export const McpSettings: React.FC<{ onClose: () => void; embedded?: boolean }> 
                   비워 두면 기존 값이 유지되고 새 값을 입력하면 교체됩니다.
                 </span>
               </label>
-              <label className="field">
+              <div className="field">
                 <span>인증</span>
-                <select
-                  className="mcp-select"
+                <Selector
                   value={draft.auth}
-                  onChange={(e) => setDraft({ ...draft, auth: e.target.value as 'none' | 'oauth' })}
-                >
-                  <option value="none">없음 (헤더/토큰 직접 입력)</option>
-                  <option value="oauth">OAuth 2.1 (브라우저 로그인)</option>
-                </select>
-              </label>
+                  onChange={(v) => setDraft({ ...draft, auth: v as 'none' | 'oauth' })}
+                  options={[
+                    { value: 'none', label: '없음 (헤더/토큰 직접 입력)' },
+                    { value: 'oauth', label: 'OAuth 2.1 (브라우저 로그인)' },
+                  ]}
+                  ariaLabel="인증 방식 선택"
+                />
+              </div>
               {draft.auth === 'oauth' && (
                 <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: -4 }}>
                   <button

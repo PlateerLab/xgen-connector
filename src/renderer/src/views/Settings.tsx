@@ -10,6 +10,7 @@ import { HotkeyCapture } from './HotkeyCapture';
 import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
+import { Selector } from './Selector';
 import {
   BrowserIcon,
   CloseIcon,
@@ -671,23 +672,21 @@ export const Settings: React.FC<{
                     </label>
                   </div>
                   {browserSearchOn && (
-                    <label className="field">
+                    <div className="field">
                       <span>검색 엔진</span>
-                      <select
+                      <Selector
                         value={browserSearchProvider}
-                        onChange={(event) => {
-                          const provider = event.target.value as BrowserSearchProvider;
-                          setBrowserSearchProvider(provider);
-                          commitBrowser({ searchProvider: provider });
+                        onChange={(provider) => {
+                          setBrowserSearchProvider(provider as BrowserSearchProvider);
+                          commitBrowser({ searchProvider: provider as BrowserSearchProvider });
                         }}
-                      >
-                        {Object.entries(BROWSER_SEARCH_PROVIDERS).map(([id, provider]) => (
-                          <option key={id} value={id}>
-                            {provider.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        options={Object.entries(BROWSER_SEARCH_PROVIDERS).map(([id, provider]) => ({
+                          value: id,
+                          label: provider.label,
+                        }))}
+                        ariaLabel="검색 엔진 선택"
+                      />
+                    </div>
                   )}
                   <p className="settings-hint warn">
                     페이지 내용은 신뢰하지 않는 데이터로 처리됩니다. 쿠키·스토리지, 업로드·다운로드,

@@ -12,6 +12,7 @@ import React, { useEffect, useState } from 'react';
 import { xgen } from '../bridge';
 import type { LocalSyncStatusLike, WorkspaceStatusLike } from '../../../preload/index';
 import { syncedAgo } from './explorer-model';
+import { Selector } from './Selector';
 
 type AgentOption = { id: string; name: string };
 
@@ -393,21 +394,19 @@ export const SyncSettings: React.FC<{ onClose?: () => void; embedded?: boolean }
             )}
 
             <div className="row" style={{ marginTop: 8, gap: 6 }}>
-              <select
+              <Selector
                 className="grow"
+                searchable
                 value={sel}
-                onChange={(e) => setSel(e.target.value)}
+                onChange={setSel}
+                options={addable.map((a) => ({ value: a.id, label: a.name }))}
+                placeholder={addable.length === 0 ? '추가할 에이전트가 없습니다' : '에이전트 선택…'}
+                searchPlaceholder="에이전트 검색…"
+                emptyText="일치하는 에이전트가 없습니다"
                 disabled={addable.length === 0}
-              >
-                <option value="">
-                  {addable.length === 0 ? '추가할 에이전트가 없습니다' : '에이전트 선택…'}
-                </option>
-                {addable.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
+                ariaLabel="연결할 에이전트 선택"
+                uiId="sync-agent-selector"
+              />
               <button
                 className="primary"
                 disabled={!sel || !!busy}

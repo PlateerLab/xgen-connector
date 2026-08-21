@@ -2471,6 +2471,189 @@ button {
   flex-direction: column;
   gap: 4px;
 }
+/* ─── Selector — xgen 표준 셀렉터 (검색형 포함) ─── */
+.selector {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+}
+.selector.grow {
+  flex: 1;
+  min-width: 0;
+}
+/* .field 안에서는 폭을 꽉 채운다 (네이티브 select 대체 시 동일 폭). */
+.field > .selector {
+  display: flex;
+  width: 100%;
+}
+.selector.size-sm {
+  --selector-h: 32px;
+  --selector-fs: 12px;
+}
+.selector.size-md {
+  --selector-h: 36px;
+  --selector-fs: 13px;
+}
+.selector.size-lg {
+  --selector-h: 40px;
+  --selector-fs: 14px;
+}
+.selector-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: var(--selector-h);
+  min-width: 128px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: var(--selector-fs);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.selector-trigger:hover:not(:disabled) {
+  border-color: var(--gray-300);
+}
+.selector-trigger.open,
+.selector-trigger:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+.selector-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.selector-trigger.placeholder .selector-value {
+  color: var(--muted);
+}
+.selector-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.selector-value .selector-opt-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.selector-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.selector-trigger.open .selector-chevron {
+  transform: rotate(180deg);
+}
+
+/* 팝오버 — 트리거 아래로 펼친다 (radix 포털 대신 absolute). */
+.selector-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1200;
+  width: 100%;
+  min-width: 160px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.selector-search {
+  padding: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.selector-search input {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.selector-search input:focus {
+  border-color: var(--primary);
+}
+.selector-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.selector-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.selector-opt.active {
+  background: var(--panel-2);
+}
+.selector-opt.selected {
+  color: var(--primary);
+  font-weight: 600;
+}
+.selector-opt:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.selector-opt-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.selector-opt-main .selector-opt-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selector-opt-icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.selector-opt-count {
+  color: var(--muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.selector-check {
+  color: var(--primary);
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.selector-empty {
+  padding: 22px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* 설정 페이지 — 모달의 승격판. 메인 영역 탭 전체를 쓰고, 내용은 읽기 좋은
    폭으로 가운데 정렬한다 (설정을 화면 폭 전체로 펴면 라벨↔컨트롤이 멀어진다). */
 .settings-page {

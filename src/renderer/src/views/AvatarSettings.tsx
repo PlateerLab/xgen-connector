@@ -19,6 +19,7 @@ import { AvatarModel, type AvatarTransform } from '../avatar/Live2DCanvas';
 import { AvatarCropModal } from './AvatarCropModal';
 import { AvatarNameModal, dedupeName } from './AvatarNameModal';
 import { BackIcon, PencilIcon, TrashIcon, UploadIcon } from '../brand/icons';
+import { Selector } from './Selector';
 
 const IMAGE_RE = /\.(png|jpe?g|webp)$/i;
 
@@ -37,12 +38,12 @@ function assetUrl(u: string): string {
 const runtimeLabel = (r: string) => (r === 'spine' ? 'Spine' : r === 'image' ? '사진' : 'Live2D');
 
 /** 5-star rating — readonly, or interactive (hover + click). */
-const Stars: React.FC<{ value: number; size?: number; interactive?: boolean; onRate?: (s: number) => void }> = ({
-  value,
-  size = 14,
-  interactive,
-  onRate,
-}) => {
+const Stars: React.FC<{
+  value: number;
+  size?: number;
+  interactive?: boolean;
+  onRate?: (s: number) => void;
+}> = ({ value, size = 14, interactive, onRate }) => {
   const [hover, setHover] = useState(0);
   const shown = interactive && hover ? hover : value;
   return (
@@ -63,7 +64,10 @@ const Stars: React.FC<{ value: number; size?: number; interactive?: boolean; onR
   );
 };
 
-const StorePreview: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = ({ avatar, serverUrl }) => {
+const StorePreview: React.FC<{ avatar: AvatarDescriptor; serverUrl: string }> = ({
+  avatar,
+  serverUrl,
+}) => {
   if (avatar.runtime === 'image') {
     return <img src={assetUrl(avatar.modelUrl)} alt={avatar.name} className="avset-store-img" />;
   }
@@ -108,16 +112,21 @@ const PublishModal: React.FC<{
             닫기
           </button>
         </div>
-        <label className="field">
+        <div className="field">
           <span>등록할 아바타</span>
-          <select value={selectedId} onChange={(e) => pick(e.target.value)}>
-            {myAvatars.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} · {runtimeLabel(a.runtime)}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Selector
+            value={selectedId}
+            onChange={pick}
+            options={myAvatars.map((a) => ({
+              value: a.id,
+              label: `${a.name} · ${runtimeLabel(a.runtime)}`,
+              keywords: a.name,
+            }))}
+            searchable={myAvatars.length > 8}
+            searchPlaceholder="아바타 검색…"
+            ariaLabel="등록할 아바타 선택"
+          />
+        </div>
         <label className="field">
           <span>이름</span>
           <input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
@@ -136,7 +145,11 @@ const PublishModal: React.FC<{
           <button className="secondary" onClick={onClose} disabled={busy}>
             취소
           </button>
-          <button className="primary" onClick={() => void submit()} disabled={busy || !selected || !name.trim()}>
+          <button
+            className="primary"
+            onClick={() => void submit()}
+            disabled={busy || !selected || !name.trim()}
+          >
             {busy ? '등록 중…' : '등록'}
           </button>
         </div>
@@ -191,7 +204,9 @@ export const AvatarSettings: React.FC<{
   }, []);
 
   const avatars = config?.avatars ?? [];
-  const selected = config ? (avatars.find((a) => a.id === config.defaultAvatarId) ?? avatars[0] ?? null) : null;
+  const selected = config
+    ? (avatars.find((a) => a.id === config.defaultAvatarId) ?? avatars[0] ?? null)
+    : null;
 
   /** main 의 read-modify-write op 를 실행하고 반환된 최신 config 를 반영. */
   const run = useCallback(
@@ -292,7 +307,14 @@ export const AvatarSettings: React.FC<{
       const id = selected?.id;
       if (!id) return;
       setConfig((c) =>
-        c ? { ...c, avatars: c.avatars.map((a) => (a.id === id ? { ...a, scale: tf.scale, position: tf.position } : a)) } : c,
+        c
+          ? {
+              ...c,
+              avatars: c.avatars.map((a) =>
+                a.id === id ? { ...a, scale: tf.scale, position: tf.position } : a,
+              ),
+            }
+          : c,
       );
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
@@ -337,7 +359,14 @@ export const AvatarSettings: React.FC<{
       try {
         const descriptor = await xgen.avatars.storeDownload(item.storeId);
         await run(
-          () => xgen.avatars.add(descriptor, dedupeName(descriptor.name, avatars.map((a) => a.name))),
+          () =>
+            xgen.avatars.add(
+              descriptor,
+              dedupeName(
+                descriptor.name,
+                avatars.map((a) => a.name),
+              ),
+            ),
           '내 아바타에 추가했습니다.',
         );
         await refreshStore();
@@ -368,7 +397,9 @@ export const AvatarSettings: React.FC<{
 
   const rate = useCallback(
     async (item: StoreAvatar, stars: number) => {
-      setItems((prev) => prev.map((i) => (i.storeId === item.storeId ? { ...i, myRating: stars } : i))); // optimistic
+      setItems((prev) =>
+        prev.map((i) => (i.storeId === item.storeId ? { ...i, myRating: stars } : i)),
+      ); // optimistic
       try {
         const updated = await xgen.avatars.storeRate(item.storeId, stars);
         setItems((prev) => prev.map((i) => (i.storeId === item.storeId ? updated : i)));
@@ -436,12 +467,23 @@ export const AvatarSettings: React.FC<{
             <div className="avset-card">
               <p className="avset-card-title">아바타 추가</p>
               <p className="small muted" style={{ margin: '0 0 12px' }}>
-                Live2D/Spine 모델(zip) 또는 사진(png/jpg)을 업로드하세요. 사진은 간단히 크롭할 수 있고, 추가 전에
-                미리보기로 정상 동작을 확인한 뒤 이름을 정합니다.
+                Live2D/Spine 모델(zip) 또는 사진(png/jpg)을 업로드하세요. 사진은 간단히 크롭할 수
+                있고, 추가 전에 미리보기로 정상 동작을 확인한 뒤 이름을 정합니다.
               </p>
-              <input ref={fileRef} type="file" accept=".zip,.png,.jpg,.jpeg,.webp" hidden onChange={onFileChange} />
-              <button className="primary" onClick={() => fileRef.current?.click()} disabled={uploading}>
-                <UploadIcon size={15} /> {uploading ? '업로드 중…' : '아바타 업로드 (모델 zip / 사진)'}
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".zip,.png,.jpg,.jpeg,.webp"
+                hidden
+                onChange={onFileChange}
+              />
+              <button
+                className="primary"
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+              >
+                <UploadIcon size={15} />{' '}
+                {uploading ? '업로드 중…' : '아바타 업로드 (모델 zip / 사진)'}
               </button>
             </div>
 
@@ -454,7 +496,12 @@ export const AvatarSettings: React.FC<{
                   휠로 확대/축소, 드래그로 위치를 맞추면 오버레이에도 그대로 적용됩니다.
                 </p>
                 <div className="avset-preview">
-                  <AvatarModel key={selected.id} avatar={selected} serverUrl={serverUrl} onTransform={onTransform} />
+                  <AvatarModel
+                    key={selected.id}
+                    avatar={selected}
+                    serverUrl={serverUrl}
+                    onTransform={onTransform}
+                  />
                 </div>
               </div>
             )}
@@ -470,12 +517,20 @@ export const AvatarSettings: React.FC<{
                   const isSelected = selected?.id === a.id;
                   return (
                     <div key={a.id} className={`avset-item ${isSelected ? 'selected' : ''}`}>
-                      <button className="avset-item-main" onClick={() => onSelect(a.id)} title="선택">
-                        <span className={`avset-radio ${isSelected ? 'on' : ''}`}>{isSelected && <span />}</span>
+                      <button
+                        className="avset-item-main"
+                        onClick={() => onSelect(a.id)}
+                        title="선택"
+                      >
+                        <span className={`avset-radio ${isSelected ? 'on' : ''}`}>
+                          {isSelected && <span />}
+                        </span>
                         {a.runtime === 'image' ? (
                           <img src={assetUrl(a.modelUrl)} alt={a.name} className="avset-thumb" />
                         ) : (
-                          <span className="avset-thumb letter">{(a.name || '?').slice(0, 1).toUpperCase()}</span>
+                          <span className="avset-thumb letter">
+                            {(a.name || '?').slice(0, 1).toUpperCase()}
+                          </span>
                         )}
                         <span className="avset-item-name">
                           <span className="nm">{a.name}</span>
@@ -483,10 +538,20 @@ export const AvatarSettings: React.FC<{
                           {isSelected && <span className="avset-badge ok">사용 중</span>}
                         </span>
                       </button>
-                      <button className="icon-btn" title="이름 변경" onClick={() => setRenaming(a)} disabled={busy}>
+                      <button
+                        className="icon-btn"
+                        title="이름 변경"
+                        onClick={() => setRenaming(a)}
+                        disabled={busy}
+                      >
                         <PencilIcon size={14} />
                       </button>
-                      <button className="icon-btn" title="삭제" onClick={() => setConfirmDelete(a)} disabled={busy}>
+                      <button
+                        className="icon-btn"
+                        title="삭제"
+                        onClick={() => setConfirmDelete(a)}
+                        disabled={busy}
+                      >
                         <TrashIcon size={14} />
                       </button>
                     </div>
@@ -504,7 +569,11 @@ export const AvatarSettings: React.FC<{
                   공유된 아바타를 내려받아 바로 사용할 수 있습니다.
                 </p>
               </div>
-              <button className="primary" onClick={() => setShowPublish(true)} disabled={avatars.length === 0}>
+              <button
+                className="primary"
+                onClick={() => setShowPublish(true)}
+                disabled={avatars.length === 0}
+              >
                 등록
               </button>
             </div>
@@ -528,7 +597,9 @@ export const AvatarSettings: React.FC<{
                       <p className="avset-store-desc">{item.description || '—'}</p>
                       <div className="avset-store-meta">
                         <Stars value={item.ratingAvg} />
-                        <span className="strong">{item.ratingAvg ? item.ratingAvg.toFixed(1) : '—'}</span>
+                        <span className="strong">
+                          {item.ratingAvg ? item.ratingAvg.toFixed(1) : '—'}
+                        </span>
                         <span>({item.ratingCount})</span>
                       </div>
                       <div className="avset-store-meta dim">
@@ -536,7 +607,12 @@ export const AvatarSettings: React.FC<{
                         {item.downloads || 0}회 내려받음
                       </div>
                       <div className="avset-store-meta dim">
-                        내 평점 <Stars value={item.myRating ?? 0} interactive onRate={(s) => void rate(item, s)} />
+                        내 평점{' '}
+                        <Stars
+                          value={item.myRating ?? 0}
+                          interactive
+                          onRate={(s) => void rate(item, s)}
+                        />
                       </div>
                       <div className="avset-store-actions">
                         <button
@@ -625,7 +701,11 @@ export const AvatarSettings: React.FC<{
       )}
 
       {showPublish && (
-        <PublishModal myAvatars={avatars} onClose={() => setShowPublish(false)} onPublish={doPublish} />
+        <PublishModal
+          myAvatars={avatars}
+          onClose={() => setShowPublish(false)}
+          onPublish={doPublish}
+        />
       )}
     </div>
   );
