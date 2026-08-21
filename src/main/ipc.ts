@@ -50,6 +50,7 @@ export const CHANNELS = {
   // Sandboxed browser pages + stable main-process runtime.
   browserState: 'browser:state',
   browserStateEvent: 'browser:stateEvent',
+  browserConnectionEvent: 'browser:connectionEvent',
   browserCreate: 'browser:create',
   browserEnsureShared: 'browser:ensureShared',
   browserBindShared: 'browser:bindShared',

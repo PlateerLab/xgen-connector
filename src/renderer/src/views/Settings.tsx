@@ -1,5 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { xgen } from '../bridge';
+import {
+  BROWSER_SEARCH_PROVIDERS,
+  normalizeBrowserUrl,
+  type BrowserSearchProvider,
+} from '../../../core/browser';
 import type { ConnectorConfig } from '../../../main/config';
 import { HotkeyCapture } from './HotkeyCapture';
 import { McpSettings } from './McpSettings';
@@ -10,11 +15,12 @@ import { BrowserIcon, MonitorIcon, ServerIcon, SpeakerIcon } from '../brand/icon
 type Theme = NonNullable<ConnectorConfig['theme']>;
 
 // 비슷한 기능끼리 탭으로 묶는다 — 세로로만 길어지던 설정을 폭을 넓혀 분류한다.
-type Tab = 'connection' | 'general' | 'avatar' | 'local' | 'storage' | 'updates';
+type Tab = 'connection' | 'general' | 'avatar' | 'browser' | 'local' | 'storage' | 'updates';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'connection', label: '연결' },
   { id: 'general', label: '일반' },
   { id: 'avatar', label: '아바타' },
+  { id: 'browser', label: '브라우저' },
   { id: 'local', label: '로컬 도구' },
   { id: 'storage', label: '스토리지' },
   { id: 'updates', label: '업데이트' },
@@ -54,6 +60,15 @@ export const Settings: React.FC<{
   // 비우면 홈 폴더로 제한된다.
   const [shellRoots, setShellRoots] = useState((ls.allowedRoots ?? []).join('\n'));
   const [browserOn, setBrowserOn] = useState(config.browser?.enabled === true);
+  const [browserNewTabUrl, setBrowserNewTabUrl] = useState(config.browser?.newTabUrl ?? '');
+  const savedBrowserNewTabUrl = useRef(config.browser?.newTabUrl ?? '');
+  const [browserNewTabUrlError, setBrowserNewTabUrlError] = useState('');
+  const [browserSearchOn, setBrowserSearchOn] = useState(
+    config.browser?.addressSearch?.enabled === true,
+  );
+  const [browserSearchProvider, setBrowserSearchProvider] = useState<BrowserSearchProvider>(
+    config.browser?.addressSearch?.provider ?? 'google',
+  );
 
   const [resetDone, setResetDone] = useState(false);
   const [confirmSettingsReset, setConfirmSettingsReset] = useState(false);
@@ -102,6 +117,39 @@ export const Settings: React.FC<{
       .map((s) => s.trim())
       .filter(Boolean);
     void apply({ localShell: { enabled, cwd: cwd || undefined, timeoutMs: timeoutS * 1000, blocked, allowedRoots } });
+  };
+
+  const commitBrowser = (
+    over: Partial<{
+      enabled: boolean;
+      newTabUrl: string;
+      searchEnabled: boolean;
+      searchProvider: BrowserSearchProvider;
+    }> = {},
+  ) => {
+    let newTabUrl = savedBrowserNewTabUrl.current;
+    if (over.newTabUrl !== undefined) {
+      const raw = over.newTabUrl.trim();
+      const normalized = raw ? normalizeBrowserUrl(raw) : 'about:blank';
+      if (!normalized) {
+        setBrowserNewTabUrlError('http 또는 https 주소를 입력해 주세요.');
+        return;
+      }
+      newTabUrl = normalized === 'about:blank' ? '' : normalized;
+      setBrowserNewTabUrl(newTabUrl);
+      savedBrowserNewTabUrl.current = newTabUrl;
+      setBrowserNewTabUrlError('');
+    }
+    void apply({
+      browser: {
+        enabled: over.enabled ?? browserOn,
+        newTabUrl: newTabUrl || undefined,
+        addressSearch: {
+          enabled: over.searchEnabled ?? browserSearchOn,
+          provider: over.searchProvider ?? browserSearchProvider,
+        },
+      },
+    });
   };
 
   // 서버 주소 변경은 세션 전환 — 첫 클릭에서 로그아웃 안내를 띄우고,
@@ -433,8 +481,8 @@ export const Settings: React.FC<{
             </>
           )}
 
-          {/* ─── 로컬 도구 ─── */}
-          {tab === 'local' && (
+          {/* ─── 브라우저 ─── */}
+          {tab === 'browser' && (
             <>
               <div className="tool-card">
                 <div className="tool-card-main">
@@ -454,7 +502,7 @@ export const Settings: React.FC<{
                       onChange={(event) => {
                         const enabled = event.target.checked;
                         setBrowserOn(enabled);
-                        void apply({ browser: { enabled } });
+                        commitBrowser({ enabled });
                       }}
                     />
                     <span className="track" />
@@ -462,6 +510,70 @@ export const Settings: React.FC<{
                 </div>
                 {browserOn && (
                   <div className="tool-card-body">
+                    <label className="field">
+                      <span>
+                        새 탭 URL <span className="small muted">(비우면 빈 페이지)</span>
+                      </span>
+                      <input
+                        value={browserNewTabUrl}
+                        placeholder="예: example.com 또는 https://example.com/start"
+                        aria-invalid={browserNewTabUrlError ? true : undefined}
+                        onChange={(event) => {
+                          setBrowserNewTabUrl(event.target.value);
+                          setBrowserNewTabUrlError('');
+                        }}
+                        onBlur={(event) => commitBrowser({ newTabUrl: event.currentTarget.value })}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') event.currentTarget.blur();
+                        }}
+                      />
+                      {browserNewTabUrlError && (
+                        <span className="small notice-warn">{browserNewTabUrlError}</span>
+                      )}
+                    </label>
+                    <p className="settings-hint">
+                      프로토콜을 생략하면 https://를 자동으로 붙입니다. 이 설정은 새로 여는
+                      사용자 브라우저 탭에만 적용됩니다.
+                    </p>
+                    <div className="field-row">
+                      <span>
+                        주소창 검색
+                        <span className="small muted" style={{ marginLeft: 8 }}>
+                          URL이 아닌 입력을 검색
+                        </span>
+                      </span>
+                      <label className="switch">
+                        <input
+                          type="checkbox"
+                          checked={browserSearchOn}
+                          onChange={(event) => {
+                            const enabled = event.target.checked;
+                            setBrowserSearchOn(enabled);
+                            commitBrowser({ searchEnabled: enabled });
+                          }}
+                        />
+                        <span className="track" />
+                      </label>
+                    </div>
+                    {browserSearchOn && (
+                      <label className="field">
+                        <span>검색 엔진</span>
+                        <select
+                          value={browserSearchProvider}
+                          onChange={(event) => {
+                            const provider = event.target.value as BrowserSearchProvider;
+                            setBrowserSearchProvider(provider);
+                            commitBrowser({ searchProvider: provider });
+                          }}
+                        >
+                          {Object.entries(BROWSER_SEARCH_PROVIDERS).map(([id, provider]) => (
+                            <option key={id} value={id}>
+                              {provider.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     <p className="settings-hint warn">
                       페이지 내용은 신뢰하지 않는 데이터로 처리됩니다. 쿠키·스토리지,
                       업로드·다운로드, 클립보드, credentials, 요청 변조와 raw eval은
@@ -471,7 +583,12 @@ export const Settings: React.FC<{
                   </div>
                 )}
               </div>
+            </>
+          )}
 
+          {/* ─── 로컬 도구 ─── */}
+          {tab === 'local' && (
+            <>
               <div className="tool-card">
                 <div className="tool-card-main">
                   <span className="tool-card-icon"><MonitorIcon size={18} /></span>

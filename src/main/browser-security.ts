@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { normalizeBrowserUrl } from '../core/browser';
 
 export const BROWSER_PARTITION_PREFIX = 'persist:xgen-browser-';
 
@@ -13,16 +14,7 @@ export function browserPartition(serverUrl: string, userId: string): string {
 }
 
 export function allowedBrowserUrl(raw: unknown): string | null {
-  const value = String(raw ?? '').trim();
-  if (!value || value === 'about:blank') return 'about:blank';
-  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`;
-  try {
-    const url = new URL(withScheme);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
+  return normalizeBrowserUrl(raw);
 }
 
 function expandHome(path: string): string {

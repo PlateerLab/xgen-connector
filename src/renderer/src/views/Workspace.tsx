@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { xgen } from '../bridge';
 import { sessionStore, useSessions } from '../session';
 import { useBrowserState } from '../browser-state';
-import type { CurrentUser } from '../../../core/index';
+import type { Agent, CurrentUser } from '../../../core/index';
+import type { BrowserConnectionEvent } from '../../../core/browser';
 import type { ConnectorConfig } from '../../../main/config';
 import { Chat } from './Chat';
 import { Settings } from './Settings';
@@ -56,6 +57,24 @@ function chatTab(session: ReturnType<typeof chatTabs>[number]): WorkspaceTab {
   };
 }
 
+function fallbackBrowserAgent(connection: BrowserConnectionEvent): Agent {
+  return {
+    id: 0,
+    workflowId: connection.workflowId,
+    workflowName: connection.workflowName,
+    nodeCount: 0,
+    isShared: false,
+    isDeployed: false,
+    isCompleted: true,
+    workflowType: 'canvas',
+    description: '',
+    username: '',
+    fullName: '',
+    createdAt: '',
+    updatedAt: '',
+  };
+}
+
 function layoutWithLiveSessions(
   current: WorkspaceLayout,
   sessions: ReturnType<typeof chatTabs>,
@@ -94,6 +113,8 @@ export const Workspace: React.FC<{
   const [showSettings, setShowSettings] = useState(false);
   const [overlayOn, setOverlayOn] = useState(config.avatarOverlay ?? false);
   const [notice, setNotice] = useState('');
+  const [browserConnection, setBrowserConnection] = useState<BrowserConnectionEvent | null>(null);
+  const [openingBrowserAgent, setOpeningBrowserAgent] = useState(false);
   const [drag, setDrag] = useState<DragPreview | null>(null);
   const [resizingSplit, setResizingSplit] = useState(false);
   const [surfaceRects, setSurfaceRects] = useState<Record<string, BrowserSurfaceRect>>({});
@@ -157,6 +178,18 @@ export const Workspace: React.FC<{
     [sessions],
   );
   const browserState = useBrowserState();
+
+  useEffect(
+    () =>
+      xgen.browser.onConnection((event) => {
+        setOpeningBrowserAgent(false);
+        setBrowserConnection((current) => {
+          if (event.phase === 'required' || event.phase === 'timeout') return event;
+          return current?.pageId === event.pageId ? null : current;
+        });
+      }),
+    [],
+  );
 
   useEffect(() => {
     setLayout((current) => layoutWithLiveSessions(current, visibleSessions, activeKey));
@@ -278,6 +311,43 @@ export const Workspace: React.FC<{
     },
     [activeWorkflowFor, browserState.enabled],
   );
+
+  const openConnectedBrowserAgent = useCallback(async () => {
+    const connection = browserConnection;
+    if (!connection || openingBrowserAgent) return;
+    setOpeningBrowserAgent(true);
+    try {
+      const existing = [...sessions]
+        .filter((session) => session.agent.workflowId === connection.workflowId)
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      const agent = existing?.agent ?? fallbackBrowserAgent(connection);
+      const sessionKey = existing?.key ?? sessionStore.openNew(agent);
+      if (existing) sessionStore.setActive(existing.key);
+      void xgen.config.set({ lastWorkflowId: connection.workflowId });
+      setSideView('agent');
+      setCollapsed(false);
+      setLayout((current) => {
+        const chatId = `chat:${sessionKey}`;
+        const currentChat = findTab(current, chatId);
+        if (currentChat) return selectWorkspaceTab(current, currentChat.group.id, chatId);
+        const browser = findTab(current, `browser:${connection.workflowId}`);
+        const otherGroup = browser
+          ? current.groups.find((group) => group.id !== browser.group.id)
+          : undefined;
+        return addWorkspaceTab(current, otherGroup?.id ?? current.focusedGroupId, {
+          id: chatId,
+          kind: 'chat',
+          sessionKey,
+          workflowId: connection.workflowId,
+          workflowName: connection.workflowName,
+        });
+      });
+      await xgen.browser.ensureShared(connection.workflowId, connection.workflowName);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '에이전트를 열지 못했습니다.');
+      setOpeningBrowserAgent(false);
+    }
+  }, [browserConnection, openingBrowserAgent, sessions]);
 
   const onTabPointerDown = useCallback((down: React.PointerEvent, tab: WorkspaceTab) => {
     if (down.button !== 0) return;
@@ -444,6 +514,7 @@ export const Workspace: React.FC<{
         <BrowserPane
           workflowId={active.workflowId}
           workflowName={active.workflowName || active.workflowId}
+          addressSearch={config.browser?.addressSearch}
           onSurface={reportSurface}
         />
       );
@@ -557,7 +628,29 @@ export const Workspace: React.FC<{
         </div>
       </main>
 
-      {notice && (
+      {browserConnection ? (
+        <div className="workspace-notice actionable" role="alert">
+          <span>
+            {browserConnection.phase === 'timeout'
+              ? `${browserConnection.workflowName} 브라우저 연결 시간이 초과되었습니다.`
+              : `${browserConnection.workflowName} 에이전트를 열어 브라우저를 연결해 주세요.`}
+          </span>
+          <button
+            className="secondary"
+            disabled={openingBrowserAgent}
+            onClick={() => void openConnectedBrowserAgent()}
+          >
+            {openingBrowserAgent ? '여는 중…' : `${browserConnection.workflowName} 열기`}
+          </button>
+          <button
+            className="workspace-notice-close"
+            aria-label="알림 닫기"
+            onClick={() => setBrowserConnection(null)}
+          >
+            ×
+          </button>
+        </div>
+      ) : notice && (
         <div className="workspace-notice" role="status">
           {notice}
         </div>

@@ -4,6 +4,67 @@ export type BrowserPageMode = 'shared' | 'background';
 
 export type BrowserLoadingState = 'idle' | 'loading' | 'error';
 
+export const BROWSER_SEARCH_PROVIDERS = {
+  google: {
+    label: 'Google',
+    searchUrl: 'https://www.google.com/search?q={query}',
+  },
+} as const;
+
+export type BrowserSearchProvider = keyof typeof BROWSER_SEARCH_PROVIDERS;
+
+export interface BrowserAddressSearchConfig {
+  enabled?: boolean;
+  provider?: BrowserSearchProvider;
+}
+
+/** Normalize user-entered browser URLs while keeping the runtime scheme allowlist narrow. */
+export function normalizeBrowserUrl(raw: unknown): string | null {
+  const value = String(raw ?? '').trim();
+  if (!value || value === 'about:blank') return 'about:blank';
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`;
+  try {
+    const url = new URL(withScheme);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeBrowserUrl(value: string): boolean {
+  if (value === 'about:blank' || /^[a-z][a-z0-9+.-]*:/i.test(value)) return true;
+  if (/\s/.test(value)) return false;
+  const normalized = normalizeBrowserUrl(value);
+  if (!normalized || normalized === 'about:blank') return false;
+  try {
+    const hostname = new URL(normalized).hostname;
+    return (
+      hostname === 'localhost' ||
+      hostname.includes('.') ||
+      /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname) ||
+      hostname.includes(':')
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve an omnibox value to a URL, optionally falling back to a configured search provider. */
+export function resolveBrowserAddress(
+  raw: unknown,
+  search: BrowserAddressSearchConfig = {},
+): string | null {
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+  if (looksLikeBrowserUrl(value)) return normalizeBrowserUrl(value);
+  if (!search.enabled) return null;
+  const provider = search.provider ?? 'google';
+  const definition = BROWSER_SEARCH_PROVIDERS[provider];
+  if (!definition) return null;
+  return definition.searchUrl.replace('{query}', encodeURIComponent(value));
+}
+
 export interface BrowserPageInfo {
   pageId: string;
   workflowId: string;
@@ -25,6 +86,13 @@ export interface BrowserState {
   enabled: boolean;
   pages: BrowserPageInfo[];
   activeByWorkflow: Record<string, string>;
+}
+
+export interface BrowserConnectionEvent {
+  phase: 'required' | 'connected' | 'timeout' | 'cancelled';
+  pageId: string;
+  workflowId: string;
+  workflowName: string;
 }
 
 export interface BrowserCreateRequest {

@@ -34,12 +34,14 @@ const PersistentWebview: React.FC<{
         height: 1,
         visibility: 'hidden',
         pointerEvents: 'none',
-      };
+  };
   const setRef = (element: ElectronWebview | null): void => {
     if (!element) return;
     const bind = () => {
       try {
-        void xgen.browser.bindShared(page.pageId, element.getWebContentsId());
+        void xgen.browser
+          .bindShared(page.pageId, element.getWebContentsId())
+          .catch(() => undefined);
       } catch {
         /* attachment can race with a closed tab */
       }
@@ -52,6 +54,9 @@ const PersistentWebview: React.FC<{
       element.__xgenFocusBound = true;
       element.addEventListener('focus', () => onFocusPage(page.pageId));
     }
+    // React can receive the ref after Electron already emitted did-attach.
+    // The immediate attempt covers that ordering; the listener covers the inverse.
+    bind();
   };
   return React.createElement('webview', {
     ref: setRef,

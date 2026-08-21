@@ -22,6 +22,7 @@ import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
 import type { ConnectorConfig, McpServerConfig } from '../main/config';
 import type {
+  BrowserConnectionEvent,
   BrowserCreateRequest,
   BrowserNavigateRequest,
   BrowserPageInfo,
@@ -230,6 +231,11 @@ const api = {
       const handler = (_event: unknown, state: BrowserState) => cb(state);
       ipcRenderer.on(CHANNELS.browserStateEvent, handler);
       return () => ipcRenderer.removeListener(CHANNELS.browserStateEvent, handler);
+    },
+    onConnection: (cb: (event: BrowserConnectionEvent) => void): (() => void) => {
+      const handler = (_event: unknown, connection: BrowserConnectionEvent) => cb(connection);
+      ipcRenderer.on(CHANNELS.browserConnectionEvent, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.browserConnectionEvent, handler);
     },
   },
 
