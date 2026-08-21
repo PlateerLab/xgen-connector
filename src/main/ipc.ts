@@ -121,6 +121,10 @@ export const CHANNELS = {
   workspaceRefresh: 'workspace:refresh',
   /** 연결된 에이전트 목록만 서버에서 다시 읽는다 (파일 캐시는 건드리지 않는다). */
   workspaceRefreshAgents: 'workspace:refresh-agents',
+  /** 가상 드라이브 한 폴더의 직계 자식 목록 — 인앱 탐색기 사이드바용. */
+  workspaceList: 'workspace:list',
+  /** 드라이브 안 경로 하나를 OS 기본 앱/파일 관리자로 연다. */
+  workspaceOpenPath: 'workspace:openPath',
   mcpStatus: 'mcp:status',
   mcpStatusEvent: 'mcp:statusEvent',
 

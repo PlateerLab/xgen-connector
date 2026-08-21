@@ -2245,6 +2245,38 @@ ipcMain.handle(CHANNELS.workspaceOpen, () => {
   return { ok: !!p };
 });
 
+/** 드라이브 경로 검증 — `/` 시작, `..` 세그먼트 금지. 탐색기 IPC 공용. */
+function safeDrivePath(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw.startsWith('/')) return null;
+  const parts = raw.split('/').filter(Boolean);
+  if (parts.some((s) => s === '.' || s === '..')) return null;
+  return '/' + parts.join('/');
+}
+
+/** 인앱 탐색기 — 폴더 하나의 직계 자식. 마운트가 아니라 백엔드로 읽는다. */
+ipcMain.handle(CHANNELS.workspaceList, async (_e, path: unknown) => {
+  const p = safeDrivePath(path);
+  if (!p) return [];
+  try {
+    return (await getWorkspaceManager()?.list(p)) ?? [];
+  } catch (e) {
+    const { diag } = await import('./diag-log');
+    diag('workspace', `탐색기 목록 실패 ${p}: ${(e as Error).message}`);
+    return [];
+  }
+});
+
+/** 드라이브 안 파일/폴더를 OS 로 연다 — 마운트되어 있을 때만 가능하다. */
+ipcMain.handle(CHANNELS.workspaceOpenPath, (_e, path: unknown) => {
+  const root = getWorkspaceManager()?.status()?.path;
+  const p = safeDrivePath(path);
+  if (!root || !p) return { ok: false };
+  // 마운트 경로는 이 프로세스에서 동기 접근하면 데드락 — openInFileManager 가
+  // 자식 프로세스로 여는 이유다. join 은 문자열 연산이라 안전하다.
+  openInFileManager(join(root, ...p.split('/').filter(Boolean)));
+  return { ok: true };
+});
+
 ipcMain.handle(CHANNELS.diagCopy, async () => {
   // ⚠ 렌더러의 navigator.clipboard 는 Electron 에서 조용히 실패할 수 있다
   // (보안 컨텍스트/권한). main 의 clipboard 모듈은 항상 동작한다.

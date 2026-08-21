@@ -240,6 +240,26 @@ export class WorkspaceManager {
     }
   }
 
+  /**
+   * 드라이브 안 한 폴더의 직계 자식 — **인앱 탐색기**가 쓴다.
+   *
+   * OS 마운트를 거치지 않고 백엔드(readdir → 서버 API)로 바로 읽는다. 이 프로세스가
+   * 자기 FUSE 마운트를 만지면 데드락이므로(위 클래스 주석), 마운트 경로가 아니라
+   * 백엔드를 쓰는 것이 유일하게 안전한 길이기도 하다. 백엔드가 아직 배선되지
+   * 않았으면(드라이브 꺼짐·로그아웃) 빈 목록이 온다 — 화면은 status 로 사유를 안다.
+   */
+  async list(
+    path: string,
+  ): Promise<Array<{ name: string; isDir: boolean; size: number; mtime: number }>> {
+    const nodes = await this.backend.readdir(path)
+    return nodes.map((n) => ({
+      name: n.name,
+      isDir: n.isDir,
+      size: n.size,
+      mtime: n.mtime.getTime(),
+    }))
+  }
+
   private emit(): void {
     this.deps.onStatus?.(this.status())
   }

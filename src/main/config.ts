@@ -128,8 +128,9 @@ export interface ConnectorConfig {
   deviceId?: string;
   /** Linux 전용: 오버레이 클릭 통과 옵트인 ({forward:true} 미지원 플랫폼 안전장치). */
   linuxClickThrough?: boolean;
+  /** 메인 창 크롬 상태 — 액티비티 바에서 고른 사이드 뷰, 사이드바 접힘/너비. */
+  ui?: { sideView?: 'agent' | 'explorer'; sidebarCollapsed?: boolean; sidebarWidth?: number };
 }
-
 
 /** 로컬 셸 접근 설정 (영속). local-tools.LocalShellConfig 와 구조 동일 —
  *  config 는 leaf 라 그 모듈을 import 하지 않고 형태만 미러한다. */
@@ -210,9 +211,7 @@ export function normalizeServerUrl(url: string): string {
   if (u && !/^https?:\/\//i.test(u)) {
     const host = u.split('/')[0].split(':')[0];
     const isLocal =
-      host === 'localhost' ||
-      host.endsWith('.local') ||
-      /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+      host === 'localhost' || host.endsWith('.local') || /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
     u = `${isLocal ? 'http' : 'https'}://${u}`;
   }
   return u;

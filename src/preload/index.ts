@@ -22,7 +22,6 @@ import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
 import type { ConnectorConfig, McpServerConfig } from '../main/config';
 
-
 /** 가상 드라이브 상태 (main workspace-manager.WorkspaceStatus 미러). */
 export interface WorkspaceStatusLike {
   supported: boolean;
@@ -54,6 +53,15 @@ export interface WorkspaceStatusLike {
   /** 클라우드 안 이 PC 의 폴더 — `{클라우드}/{PC 이름}/(파일)`. */
   homeFolder?: string;
   agents: Array<{ workflowId: string; label: string; folder: string }>;
+}
+
+/** 인앱 탐색기 — 드라이브 폴더의 직계 자식 하나. */
+export interface WorkspaceEntryLike {
+  name: string;
+  isDir: boolean;
+  size: number;
+  /** epoch ms. */
+  mtime: number;
 }
 
 /** Local-MCP bridge status pushed to the settings UI. */
@@ -365,6 +373,12 @@ const api = {
     /** 연결된 에이전트 목록만 다시 읽는다 — 파일 캐시는 건드리지 않는다. */
     refreshAgents: (): Promise<WorkspaceStatusLike> =>
       ipcRenderer.invoke(CHANNELS.workspaceRefreshAgents),
+    /** 인앱 탐색기 — 드라이브 폴더(`/클라우드/…`, `/에이전트/<폴더>/…`) 직계 자식. */
+    list: (path: string): Promise<WorkspaceEntryLike[]> =>
+      ipcRenderer.invoke(CHANNELS.workspaceList, path),
+    /** 드라이브 안 경로를 OS 파일 관리자/기본 앱으로 연다 (마운트 시에만). */
+    openPath: (path: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.workspaceOpenPath, path),
     onStatus: (cb: (s: WorkspaceStatusLike) => void): (() => void) => {
       const h = (_e: unknown, s: WorkspaceStatusLike) => cb(s);
       ipcRenderer.on(CHANNELS.workspaceStatusEvent, h);
