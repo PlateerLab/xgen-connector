@@ -40,6 +40,16 @@ app
       if (!snapshot.includes('Smoke button') || !snapshot.includes('e1')) {
         throw new Error(`unexpected snapshot: ${snapshot}`);
       }
+      // A renderer target swap detaches webContents.debugger. The page-scoped
+      // loopback proxy must retain its port and transparently reattach instead
+      // of stranding agent-browser on a closed ephemeral port.
+      win.webContents.debugger.detach();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (proxy.port !== port) throw new Error(`CDP proxy port changed: ${port} -> ${proxy.port}`);
+      const recovered = await run([...common, 'snapshot', '-i']);
+      if (!recovered.includes('Smoke button')) {
+        throw new Error(`snapshot after debugger detach failed: ${recovered}`);
+      }
       console.log('browser CDP smoke: ok');
     } finally {
       await run(['--session', session, '--json', 'close']).catch(() => undefined);

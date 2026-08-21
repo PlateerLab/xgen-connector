@@ -1,9 +1,10 @@
 import { app } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { platform, arch } from 'node:process';
 import { CdpPageProxy } from './cdp-page-proxy';
+import { diag } from './diag-log';
 
 export const AGENT_BROWSER_VERSION = '0.27.3';
 const DEFAULT_TIMEOUT = 30_000;
@@ -69,6 +70,37 @@ function parseJsonOutput(stdout: string): unknown {
   }
 }
 
+function agentBrowserFailure(result: unknown): string | null {
+  if (!result || typeof result !== 'object') return null;
+  const record = result as Record<string, unknown>;
+  if (record.success !== false) return null;
+  if (typeof record.error === 'string') return record.error;
+  if (record.error && typeof record.error === 'object') {
+    const error = record.error as Record<string, unknown>;
+    if (typeof error.message === 'string') return error.message;
+  }
+  try {
+    return JSON.stringify(record.error ?? result);
+  } catch {
+    return 'agent-browser command failed';
+  }
+}
+
+function connectionRefused(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ECONNREFUSED|connection refused|os error (?:61|111|10061)|failed to connect[^\n]*(?:CDP|127\.0\.0\.1)/i.test(
+    message,
+  );
+}
+
+function usesSnapshotRef(command: string[]): boolean {
+  return command.some((arg) => /^@e\d+$/.test(arg));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class AgentBrowserRunner {
   private queues = new Map<string, QueueState>();
   private ports = new Map<string, number>();
@@ -78,6 +110,7 @@ export class AgentBrowserRunner {
     proxy: CdpPageProxy,
     command: string[],
     timeoutMs = DEFAULT_TIMEOUT,
+    onRecover: () => void = () => {},
   ): Promise<unknown> {
     let queue = this.queues.get(pageId);
     if (!queue) {
@@ -90,9 +123,43 @@ export class AgentBrowserRunner {
       if (state.cancelled) throw new Error('browser_page_not_found: 페이지가 닫혔습니다.');
       const port = await proxy.start();
       const previousPort = this.ports.get(pageId);
-      if (previousPort !== undefined && previousPort !== port) await this.closeSession(pageId);
+      let invalidated = false;
+      const invalidateRefs = () => {
+        if (invalidated) return;
+        invalidated = true;
+        onRecover();
+      };
+      if (previousPort !== undefined && previousPort !== port) {
+        diag(
+          'browser-agent',
+          `CDP 포트 교체 page=${pageId} old=${previousPort} new=${port}`,
+        );
+        await this.closeSession(pageId);
+        invalidateRefs();
+      }
       this.ports.set(pageId, port);
-      return this.spawnCommand(state, pageId, port, command, timeoutMs);
+      if (invalidated && usesSnapshotRef(command)) {
+        throw new Error('snapshot ref is stale after browser reconnect; take a new snapshot.');
+      }
+      try {
+        return await this.spawnCommand(state, pageId, port, command, timeoutMs);
+      } catch (error) {
+        if (!connectionRefused(error) || state.cancelled) throw error;
+        diag(
+          'browser-agent',
+          `CDP 연결 거부 자동 복구 page=${pageId} port=${port} command=${command[0] ?? ''}`,
+        );
+        await this.closeSession(pageId);
+        invalidateRefs();
+        if (usesSnapshotRef(command)) {
+          throw new Error('snapshot ref is stale after browser reconnect; take a new snapshot.');
+        }
+        if (state.cancelled)
+          throw new Error('browser_page_not_found: 페이지가 닫혔습니다.');
+        const retryPort = await proxy.start();
+        this.ports.set(pageId, retryPort);
+        return this.spawnCommand(state, pageId, retryPort, command, timeoutMs);
+      }
     });
     state.tail = task.catch(() => undefined);
     return task;
@@ -121,13 +188,13 @@ export class AgentBrowserRunner {
       let stdout = '';
       let stderr = '';
       let settled = false;
-      const finish = (error?: Error) => {
+      const finish = (error?: Error, result?: unknown) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         if (state.active === child) state.active = null;
         if (error) reject(error);
-        else resolve(parseJsonOutput(stdout));
+        else resolve(result ?? parseJsonOutput(stdout));
       };
       child.stdout?.on('data', (data) => {
         stdout = (stdout + String(data)).slice(-OUTPUT_LIMIT);
@@ -137,8 +204,14 @@ export class AgentBrowserRunner {
       });
       child.on('error', (error) => finish(error));
       child.on('close', (code) => {
-        if (code === 0) finish();
-        else finish(new Error(stderr.trim() || stdout.trim() || `agent-browser exited ${code}`));
+        if (code !== 0) {
+          finish(new Error(stderr.trim() || stdout.trim() || `agent-browser exited ${code}`));
+          return;
+        }
+        const result = parseJsonOutput(stdout);
+        const failure = agentBrowserFailure(result);
+        if (failure) finish(new Error(failure));
+        else finish(undefined, result);
       });
       const timer = setTimeout(
         () => {
@@ -176,7 +249,11 @@ export class AgentBrowserRunner {
   }
 
   private closeSession(pageId: string): Promise<void> {
-    return new Promise((resolve) => {
+    // `agent-browser close` removes the session PID file before its daemon has
+    // actually exited. Capture the owned PID first, then observe that process
+    // directly so a deleted PID file cannot be mistaken for completed cleanup.
+    const helperPid = this.helperPid(pageId);
+    return new Promise<void>((resolve) => {
       let child: ChildProcess;
       try {
         child = spawn(
@@ -204,7 +281,55 @@ export class AgentBrowserRunner {
         clearTimeout(timer);
         resolve();
       });
+    }).then(async () => {
+      if (!helperPid) return;
+      if (await this.waitForHelperExit(helperPid, 3_000)) return;
+      diag('browser-agent', `helper 종료 지연 page=${pageId} pid=${helperPid}; SIGTERM`);
+      try {
+        process.kill(helperPid, 'SIGTERM');
+      } catch {
+        return;
+      }
+      if (await this.waitForHelperExit(helperPid, 1_000)) return;
+      diag('browser-agent', `helper 강제 종료 page=${pageId} pid=${helperPid}; SIGKILL`);
+      try {
+        process.kill(helperPid, 'SIGKILL');
+      } catch {
+        return;
+      }
+      await this.waitForHelperExit(helperPid, 1_000);
     });
+  }
+
+  private helperPid(pageId: string): number | null {
+    try {
+      const raw = readFileSync(
+        join(app.getPath('home'), '.agent-browser', `xgen-page-${pageId}.pid`),
+        'utf8',
+      ).trim();
+      const pid = Number(raw);
+      return Number.isInteger(pid) && pid > 1 && pid !== process.pid ? pid : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private helperAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async waitForHelperExit(pid: number, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!this.helperAlive(pid)) return true;
+      await delay(50);
+    }
+    return !this.helperAlive(pid);
   }
 
   async closeAll(): Promise<void> {
