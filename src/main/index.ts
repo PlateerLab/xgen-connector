@@ -1406,10 +1406,12 @@ ipcMain.handle(CHANNELS.authSsoLogin, async () => {
 
 ipcMain.on(CHANNELS.authSsoComplete, (event, payload: unknown) => {
   if (!pendingSso || !ssoWindow || event.sender !== ssoWindow.webContents) return;
+  const senderFrame = event.senderFrame;
+  if (!senderFrame) return;
   let callbackOrigin: string;
   let serverOrigin: string;
   try {
-    callbackOrigin = new URL(event.senderFrame.url).origin;
+    callbackOrigin = new URL(senderFrame.url).origin;
     serverOrigin = new URL(normalizeServerUrl(loadConfig().serverUrl)).origin;
   } catch {
     return;
