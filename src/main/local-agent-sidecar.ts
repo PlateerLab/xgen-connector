@@ -14,13 +14,20 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-/** 사이드카에 보내는 turn 요청 (Python 계약과 동일 shape). */
+/** 사이드카에 보내는 turn 요청 (Python 계약과 동일 shape). 상태는 서버가 해석. */
 export interface LocalTurnRequest {
   workspace_dir: string;
   provider: string;
   text: string;
-  settings?: Record<string, string>;
-  api_keys?: Record<string, string>;
+  /** 서버가 로그인 계정으로 해석해 넘긴 상태(키/설정/자격증명). */
+  context?: {
+    api_keys?: Record<string, string>;
+    base_urls?: Record<string, string>;
+    credentials?: Record<string, unknown>;
+    settings?: Record<string, string>;
+  };
+  /** 라이브 서버 브릿지(메모리 등 공유 상태). */
+  server?: { url: string; token: string };
   options?: Record<string, unknown>;
 }
 
