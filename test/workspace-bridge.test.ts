@@ -18,15 +18,22 @@ function parse(r: { content: Array<{ text: string }> }): Record<string, unknown>
   return JSON.parse(r.content[0].text) as Record<string, unknown>;
 }
 
-function setup(cloud: string | null = null) {
+function setup(cloud: string | null = null, opts: { synced?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'xgen-bridge-'));
   const pokes: string[] = [];
+  const flushed: string[] = [];
+  const info = (id: string) => (id === 'wf-1' ? { dir, label: '마케팅 리서치' } : null);
   const bridge = new WorkspaceBridge({
-    infoFor: (id) => (id === 'wf-1' ? { dir, label: '마케팅 리서치' } : null),
+    infoFor: info,
+    ensureSynced: async (id) => ({ info: info(id), synced: opts.synced ?? true }),
+    flushSync: async (id) => {
+      flushed.push(id);
+      return id === 'wf-1';
+    },
     cloudDir: () => cloud,
     poke: (id) => pokes.push(id),
   });
-  return { dir, bridge, pokes };
+  return { dir, bridge, pokes, flushed };
 }
 
 test('가상 경로 규약 — /ws·/cloud 만 통과, 탈출 경로는 거절', () => {
@@ -40,16 +47,32 @@ test('가상 경로 규약 — /ws·/cloud 만 통과, 탈출 경로는 거절',
   assert.equal(splitVirtualPath(''), null);
 });
 
-test('_WorkspaceInfo — 동기화 중이면 가상 루트·실경로·클라우드를 알린다', async () => {
+test('_WorkspaceInfo — 하이드레이트 후 가상 루트·실경로·클라우드·synced 를 알린다', async () => {
   const { dir, bridge } = setup('/mnt/xgen-drive');
   const on = parse(await bridge.callTool(WORKSPACE_INFO_TOOL, { workflowId: 'wf-1' }));
   assert.equal(on.enabled, true);
+  assert.equal(on.synced, true); // ensureSynced 가 하이드레이트를 끝냈다
   assert.equal(on.virtualRoot, '/ws');
   assert.equal(on.dir, dir);
   assert.equal(on.cloudMounted, true);
   assert.equal(on.cloudVirtualRoot, '/cloud');
   const off = parse(await bridge.callTool(WORKSPACE_INFO_TOOL, { workflowId: 'wf-없음' }));
   assert.equal(off.enabled, false);
+});
+
+test('_WorkspaceInfo — 하이드레이트가 늦으면 synced:false 여도 폴더는 준다', async () => {
+  const { dir, bridge } = setup(null, { synced: false });
+  const on = parse(await bridge.callTool(WORKSPACE_INFO_TOOL, { workflowId: 'wf-1' }));
+  assert.equal(on.enabled, true);
+  assert.equal(on.synced, false); // 실행은 진행, 서버가 프롬프트로 안내
+  assert.equal(on.dir, dir);
+});
+
+test('_FlushSync — 턴 종료에 로컬 변경을 인덱스로 밀고 결과를 준다', async () => {
+  const { bridge, flushed } = setup();
+  const r = parse(await bridge.callTool('_FlushSync', { workflowId: 'wf-1' }));
+  assert.equal(r.flushed, true);
+  assert.deepEqual(flushed, ['wf-1']);
 });
 
 test('_Exec — bash 명령이 워크스페이스 cwd 에서 돌고 출력이 돌아온다', async () => {

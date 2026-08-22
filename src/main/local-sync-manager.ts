@@ -274,6 +274,51 @@ export class LocalSyncManager {
     await Promise.all(ids.map((id) => this.run(id)));
   }
 
+  /**
+   * 폴더를 확보하고 **인덱스에서 하이드레이트가 끝날 때까지** 기다린다 (bounded).
+   * 커넥터 세션의 턴 시작(_WorkspaceInfo)이 부른다 — 웹에서 만든 파일이
+   * 로컬 폴더에 내려온 뒤에야 에이전트가 실행돼야 "빈 워크스페이스" 오판이
+   * 없다. 시간이 걸리면 synced=false 로 돌려주되 폴더는 준다 (실행은 진행,
+   * 남은 동기화는 백그라운드).
+   */
+  async ensureSynced(
+    workflowId: string,
+    label: string,
+    timeoutMs = 15000,
+  ): Promise<{ dir: string | null; synced: boolean }> {
+    const dir = this.ensurePair(workflowId, label);
+    if (!dir) return { dir: null, synced: false };
+    const synced = await Promise.race([
+      this.syncNow(workflowId).then(
+        () => true,
+        () => false,
+      ),
+      new Promise<boolean>((r) => setTimeout(() => r(false), timeoutMs).unref?.()),
+    ]);
+    return { dir, synced };
+  }
+
+  /**
+   * 로컬 변경을 인덱스로 **밀어 넣고 끝날 때까지** 기다린다 (bounded). 커넥터
+   * 세션의 턴 종료가 부른다 — 이 PC 에서 만든 파일이 인덱스에 반영된 뒤에야
+   * 웹(sandbox)이 그것을 하이드레이트할 수 있다 (커넥터→웹 일관성).
+   */
+  async flushSync(workflowId: string, timeoutMs = 15000): Promise<boolean> {
+    if (!this.live.has(workflowId)) return false;
+    return Promise.race([
+      this.syncNow(workflowId).then(
+        () => true,
+        () => false,
+      ),
+      new Promise<boolean>((r) => setTimeout(() => r(false), timeoutMs).unref?.()),
+    ]);
+  }
+
+  /** 이 에이전트가 지금 동기화 중인가 (상태 표시용). */
+  isSyncing(workflowId: string): boolean {
+    return this.live.get(workflowId)?.syncing ?? false;
+  }
+
   status(): LocalSyncStatus {
     const cfg = this.deps.config();
     const reason = !this.deps.loggedIn()

@@ -29,6 +29,7 @@ export const WORKSPACE_INFO_TOOL = '_WorkspaceInfo';
 export const EXEC_TOOL = '_Exec';
 export const READ_BYTES_TOOL = '_ReadBytes';
 export const WRITE_BYTES_TOOL = '_WriteBytes';
+export const FLUSH_SYNC_TOOL = '_FlushSync';
 
 export const VIRTUAL_WS = '/ws';
 export const VIRTUAL_CLOUD = '/cloud';
@@ -72,6 +73,20 @@ export interface WorkspaceBridgeDeps {
    * workflowName 은 폴더를 처음 만들 때 이름으로 쓴다 (_WorkspaceInfo 만 넘긴다).
    */
   infoFor(workflowId: string, workflowName?: string): BridgeWorkspaceInfo | null;
+  /**
+   * 턴 시작 — 폴더를 확보하고 **인덱스에서 하이드레이트가 끝날 때까지** 기다린다.
+   * 웹에서 만든 파일이 로컬에 내려온 뒤 에이전트가 돌게 한다 (빈 워크스페이스
+   * 오판 방지). synced=false 여도 dir 은 준다 (남은 동기화는 백그라운드).
+   */
+  ensureSynced(
+    workflowId: string,
+    workflowName?: string,
+  ): Promise<{ info: BridgeWorkspaceInfo | null; synced: boolean }>;
+  /**
+   * 턴 종료 — 로컬 변경을 인덱스로 **밀어 넣고 끝날 때까지** 기다린다. 이 PC 에서
+   * 만든 파일이 인덱스에 반영된 뒤에야 웹(sandbox)이 그것을 본다 (커넥터→웹).
+   */
+  flushSync(workflowId: string): Promise<boolean>;
   /** 마운트된 XGen-Cloud 드라이브의 실경로 (미마운트면 null). */
   cloudDir(): string | null;
   /** 에이전트가 파일을 만졌다 — 동기화를 곧 돌려 서버 인덱스에 반영하라. */
@@ -110,7 +125,8 @@ export class WorkspaceBridge {
       tool === WORKSPACE_INFO_TOOL ||
       tool === EXEC_TOOL ||
       tool === READ_BYTES_TOOL ||
-      tool === WRITE_BYTES_TOOL
+      tool === WRITE_BYTES_TOOL ||
+      tool === FLUSH_SYNC_TOOL
     );
   }
 
@@ -125,10 +141,11 @@ export class WorkspaceBridge {
       inputSchema: { type: 'object' },
     });
     return [
-      internal(WORKSPACE_INFO_TOOL, 'local workspace availability for a workflow'),
+      internal(WORKSPACE_INFO_TOOL, 'local workspace availability + hydrate for a workflow'),
       internal(EXEC_TOOL, 'run argv in the synced local workspace'),
       internal(READ_BYTES_TOOL, 'read file bytes from the local workspace'),
       internal(WRITE_BYTES_TOOL, 'write file bytes into the local workspace'),
+      internal(FLUSH_SYNC_TOOL, 'flush local changes to the server index'),
     ];
   }
 
@@ -136,7 +153,14 @@ export class WorkspaceBridge {
     const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
     const workflowId = String(a.workflowId ?? '').trim();
     const workflowName = typeof a.workflowName === 'string' ? a.workflowName : undefined;
+    // 턴 시작 — 폴더 확보 + 하이드레이트 대기 (웹→커넥터 일관성).
     if (tool === WORKSPACE_INFO_TOOL) return this.workspaceInfo(workflowId, workflowName);
+    // 턴 종료 — 로컬 변경을 인덱스로 밀어 넣고 대기 (커넥터→웹 일관성).
+    if (tool === FLUSH_SYNC_TOOL) {
+      if (!workflowId) return jsonResult({ flushed: false });
+      const flushed = await this.deps.flushSync(workflowId);
+      return jsonResult({ flushed });
+    }
     // exec/read/write 는 _WorkspaceInfo 뒤에 오므로 폴더는 이미 확보돼 있다.
     const info = workflowId ? this.deps.infoFor(workflowId, workflowName) : null;
     if (!info) {
@@ -160,12 +184,16 @@ export class WorkspaceBridge {
     return split.rel ? join(base, ...split.rel.split('/')) : base;
   }
 
-  private workspaceInfo(workflowId: string, workflowName?: string): LocalToolResult {
-    const info = workflowId ? this.deps.infoFor(workflowId, workflowName) : null;
+  private async workspaceInfo(workflowId: string, workflowName?: string): Promise<LocalToolResult> {
+    if (!workflowId) return jsonResult({ enabled: false });
+    // 하이드레이트가 끝날 때까지 기다린 뒤에야 실행 환경이 '준비됨'이다 —
+    // 웹에서 만든 파일이 로컬에 내려온 상태로 첫 도구가 돈다.
+    const { info, synced } = await this.deps.ensureSynced(workflowId, workflowName);
     if (!info) return jsonResult({ enabled: false });
     const cloud = this.deps.cloudDir();
     return jsonResult({
       enabled: true,
+      synced, // false 면 서버가 프롬프트로 '동기화 진행 중'을 알린다
       virtualRoot: VIRTUAL_WS,
       dir: info.dir,
       label: info.label,
