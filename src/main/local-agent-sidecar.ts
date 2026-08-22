@@ -3,7 +3,7 @@
  *
  * 서버 웹은 turn 을 서버에서 실행하지만(agent_geny → AgentTurnExecutor +
  * ServerHostServices), 커넥터 세션은 이 모듈이 **Python 사이드카**
- * (`xgen_agent_host.sidecar`)를 로컬 프로세스로 스폰해 **같은 AgentTurnExecutor**
+ * (`xgen_agent_runtime.host.sidecar`)를 로컬 프로세스로 스폰해 **같은 AgentTurnExecutor**
  * 를 `LocalHostServices` 로 돌린다(무발산). 그러면 Bash/Read/Write 는 이 PC 에서
  * 직접 돌고, codex/claude_code 는 로컬 프로세스로 뜬다 — 서버로 tool 을 되돌려
  * 라우팅할 필요가 없다(그게 codex-local 이 서버에선 불가하고 여기선 되는 이유).
@@ -46,7 +46,7 @@ export interface SidecarCommand {
 
 /**
  * Python 인터프리터 + 사이드카 엔트리를 해석한다.
- *   · 패키지 빌드: 번들된 Python(resources/python) + `-m xgen_agent_host.sidecar`.
+ *   · 패키지 빌드: 번들된 Python(resources/python) + `-m xgen_agent_runtime.host.sidecar`.
  *   · dev / override: env(XGEN_SIDECAR_PYTHON / XGEN_SIDECAR_PYTHONPATH).
  * 실제 번들링(extraResources)은 커넥터 빌드 설정의 몫 — 여기선 경로만 조립한다.
  */
@@ -60,7 +60,7 @@ export function resolveSidecarCommand(opts?: {
   const pyPath = env.XGEN_SIDECAR_PYTHONPATH;
   if (py) {
     if (pyPath) env.PYTHONPATH = pyPath;
-    return { command: py, args: ['-m', 'xgen_agent_host.sidecar'], env };
+    return { command: py, args: ['-m', 'xgen_agent_runtime.host.sidecar'], env };
   }
   if (opts?.isPackaged && opts.resourcesPath) {
     // 번들 레이아웃: <resources>/python/bin/python3 (POSIX) | python.exe (win),
@@ -69,12 +69,12 @@ export function resolveSidecarCommand(opts?: {
     const bin = isWin ? 'python\\python.exe' : 'python/bin/python3';
     return {
       command: `${opts.resourcesPath}/${bin}`,
-      args: ['-m', 'xgen_agent_host.sidecar'],
+      args: ['-m', 'xgen_agent_runtime.host.sidecar'],
       env,
     };
   }
   // 최후 폴백: 시스템 python3 (dev — 패키지가 import 가능해야 함).
-  return { command: 'python3', args: ['-m', 'xgen_agent_host.sidecar'], env };
+  return { command: 'python3', args: ['-m', 'xgen_agent_runtime.host.sidecar'], env };
 }
 
 /**

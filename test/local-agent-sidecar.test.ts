@@ -1,5 +1,5 @@
 // 커넥터 로컬 실행 러너 — Node↔Python 사이드카 배관을 검증한다. 실제 Python
-// 사이드카(AgentTurnExecutor 로컬 실행)는 xgen-agent-host 쪽에서 이미 증명됐고,
+// 사이드카(AgentTurnExecutor 로컬 실행)는 xgen_agent_runtime.host 쪽에서 이미 증명됐고,
 // 여기서는 **이벤트 스트림 파싱·종료·무언종료 합성·명령 해석**만 본다(가짜 사이드카).
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -98,7 +98,7 @@ test('명령 해석 — env 오버라이드(XGEN_SIDECAR_PYTHON/PYTHONPATH)', ()
     } as NodeJS.ProcessEnv,
   });
   assert.equal(cmd.command, '/opt/py');
-  assert.deepEqual(cmd.args, ['-m', 'xgen_agent_host.sidecar']);
+  assert.deepEqual(cmd.args, ['-m', 'xgen_agent_runtime.host.sidecar']);
   assert.equal(cmd.env?.PYTHONPATH, '/pkg/src');
 });
 
@@ -109,5 +109,5 @@ test('명령 해석 — 패키지 빌드는 번들 Python 을 가리킨다', () 
     env: {} as NodeJS.ProcessEnv,
   });
   assert.match(cmd.command, /^\/app\/resources\/python/);
-  assert.deepEqual(cmd.args, ['-m', 'xgen_agent_host.sidecar']);
+  assert.deepEqual(cmd.args, ['-m', 'xgen_agent_runtime.host.sidecar']);
 });

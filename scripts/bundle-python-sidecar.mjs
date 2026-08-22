@@ -2,7 +2,7 @@
 /**
  * bundle-python-sidecar — 커넥터 로컬 실행 사이드카(Python)를 앱 리소스로 담는다.
  *
- * 커넥터는 커넥터-세션 턴을 `python -m xgen_agent_host.sidecar` 로 로컬 실행한다
+ * 커넥터는 커넥터-세션 턴을 `python -m xgen_agent_runtime.host.sidecar` 로 로컬 실행한다
  * (src/main/local-agent-sidecar.ts). 그러려면 **이식형 Python + 런타임/host 패키지**
  * 가 앱에 번들되어야 한다. 이 스크립트가 그 트리를 `resources/python-sidecar/` 로
  * 조립하고, electron-builder 의 extraResources 가 앱 `resources/python` 으로 복사한다
@@ -11,9 +11,9 @@
  * 조립 단계(각 OS 러너에서 prepackage 로 실행):
  *   1) 이식형 CPython(astral-sh/python-build-standalone, install_only) 다운로드/추출
  *      → resources/python-sidecar/python  (bin/python3 | python.exe)
- *   2) 그 python 으로 런타임/host 설치:
- *        python -m pip install <RUNTIME_SPEC> <HOST_SPEC>
- *      기본 SPEC 은 워크스페이스 로컬 경로(../xgen-agent-runtime, ../xgen-agent-host).
+ *   2) 그 python 으로 런타임 설치(사이드카 xgen_agent_runtime.host 포함):
+ *        python -m pip install <RUNTIME_SPEC>
+ *      기본 SPEC 은 워크스페이스 로컬 경로(../xgen-agent-runtime).
  *      CI 는 wheel URL/버전 핀으로 env 오버라이드.
  *   3) 용량 절감: __pycache__ / *.dist-info / tests 정리.
  *
@@ -22,7 +22,6 @@
  *   PBS_PYTHON           CPython 버전(예 3.12.11).
  *   PBS_TRIPLE           타깃 트리플 강제(크로스). 기본은 현재 OS/arch 로 해석.
  *   XGEN_RUNTIME_SPEC    pip 스펙(경로/URL/`xgen-agent-runtime==x`). 기본 로컬 경로.
- *   XGEN_HOST_SPEC       pip 스펙. 기본 로컬 경로.
  *   XGEN_SIDECAR_SKIP=1  조립 스킵(로컬 dev — env 폴백 사용).
  *
  * ⚠ 실제 다운로드·설치는 **네트워크와 각 OS 러너**가 필요하다 — 로컬 dev 는 번들
@@ -52,8 +51,9 @@ const PY_DIR = join(OUT, 'python');
 
 const PBS_RELEASE = process.env.PBS_RELEASE || '20250808';
 const PBS_PYTHON = process.env.PBS_PYTHON || '3.12.11';
+// host(turn executor + sidecar)는 xgen-agent-runtime 안(xgen_agent_runtime.host)
+// 으로 합쳐졌다 — 런타임 하나만 설치하면 사이드카까지 들어온다.
 const RUNTIME_SPEC = process.env.XGEN_RUNTIME_SPEC || join(WORKSPACE, 'xgen-agent-runtime');
-const HOST_SPEC = process.env.XGEN_HOST_SPEC || join(WORKSPACE, 'xgen-agent-host');
 
 function log(m) {
   process.stdout.write(`[bundle-python-sidecar] ${m}\n`);
@@ -150,13 +150,9 @@ async function main() {
     if (!existsSync(py)) throw new Error(`python 실행파일 없음: ${py}`);
     log(`Python: ${py}`);
 
-    // 2) 런타임/host 설치.
+    // 2) 런타임 설치(사이드카 xgen_agent_runtime.host 포함).
     log(`설치: ${RUNTIME_SPEC}`);
     execFileSync(py, ['-m', 'pip', 'install', '--no-warn-script-location', RUNTIME_SPEC], {
-      stdio: 'inherit',
-    });
-    log(`설치: ${HOST_SPEC}`);
-    execFileSync(py, ['-m', 'pip', 'install', '--no-warn-script-location', HOST_SPEC], {
       stdio: 'inherit',
     });
 
@@ -165,7 +161,7 @@ async function main() {
     cleanTree(PY_DIR);
 
     // 스모크: sidecar 모듈이 import 되나.
-    execFileSync(py, ['-c', 'import xgen_agent_host.sidecar; print("sidecar OK")'], {
+    execFileSync(py, ['-c', 'import xgen_agent_runtime.host.sidecar; print("sidecar OK")'], {
       stdio: 'inherit',
     });
     const bytes = dirSize(PY_DIR);
