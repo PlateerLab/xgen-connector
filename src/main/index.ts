@@ -30,7 +30,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, sep } from 'node:path';
-import { XgenClient, type ChatEvent, type TtsSpeakOptions } from '../core/index';
+import { XgenClient, type ChatEvent, type ChatRequest, type TtsSpeakOptions } from '../core/index';
 import {
   loadConfig,
   saveConfig,
@@ -68,6 +68,7 @@ import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-
 import { LocalSyncManager } from './local-sync-manager';
 import { registerLocalAgentIpc } from './local-agent-ipc';
 import { getStatus as localRuntimeGetStatus, installLocalRuntime } from './local-runtime-install';
+import { runLocalChatTurn, type LocalChatDeps } from './local-chat-route';
 import type { SyncRemote } from './local-sync';
 import { isSafeRelPath } from './sync-plan';
 import { hostname, userInfo } from 'os';
@@ -1743,8 +1744,21 @@ ipcMain.handle(CHANNELS.chatStart, async (e, streamId: string, req) => {
   const controller = new AbortController();
   aborters.set(streamId, controller);
   const sender = e.sender;
+  const emitLocal = (ev: ChatEvent) => {
+    if (!sender.isDestroyed()) sender.send(CHANNELS.chatEvent, streamId, ev);
+  };
   (async () => {
     try {
+      // 커넥터 로컬 실행 우선 — 독립 런타임이 설치돼 있고 서버가 로컬-턴을
+      // 지원하며 로컬 동기화가 되면, 이 PC 에서 돌린다(에이전트가 네이티브
+      // shell/파일을 로컬 자원으로). 안 되면 아무것도 안 보낸 채 서버로 폴백.
+      const local = await runLocalChatTurn(
+        req as ChatRequest,
+        localChatDeps(controller.signal),
+        emitLocal,
+      ).catch(() => ({ handled: false }));
+      if (local.handled) return; // 로컬이 end 까지 처리함.
+
       for await (const ev of getClient().chat.stream(req, controller.signal)) {
         if (sender.isDestroyed()) break;
         sender.send(CHANNELS.chatEvent, streamId, ev satisfies ChatEvent);
@@ -2460,6 +2474,23 @@ function wireLocalAgent(): void {
 /** userData 아래 로컬 런타임 트리 루트. */
 function localRuntimeDir(): string {
   return join(app.getPath('userData'), 'local-runtime');
+}
+/** 커넥터 로컬 채팅 라우팅에 필요한 deps (라이브 토큰/서버/동기화폴더/런타임상태). */
+function localChatDeps(signal?: AbortSignal): LocalChatDeps {
+  return {
+    serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+    token: () => liveAccessToken(),
+    fetch: mcpHttpFetch as unknown as NetworkFetch,
+    resolveWorkspaceDir: async (workflowId: string) => {
+      const r = await localSync?.ensureSynced(workflowId, workflowId);
+      const dir = r?.dir ?? localSync?.dirFor(workflowId) ?? null;
+      if (!dir) throw new Error('로컬 동기화 폴더 없음');
+      return dir;
+    },
+    runtimeInstalled: async () =>
+      (await localRuntimeGetStatus({ runtimeDir: localRuntimeDir() })).installed,
+    signal,
+  };
 }
 ipcMain.handle(CHANNELS.localRuntimeStatus, () => localRuntimeGetStatus({ runtimeDir: localRuntimeDir() }));
 ipcMain.handle(CHANNELS.localRuntimeInstall, async (event) => {
