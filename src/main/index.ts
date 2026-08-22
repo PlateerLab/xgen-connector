@@ -2399,6 +2399,21 @@ function wireLocalSync(): void {
         const agent = localSync?.status().agents.find((a) => a.workflowId === workflowId);
         return { dir, label: agent?.label ?? workflowName ?? workflowId };
       },
+      ensureSynced: async (workflowId: string, workflowName?: string) => {
+        // 턴 시작 — 폴더 확보 + 인덱스 하이드레이트 대기. 웹에서 만든 파일이
+        // 로컬에 내려온 뒤 에이전트가 돈다 (빈 워크스페이스 오판 방지).
+        const r = (await localSync?.ensureSynced(workflowId, workflowName || workflowId)) ?? {
+          dir: null,
+          synced: false,
+        };
+        if (!r.dir) return { info: null, synced: false };
+        const agent = localSync?.status().agents.find((a) => a.workflowId === workflowId);
+        return {
+          info: { dir: r.dir, label: agent?.label ?? workflowName ?? workflowId },
+          synced: r.synced,
+        };
+      },
+      flushSync: async (workflowId: string) => (await localSync?.flushSync(workflowId)) ?? false,
       cloudDir: () => getWorkspaceManager()?.status()?.path ?? null,
       poke: (workflowId: string) => localSync?.poke(workflowId),
     }),
