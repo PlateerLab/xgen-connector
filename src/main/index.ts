@@ -2487,12 +2487,31 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
       if (!dir) throw new Error('로컬 동기화 폴더 없음');
       return dir;
     },
-    runtimeInstalled: async () =>
-      (await localRuntimeGetStatus({ runtimeDir: localRuntimeDir() })).installed,
+    runtimeInstalled: async () => {
+      // 턴마다 스모크를 돌리지 않는다(무겁다) — 존재 확인만. 설치/번들 시점에
+      // 이미 import 스모크로 검증됐다. userData 오버라이드 → 앱 내장 번들 순.
+      const { existsSync } = await import('node:fs');
+      const { pythonExePath } = await import('./local-runtime-install');
+      if (existsSync(pythonExePath(localRuntimeDir()))) return true;
+      if (app.isPackaged && process.resourcesPath)
+        return existsSync(pythonExePath(process.resourcesPath));
+      return false;
+    },
     signal,
   };
 }
-ipcMain.handle(CHANNELS.localRuntimeStatus, () => localRuntimeGetStatus({ runtimeDir: localRuntimeDir() }));
+ipcMain.handle(CHANNELS.localRuntimeStatus, async () => {
+  // userData 설치본(업데이트/복구 오버라이드) → 앱 내장 번들(<resources>/python)
+  // 순으로 본다. 내장 트리는 runtimeDir=resourcesPath 로 같은 레이아웃
+  // (python/bin/python3)이라 getStatus 를 그대로 쓴다.
+  const user = await localRuntimeGetStatus({ runtimeDir: localRuntimeDir() });
+  if (user.installed) return { ...user, source: 'userData' as const };
+  if (app.isPackaged && process.resourcesPath) {
+    const bundled = await localRuntimeGetStatus({ runtimeDir: process.resourcesPath });
+    if (bundled.installed) return { ...bundled, source: 'bundled' as const };
+  }
+  return { ...user, source: null };
+});
 ipcMain.handle(CHANNELS.localRuntimeInstall, async (event) => {
   // 진행률은 같은 sender 로 push. fetch 는 사설 인증서 정책이 반영된 세션 fetch.
   return installLocalRuntime(

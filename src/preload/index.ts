@@ -224,6 +224,8 @@ const api = {
       pythonPath: string;
       version?: string;
       sidecarOk?: boolean;
+      /** 'bundled' = 앱 내장, 'userData' = 설치 버튼 오버라이드, null = 없음. */
+      source?: 'userData' | 'bundled' | null;
     }> => ipcRenderer.invoke(CHANNELS.localRuntimeStatus),
     install: (): Promise<{ ok: boolean; status?: unknown; error?: string }> =>
       ipcRenderer.invoke(CHANNELS.localRuntimeInstall),

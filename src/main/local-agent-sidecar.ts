@@ -115,8 +115,24 @@ export function runLocalTurn(
           } catch {
             /* 설치 모듈/electron 부재 — 무시 */
           }
+          // 내장 번들(<resources>/python)이 실제로 있을 때만 packaged 경로를
+          // 쓴다 — 빈 번들(조립 스킵 빌드)이면 시스템 폴백으로 흘려 ENOENT 방지.
+          let bundledOk = false;
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { existsSync: ex } = require('node:fs');
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { join: j } = require('node:path');
+            const bin =
+              process.platform === 'win32'
+                ? j(process.resourcesPath ?? '', 'python', 'python.exe')
+                : j(process.resourcesPath ?? '', 'python', 'bin', 'python3');
+            bundledOk = !!process.resourcesPath && ex(bin);
+          } catch {
+            bundledOk = false;
+          }
           return {
-            isPackaged: !!app?.isPackaged,
+            isPackaged: !!app?.isPackaged && bundledOk,
             resourcesPath: process.resourcesPath,
             localRuntimePython,
           };
