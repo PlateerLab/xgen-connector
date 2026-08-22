@@ -64,8 +64,9 @@ import { CHANNELS } from './ipc';
 // 않는다 (v1.7.0 에서 에이전트 추가가 먹통이던 원인).
 import { initWorkspaceManager, getWorkspaceManager } from './workspace-manager';
 import { makeWorkspaceApi } from './workspace-api';
-import { HttpSyncTransport, WorkspaceWsClient } from './sync-transport';
+import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-transport';
 import { LocalSyncManager } from './local-sync-manager';
+import { registerLocalAgentIpc } from './local-agent-ipc';
 import type { SyncRemote } from './local-sync';
 import { isSafeRelPath } from './sync-plan';
 import { hostname, userInfo } from 'os';
@@ -2420,6 +2421,40 @@ function wireLocalSync(): void {
   );
 }
 
+/**
+ * 로컬 에이전트 실행 IPC — 커넥터-세션 턴을 **사용자 PC** 에서 돌린다(무발산:
+ * 서버 웹과 같은 AgentTurnExecutor). 서버(계정)가 상태의 진실이라 context 를
+ * 받고 결과를 되돌린다. 렌더러(창의 웹 UI)가 CHANNELS.localAgentRun 으로 invoke,
+ * 진행 이벤트는 localAgentEvent 로 push. **가산적 배선** — 호출될 때만 동작하므로
+ * 기존 흐름(서버-실행 + MCP 브릿지)에 영향 없다.
+ */
+function wireLocalAgent(): void {
+  registerLocalAgentIpc({
+    handle: (channel, listener) =>
+      ipcMain.handle(channel, (event, msg) =>
+        listener(
+          event as unknown as { sender: { send: (c: string, p: unknown) => void } },
+          msg as never,
+        ),
+      ),
+    runChannel: CHANNELS.localAgentRun,
+    eventChannel: CHANNELS.localAgentEvent,
+    deps: {
+      serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+      token: () => liveAccessToken(),
+      fetch: mcpHttpFetch as unknown as NetworkFetch,
+      resolveWorkspaceDir: async (workflowId: string) => {
+        // 턴 전에 서버와 동기화된 로컬 폴더를 보장한다(웹과 같은 파일을 본다).
+        const r = await localSync?.ensureSynced(workflowId, workflowId);
+        const dir = r?.dir ?? localSync?.dirFor(workflowId) ?? null;
+        if (!dir)
+          throw new Error('이 에이전트의 로컬 동기화 폴더가 없습니다 (로컬 동기화를 켜세요).');
+        return dir;
+      },
+    },
+  });
+}
+
 ipcMain.handle(CHANNELS.syncStatus, () => {
   return localSync?.status() ?? { enabled: false, reason: 'disabled', agents: [] };
 });
@@ -2740,6 +2775,7 @@ if (!gotLock) {
     if (startHidden) mainWindow?.removeAllListeners('ready-to-show');
     wireWorkspaceManager();
     wireLocalSync();
+    wireLocalAgent();
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
       createQuickChat();

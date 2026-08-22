@@ -189,6 +189,30 @@ const api = {
       ipcRenderer.invoke(CHANNELS.agentsList, query),
   },
 
+  /**
+   * 로컬 에이전트 실행 — 커넥터-세션 턴을 **사용자 PC** 에서 돌린다(무발산: 서버
+   * 웹과 같은 AgentTurnExecutor). 상태(에이전트/자격증명/메모리/이력)는 서버가
+   * 진실이고 main 이 받고 되돌린다. runTurn 으로 시작하고 onEvent 로 진행을 받는다.
+   */
+  localAgent: {
+    runTurn: (msg: {
+      workflowId: string;
+      interactionId: string;
+      text: string;
+    }): Promise<{ agentText: string; ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.localAgentRun, msg),
+    onEvent: (
+      cb: (env: {
+        interactionId: string;
+        event: { type: 'chunk' | 'done' | 'error'; text?: string; message?: string };
+      }) => void,
+    ): (() => void) => {
+      const h = (_e: unknown, env: unknown) => cb(env as never);
+      ipcRenderer.on(CHANNELS.localAgentEvent, h);
+      return () => ipcRenderer.removeListener(CHANNELS.localAgentEvent, h);
+    },
+  },
+
   user: {
     /** The logged-in user's avatar config (preferences.avatar). Global default. */
     avatarConfig: (): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.userAvatarConfig),
