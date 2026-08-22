@@ -77,7 +77,7 @@ export function resolveTriple(triple?: string): string {
   if (!arch) throw new Error(`지원하지 않는 arch: ${a}`);
   if (process.platform === 'linux') return `${arch}-unknown-linux-gnu`;
   if (process.platform === 'darwin') return `${arch}-apple-darwin`;
-  if (process.platform === 'win32') return `${arch}-pc-windows-msvc-shared`;
+  if (process.platform === 'win32') return `${arch}-pc-windows-msvc`;
   throw new Error(`지원하지 않는 platform: ${process.platform}`);
 }
 

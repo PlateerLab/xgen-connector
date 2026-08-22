@@ -116,12 +116,37 @@ export const Settings: React.FC<{
   } | null>(null);
   const [lrInstalling, setLrInstalling] = useState(false);
   const [lrMsg, setLrMsg] = useState<string | null>(null);
+  // CLI 바이너리(codex / Claude Code) — 공식 배포처에서 로컬 설치.
+  const [cliStatus, setCliStatus] = useState<{
+    codex: { installed: boolean; version?: string };
+    claude: { installed: boolean; version?: string };
+  } | null>(null);
+  const [cliBusy, setCliBusy] = useState<'codex' | 'claude' | null>(null);
   useEffect(() => {
     void xgen.localRuntime
       .status()
       .then(setLrStatus)
       .catch(() => setLrStatus(null));
+    void xgen.localRuntime
+      .cliStatus()
+      .then(setCliStatus)
+      .catch(() => setCliStatus(null));
   }, []);
+  const installCli = async (tool: 'codex' | 'claude') => {
+    setCliBusy(tool);
+    setLrMsg(null);
+    const off = xgen.localRuntime.onProgress((p) => setLrMsg(p.message));
+    try {
+      const r = await xgen.localRuntime.cliInstall(tool);
+      if (!r.ok) setLrMsg(`실패: ${r.error ?? '알 수 없음'}`);
+      setCliStatus(await xgen.localRuntime.cliStatus());
+    } catch (e) {
+      setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      off();
+      setCliBusy(null);
+    }
+  };
   const [saved, setSaved] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
 
@@ -1049,6 +1074,38 @@ export const Settings: React.FC<{
                 </button>
               </div>
             </div>
+
+            {/* CLI provider 바이너리 — 서버가 CLI 를 갖추듯 커넥터도 갖춘다. */}
+            {(
+              [
+                ['codex', 'Codex CLI', 'OpenAI Codex provider 의 로컬 실행 바이너리 (공식 릴리스)'],
+                ['claude', 'Claude Code CLI', 'Claude Code provider 의 로컬 실행 바이너리 (공식 배포)'],
+              ] as const
+            ).map(([tool, label, desc]) => (
+              <div className="field-row" key={tool}>
+                <span>
+                  {label}
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {cliStatus?.[tool]?.installed
+                      ? `설치됨${cliStatus[tool].version ? ` (v${cliStatus[tool].version})` : ''}`
+                      : desc}
+                  </span>
+                </span>
+                <div className="row">
+                  <button
+                    className="secondary"
+                    disabled={cliBusy !== null}
+                    onClick={() => void installCli(tool)}
+                  >
+                    {cliBusy === tool
+                      ? '설치 중…'
+                      : cliStatus?.[tool]?.installed
+                        ? '업데이트'
+                        : '설치'}
+                  </button>
+                </div>
+              </div>
+            ))}
           </>
         )}
       </div>

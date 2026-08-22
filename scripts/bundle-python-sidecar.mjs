@@ -75,7 +75,7 @@ function resolveTriple() {
   if (!arch) throw new Error(`지원하지 않는 arch: ${a}`);
   if (p === 'linux') return `${arch}-unknown-linux-gnu`;
   if (p === 'darwin') return `${arch}-apple-darwin`;
-  if (p === 'win32') return `${arch}-pc-windows-msvc-shared`;
+  if (p === 'win32') return `${arch}-pc-windows-msvc`;
   throw new Error(`지원하지 않는 platform: ${p}`);
 }
 
