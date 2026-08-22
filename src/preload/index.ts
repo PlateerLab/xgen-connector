@@ -236,6 +236,15 @@ const api = {
       ipcRenderer.on(CHANNELS.localRuntimeProgress, h);
       return () => ipcRenderer.removeListener(CHANNELS.localRuntimeProgress, h);
     },
+    /** CLI 바이너리(codex / Claude Code) — 공식 배포처에서 로컬 설치. */
+    cliStatus: (): Promise<{
+      codex: { installed: boolean; path: string; version?: string };
+      claude: { installed: boolean; path: string; version?: string };
+    }> => ipcRenderer.invoke(CHANNELS.localCliStatus),
+    cliInstall: (
+      tool: 'codex' | 'claude',
+    ): Promise<{ ok: boolean; version?: string; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.localCliInstall, tool),
   },
 
   user: {

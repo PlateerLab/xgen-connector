@@ -28,8 +28,10 @@ export interface LocalChatDeps {
   fetch: NetworkFetch;
   /** 이 에이전트의 로컬 동기화 폴더(서버와 sync). 불가면 throw → 서버 폴백. */
   resolveWorkspaceDir: (workflowId: string) => Promise<string>;
-  /** 독립 로컬 런타임이 설치돼 있나(설치 버튼). */
+  /** 독립 로컬 런타임이 설치돼 있나(설치 버튼/내장 번들). */
   runtimeInstalled: () => Promise<boolean>;
+  /** 이 PC 에 설치된 CLI 경로 settings(CODEX_BINARY_PATH 등) — 사이드카 주입. */
+  cliSettings?: () => Record<string, string>;
   /** 테스트 주입. */
   server?: ServerClient;
   runTurn?: typeof runLocalTurn;
@@ -72,12 +74,19 @@ export async function runLocalChatTurn(
   const provider = String((ctx.agent.provider as string) || 'openai');
   let agentText = '';
   let sawError = false;
+  // CLI 바이너리 경로는 **이 PC 의 것**이 유일하게 유효하다 — 서버가 보낸
+  // settings 위에 로컬 설치 경로를 덮어써 codex/claude_code 가 로컬 설치본을 쓴다.
+  const localSettings = deps.cliSettings?.() ?? {};
+  const mergedContext = {
+    ...ctx.context,
+    settings: { ...(ctx.context?.settings ?? {}), ...localSettings },
+  };
   await runTurn(
     {
       workspace_dir: workspaceDir,
       provider,
       text: req.input,
-      context: ctx.context,
+      context: mergedContext,
       server: ctx.server,
       options: {
         ...ctx.agent,

@@ -68,6 +68,12 @@ import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-
 import { LocalSyncManager } from './local-sync-manager';
 import { registerLocalAgentIpc } from './local-agent-ipc';
 import { getStatus as localRuntimeGetStatus, installLocalRuntime } from './local-runtime-install';
+import {
+  cliSettings as localCliSettings,
+  getCliStatus as localCliGetStatus,
+  installClaudeCli,
+  installCodexCli,
+} from './cli-provision';
 import { runLocalChatTurn, type LocalChatDeps } from './local-chat-route';
 import type { SyncRemote } from './local-sync';
 import { isSafeRelPath } from './sync-plan';
@@ -2497,6 +2503,8 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
         return existsSync(pythonExePath(process.resourcesPath));
       return false;
     },
+    // 이 PC 에 설치된 CLI(codex/claude) 경로를 사이드카 settings 로 주입.
+    cliSettings: () => localCliSettings({ runtimeDir: localRuntimeDir() }),
     signal,
   };
 }
@@ -2524,6 +2532,22 @@ ipcMain.handle(CHANNELS.localRuntimeInstall, async (event) => {
       }
     },
   );
+});
+
+// CLI 바이너리(codex / Claude Code) 프로비저닝 — 진행률은 localRuntimeProgress 재사용.
+ipcMain.handle(CHANNELS.localCliStatus, () => localCliGetStatus({ runtimeDir: localRuntimeDir() }));
+ipcMain.handle(CHANNELS.localCliInstall, async (event, tool: unknown) => {
+  const deps = { runtimeDir: localRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch };
+  const emit = (p: unknown) => {
+    try {
+      event.sender.send(CHANNELS.localRuntimeProgress, p);
+    } catch {
+      /* 렌더러 사라짐 */
+    }
+  };
+  if (tool === 'codex') return installCodexCli(deps, emit);
+  if (tool === 'claude') return installClaudeCli(deps, emit);
+  return { ok: false, error: `알 수 없는 도구: ${String(tool)}` };
 });
 
 ipcMain.handle(CHANNELS.syncStatus, () => {
