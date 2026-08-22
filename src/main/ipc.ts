@@ -174,4 +174,10 @@ export const CHANNELS = {
   // 이벤트 main→renderer push.
   localAgentRun: 'local-agent:run',
   localAgentEvent: 'local-agent:event',
+
+  // 독립 로컬 실행 환경 설치([설정→일반] 버튼) — 이식형 Python + 에이전트 런타임을
+  // userData 아래에 OS별로 깐다. status(조회) / install(설치) / progress(진행 push).
+  localRuntimeStatus: 'local-runtime:status',
+  localRuntimeInstall: 'local-runtime:install',
+  localRuntimeProgress: 'local-runtime:progress',
 } as const;

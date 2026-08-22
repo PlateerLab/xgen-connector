@@ -213,6 +213,29 @@ const api = {
     },
   },
 
+  /**
+   * 독립 로컬 실행 환경 — [설정 → 일반]의 버튼이 쓴다. 이식형 Python + 에이전트
+   * 런타임(사이드카 포함)을 userData 아래에 OS별로 설치한다. 설치되면 커넥터가
+   * 에이전트 턴을 사용자 PC 에서 로컬 스폰할 수 있다.
+   */
+  localRuntime: {
+    status: (): Promise<{
+      installed: boolean;
+      pythonPath: string;
+      version?: string;
+      sidecarOk?: boolean;
+    }> => ipcRenderer.invoke(CHANNELS.localRuntimeStatus),
+    install: (): Promise<{ ok: boolean; status?: unknown; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.localRuntimeInstall),
+    onProgress: (
+      cb: (p: { phase: string; message: string; fraction?: number }) => void,
+    ): (() => void) => {
+      const h = (_e: unknown, p: unknown) => cb(p as never);
+      ipcRenderer.on(CHANNELS.localRuntimeProgress, h);
+      return () => ipcRenderer.removeListener(CHANNELS.localRuntimeProgress, h);
+    },
+  },
+
   user: {
     /** The logged-in user's avatar config (preferences.avatar). Global default. */
     avatarConfig: (): Promise<AvatarConfig> => ipcRenderer.invoke(CHANNELS.userAvatarConfig),

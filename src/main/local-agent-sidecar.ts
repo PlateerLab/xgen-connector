@@ -54,13 +54,21 @@ export function resolveSidecarCommand(opts?: {
   isPackaged?: boolean;
   resourcesPath?: string;
   env?: NodeJS.ProcessEnv;
+  /** [설정→일반]에서 설치한 독립 로컬 런타임의 python (userData). 설치돼 있으면
+   *  이걸 우선 쓴다 — 커넥터의 정상 로컬 실행 경로. */
+  localRuntimePython?: string;
 }): SidecarCommand {
   const env = { ...(opts?.env ?? process.env) };
   const py = env.XGEN_SIDECAR_PYTHON;
   const pyPath = env.XGEN_SIDECAR_PYTHONPATH;
   if (py) {
+    // 명시 env override(dev) — 최우선.
     if (pyPath) env.PYTHONPATH = pyPath;
     return { command: py, args: ['-m', 'xgen_agent_runtime.host.sidecar'], env };
+  }
+  if (opts?.localRuntimePython) {
+    // 설치 버튼으로 깐 독립 런타임 — 커넥터의 표준 경로.
+    return { command: opts.localRuntimePython, args: ['-m', 'xgen_agent_runtime.host.sidecar'], env };
   }
   if (opts?.isPackaged && opts.resourcesPath) {
     // 번들 레이아웃: <resources>/python/bin/python3 (POSIX) | python.exe (win),
@@ -95,7 +103,23 @@ export function runLocalTurn(
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const { app } = require('electron');
-          return { isPackaged: !!app?.isPackaged, resourcesPath: process.resourcesPath };
+          // [설정→일반]에서 설치한 독립 런타임의 python 을 우선 후보로.
+          let localRuntimePython: string | undefined;
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { pythonExePath } = require('./local-runtime-install');
+            const { existsSync } = require('node:fs');
+            const { join } = require('node:path');
+            const p = pythonExePath(join(app.getPath('userData'), 'local-runtime'));
+            if (existsSync(p)) localRuntimePython = p;
+          } catch {
+            /* 설치 모듈/electron 부재 — 무시 */
+          }
+          return {
+            isPackaged: !!app?.isPackaged,
+            resourcesPath: process.resourcesPath,
+            localRuntimePython,
+          };
         } catch {
           return {};
         }

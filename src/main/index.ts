@@ -67,6 +67,7 @@ import { makeWorkspaceApi } from './workspace-api';
 import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-transport';
 import { LocalSyncManager } from './local-sync-manager';
 import { registerLocalAgentIpc } from './local-agent-ipc';
+import { getStatus as localRuntimeGetStatus, installLocalRuntime } from './local-runtime-install';
 import type { SyncRemote } from './local-sync';
 import { isSafeRelPath } from './sync-plan';
 import { hostname, userInfo } from 'os';
@@ -2454,6 +2455,26 @@ function wireLocalAgent(): void {
     },
   });
 }
+
+// ── 독립 로컬 실행 환경 설치 ([설정 → 일반]) ─────────────────────────
+/** userData 아래 로컬 런타임 트리 루트. */
+function localRuntimeDir(): string {
+  return join(app.getPath('userData'), 'local-runtime');
+}
+ipcMain.handle(CHANNELS.localRuntimeStatus, () => localRuntimeGetStatus({ runtimeDir: localRuntimeDir() }));
+ipcMain.handle(CHANNELS.localRuntimeInstall, async (event) => {
+  // 진행률은 같은 sender 로 push. fetch 는 사설 인증서 정책이 반영된 세션 fetch.
+  return installLocalRuntime(
+    { runtimeDir: localRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch },
+    (p) => {
+      try {
+        event.sender.send(CHANNELS.localRuntimeProgress, p);
+      } catch {
+        /* 렌더러 사라짐 — 무시 */
+      }
+    },
+  );
+});
 
 ipcMain.handle(CHANNELS.syncStatus, () => {
   return localSync?.status() ?? { enabled: false, reason: 'disabled', agents: [] };

@@ -107,6 +107,20 @@ export const Settings: React.FC<{
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
+  // ── 독립 로컬 실행 환경 (일반 탭) ──
+  const [lrStatus, setLrStatus] = useState<{
+    installed: boolean;
+    version?: string;
+    pythonPath?: string;
+  } | null>(null);
+  const [lrInstalling, setLrInstalling] = useState(false);
+  const [lrMsg, setLrMsg] = useState<string | null>(null);
+  useEffect(() => {
+    void xgen.localRuntime
+      .status()
+      .then(setLrStatus)
+      .catch(() => setLrStatus(null));
+  }, []);
   const [saved, setSaved] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
 
@@ -986,6 +1000,43 @@ export const Settings: React.FC<{
                   }}
                 >
                   {confirmSettingsReset ? '초기화 및 재시작' : '초기화'}
+                </button>
+              </div>
+            </div>
+
+            {/* ─── 로컬 실행 환경 — 커넥터가 에이전트를 이 PC 에서 로컬로 돌리게 ─── */}
+            <div className="settings-section-title">로컬 실행 환경</div>
+            <div className="field-row">
+              <span>
+                에이전트 로컬 실행 런타임
+                <span className="small muted" style={{ marginLeft: 8 }}>
+                  {lrStatus?.installed
+                    ? `설치됨 (런타임 ${lrStatus.version ?? '?'}) — 에이전트가 이 PC 에서 로컬로 돕니다`
+                    : '미설치 — 설치하면 에이전트가 서버 대신 이 PC(로컬 자원)에서 실행됩니다. 시스템 Python 을 건드리지 않는 독립 환경입니다.'}
+                </span>
+              </span>
+              <div className="row">
+                {lrMsg && <span className="small muted">{lrMsg}</span>}
+                <button
+                  className="secondary"
+                  disabled={lrInstalling}
+                  onClick={async () => {
+                    setLrInstalling(true);
+                    setLrMsg('설치 준비 중…');
+                    const off = xgen.localRuntime.onProgress((p) => setLrMsg(p.message));
+                    try {
+                      const r = await xgen.localRuntime.install();
+                      if (!r.ok) setLrMsg(`실패: ${r.error ?? '알 수 없음'}`);
+                      setLrStatus(await xgen.localRuntime.status());
+                    } catch (e) {
+                      setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
+                    } finally {
+                      off();
+                      setLrInstalling(false);
+                    }
+                  }}
+                >
+                  {lrInstalling ? '설치 중…' : lrStatus?.installed ? '다시 설치' : '설치'}
                 </button>
               </div>
             </div>
