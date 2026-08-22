@@ -37,7 +37,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { createWriteStream } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -126,6 +125,10 @@ async function main() {
   // extraResources 가 이 dir 를 복사한다 — **없으면 패키징이 실패**하므로 스킵
   // 경로에서도 빈 트리는 항상 만들어 둔다(빈 번들 = 사이드카 해석이 폴백).
   mkdirSync(OUT, { recursive: true });
+  // 이전 실행이 크래시로 남긴 임시 트리 정리 — extraResources 에 실리면 안 된다.
+  for (const e of readdirSync(OUT)) {
+    if (e.startsWith('.tmp-')) rmSync(join(OUT, e), { recursive: true, force: true });
+  }
   if (process.env.XGEN_SIDECAR_SKIP === '1') {
     log('XGEN_SIDECAR_SKIP=1 — 조립 스킵(dev env 폴백).');
     return;
@@ -143,7 +146,9 @@ async function main() {
     return;
   }
 
-  const tmp = mkdtempSync(join(tmpdir(), 'xgen-pbs-'));
+  // ⚠ OS 임시 폴더가 아니라 **목적지와 같은 드라이브**에 임시 dir 를 만든다 —
+  // 윈도우 러너는 TEMP=C:, 워크스페이스=D: 라 renameSync 가 EXDEV 로 죽는다(실기).
+  const tmp = mkdtempSync(join(OUT, '.tmp-'));
   const tarball = join(tmp, 'python.tar.gz');
   try {
     // 1) 이식형 CPython.

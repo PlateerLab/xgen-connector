@@ -31,7 +31,6 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -133,9 +132,10 @@ export async function installCodexCli(
   const fetchImpl = deps.fetch ?? fetch;
   const platform = deps.platform ?? process.platform;
   const arch = deps.arch ?? process.arch;
-  const tmp = mkdtempSync(join(tmpdir(), 'xgen-codex-'));
+  mkdirSync(binDir(deps), { recursive: true });
+  // 같은 드라이브 임시(EXDEV 방지 — 윈도우 TEMP≠설치 드라이브 가능).
+  const tmp = mkdtempSync(join(binDir(deps), '.tmp-'));
   try {
-    mkdirSync(binDir(deps), { recursive: true });
     const asset = codexAssetName(platform, arch);
     onProgress({ tool: 'codex', phase: 'download', message: `codex 다운로드 (${asset})…` });
     const archive = join(tmp, asset);
@@ -185,9 +185,9 @@ export async function installClaudeCli(
   const fetchImpl = deps.fetch ?? fetch;
   const platform = deps.platform ?? process.platform;
   const arch = deps.arch ?? process.arch;
-  const tmp = mkdtempSync(join(tmpdir(), 'xgen-claude-'));
+  mkdirSync(binDir(deps), { recursive: true });
+  const tmp = mkdtempSync(join(binDir(deps), '.tmp-'));
   try {
-    mkdirSync(binDir(deps), { recursive: true });
     onProgress({ tool: 'claude', phase: 'resolve', message: 'Claude Code 버전 확인…' });
     const vres = await fetchImpl(`${CLAUDE_BASE}/stable`, { redirect: 'follow' });
     if (!vres.ok) throw new Error(`버전 조회 실패 ${vres.status}`);
