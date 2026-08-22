@@ -67,8 +67,11 @@ export interface BridgeWorkspaceInfo {
 }
 
 export interface WorkspaceBridgeDeps {
-  /** workflowId → 동기화 중인 로컬 폴더. 동기화 대상이 아니면 null. */
-  infoFor(workflowId: string): BridgeWorkspaceInfo | null;
+  /**
+   * workflowId → 이 에이전트의 로컬 실행 폴더. 로컬 실행이 불가하면 null.
+   * workflowName 은 폴더를 처음 만들 때 이름으로 쓴다 (_WorkspaceInfo 만 넘긴다).
+   */
+  infoFor(workflowId: string, workflowName?: string): BridgeWorkspaceInfo | null;
   /** 마운트된 XGen-Cloud 드라이브의 실경로 (미마운트면 null). */
   cloudDir(): string | null;
   /** 에이전트가 파일을 만졌다 — 동기화를 곧 돌려 서버 인덱스에 반영하라. */
@@ -132,8 +135,10 @@ export class WorkspaceBridge {
   async callTool(tool: string, args: unknown): Promise<LocalToolResult> {
     const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
     const workflowId = String(a.workflowId ?? '').trim();
-    if (tool === WORKSPACE_INFO_TOOL) return this.workspaceInfo(workflowId);
-    const info = workflowId ? this.deps.infoFor(workflowId) : null;
+    const workflowName = typeof a.workflowName === 'string' ? a.workflowName : undefined;
+    if (tool === WORKSPACE_INFO_TOOL) return this.workspaceInfo(workflowId, workflowName);
+    // exec/read/write 는 _WorkspaceInfo 뒤에 오므로 폴더는 이미 확보돼 있다.
+    const info = workflowId ? this.deps.infoFor(workflowId, workflowName) : null;
     if (!info) {
       return jsonResult(
         { error: '이 에이전트의 로컬 워크스페이스가 동기화되고 있지 않습니다.' },
@@ -155,8 +160,8 @@ export class WorkspaceBridge {
     return split.rel ? join(base, ...split.rel.split('/')) : base;
   }
 
-  private workspaceInfo(workflowId: string): LocalToolResult {
-    const info = workflowId ? this.deps.infoFor(workflowId) : null;
+  private workspaceInfo(workflowId: string, workflowName?: string): LocalToolResult {
+    const info = workflowId ? this.deps.infoFor(workflowId, workflowName) : null;
     if (!info) return jsonResult({ enabled: false });
     const cloud = this.deps.cloudDir();
     return jsonResult({

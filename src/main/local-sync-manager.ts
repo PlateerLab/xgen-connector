@@ -19,6 +19,7 @@ import { watch, type FSWatcher } from 'chokidar';
 import { join } from 'path';
 import { diag } from './diag-log';
 import { SyncPair, type SyncRemote, type SyncReport } from './local-sync';
+import { pickFolderName, safeName } from './local-sync-folder';
 
 export interface SyncTarget {
   workflowId: string;
@@ -89,16 +90,45 @@ interface Live {
 const WATCH_DEBOUNCE_MS = 1200;
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
-/** 상태 파일 이름에 쓸 안전한 조각. */
-function safeName(id: string): string {
-  return id.replace(/[^A-Za-z0-9._-]/g, '_');
-}
-
 export class LocalSyncManager {
   private live = new Map<string, Live>();
   private stopped = false;
+  /**
+   * 온디맨드 페어 — 서버가 커넥터 세션에서 **어느 에이전트든** 로컬로 실행하려
+   * 할 때(ensurePair) 여기 쌓인다. config.targets(클라우드 연결 목록)와 달리
+   * 연결(attach) 없이도 그 에이전트의 자기 워크스페이스를 로컬 폴더로 연다 —
+   * 모든 Agent-XGeny 는 자기 워크스페이스를 항상 갖기 때문이다.
+   */
+  private extra = new Map<string, SyncTarget>();
 
   constructor(private deps: LocalSyncDeps) {}
+
+  /**
+   * 이 에이전트를 로컬로 실행할 폴더를 확보한다 (없으면 만든다). 서버의
+   * ConnectorLocalSandbox 프로브가 부른다. 로컬 도구가 켜져 있고 기본 작업
+   * 폴더가 지정돼 있을 때만 폴더를 준다 — 그 두 가지가 로컬 실행의 전제다.
+   * 연결(attach) 여부와 무관하다.
+   */
+  ensurePair(workflowId: string, label: string): string | null {
+    if (this.stopped) return null;
+    const cfg = this.deps.config();
+    if (!this.deps.loggedIn() || !cfg.enabled || !cfg.root) return null;
+    const already =
+      this.extra.has(workflowId) || cfg.targets.some((t) => t.workflowId === workflowId);
+    if (!already) {
+      const taken = new Set<string>([
+        ...cfg.targets.map((t) => t.folder),
+        ...[...this.extra.values()].map((t) => t.folder),
+      ]);
+      this.extra.set(workflowId, {
+        workflowId,
+        label: label || workflowId,
+        folder: pickFolderName(workflowId, label || workflowId, taken),
+      });
+      this.reconcile();
+    }
+    return this.dirFor(workflowId);
+  }
 
   /** 설정·로그인 상태에 맞춰 페어를 만들고 걷는다. 언제든 다시 불러도 된다. */
   reconcile(): void {
@@ -107,6 +137,12 @@ export class LocalSyncManager {
     const want = new Map<string, SyncTarget>();
     if (this.deps.loggedIn() && cfg.enabled && cfg.root) {
       for (const t of cfg.targets) want.set(t.workflowId, t);
+      // 온디맨드 페어도 유지한다 (연결 목록에 없어도) — 다만 연결(config)이
+      // 같은 에이전트를 정식 폴더로 가지면 그쪽이 이긴다.
+      for (const [id, t] of this.extra) if (!want.has(id)) want.set(id, t);
+    } else {
+      // 로컬 실행 전제가 깨지면 온디맨드도 비운다 (다음 확보 때 다시 선다).
+      this.extra.clear();
     }
 
     // 걷기 — 목록에서 빠졌거나 루트가 바뀐 페어.
@@ -229,7 +265,7 @@ export class LocalSyncManager {
   /** 곧 동기화 — 브리지 실행(_Exec/_WriteBytes)이 파일을 만졌을 때 부른다.
    *  워처보다 빠르게, 그러나 연타는 디바운스로 한 사이클에 합쳐진다. */
   poke(workflowId: string): void {
-    this.schedule(workflowId, 800)
+    this.schedule(workflowId, 800);
   }
 
   /** 지금 동기화 — id 없으면 전부. */
