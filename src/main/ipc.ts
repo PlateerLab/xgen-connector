@@ -168,4 +168,10 @@ export const CHANNELS = {
 
   // 로그인 시크릿 저장 상태 (키체인/암호화 저장 불가 표면화)
   secureStorageStatus: 'secure:storageStatus',
+
+  // 로컬 에이전트 실행 — 커넥터-세션 턴을 사용자 PC 에서 돌린다(무발산: 서버 웹과
+  // 같은 AgentTurnExecutor). 상태는 서버(계정)가 진실. renderer→main invoke + 진행
+  // 이벤트 main→renderer push.
+  localAgentRun: 'local-agent:run',
+  localAgentEvent: 'local-agent:event',
 } as const;
