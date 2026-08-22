@@ -22,7 +22,6 @@
  */
 import { execFile } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -127,10 +126,12 @@ export async function installLocalRuntime(
   const fetchImpl = deps.fetch ?? fetch;
   const runtimeSpec = deps.runtimeSpec ?? DEFAULT_RUNTIME_WHEEL;
   const pyRoot = join(deps.runtimeDir, 'python');
-  const tmp = mkdtempSync(join(tmpdir(), 'xgen-lr-'));
+  // 목적지와 같은 드라이브에 임시 dir — 윈도우에서 TEMP 가 다른 드라이브면
+  // renameSync 가 EXDEV 로 실패한다(러너 실기).
+  mkdirSync(deps.runtimeDir, { recursive: true });
+  const tmp = mkdtempSync(join(deps.runtimeDir, '.tmp-'));
   const tarball = join(tmp, 'python.tar.gz');
   try {
-    mkdirSync(deps.runtimeDir, { recursive: true });
     // 기존 트리 제거(재설치 = 깨끗이).
     rmSync(pyRoot, { recursive: true, force: true });
 
