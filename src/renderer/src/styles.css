@@ -1010,6 +1010,71 @@ button {
   padding: 10px 8px 4px;
 }
 
+/* 활성 에이전트(열린 대화) 스트립 — 에이전트 목록(레벨1) 위에 고정. */
+.open-sessions {
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 34vh;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.open-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 8px 9px;
+  cursor: pointer;
+  color: var(--text);
+  background: none;
+  transition: background-color 0.12s ease;
+}
+.open-item:hover {
+  background: var(--panel-2);
+}
+.open-item.active {
+  background: var(--primary-soft);
+}
+.open-body {
+  min-width: 0;
+  flex: 1;
+}
+.open-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.open-meta {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.open-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--gray-300, #cbd2dc);
+  flex-shrink: 0;
+}
+.open-dot.live {
+  background: var(--success);
+  animation: livePulse 1.4s ease-in-out infinite;
+}
+.open-item:hover .conv-end {
+  opacity: 1;
+}
+
 /* Level-2 header: back button + agent name. */
 .drill-head {
   display: flex;
