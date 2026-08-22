@@ -23,6 +23,16 @@ afterPack: build/afterPack.cjs
 files:
   - out/**
   - package.json
+# 에이전트 로컬 실행 런타임 — **앱에 내장**한다. scripts/bundle-python-sidecar.mjs
+# 가 prepackage 로 resources/python-sidecar/(이식형 CPython + xgen-agent-runtime,
+# 사이드카 포함)를 조립하고, 여기서 앱 resources/python 으로 복사한다.
+# resolveSidecarCommand 의 packaged 경로(<resources>/python/bin/python3 |
+# python\python.exe)와 정렬. 커넥터는 그 자체로 로컬 실행 환경을 갖춘다 —
+# 설정의 설치 버튼은 이후 업데이트/복구(userData 오버라이드)용이다.
+extraResources:
+  - from: resources/python-sidecar
+    to: python
+    filter: ['**/*']
 # Native .node addons (keytar) must be unpacked from the asar or they fail to
 # load at runtime ("cannot find module .node").
 asarUnpack:

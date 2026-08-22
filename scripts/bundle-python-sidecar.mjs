@@ -53,7 +53,14 @@ const PBS_RELEASE = process.env.PBS_RELEASE || '20250808';
 const PBS_PYTHON = process.env.PBS_PYTHON || '3.12.11';
 // host(turn executor + sidecar)는 xgen-agent-runtime 안(xgen_agent_runtime.host)
 // 으로 합쳐졌다 — 런타임 하나만 설치하면 사이드카까지 들어온다.
-const RUNTIME_SPEC = process.env.XGEN_RUNTIME_SPEC || join(WORKSPACE, 'xgen-agent-runtime');
+// 기본 SPEC: 워크스페이스 로컬 경로(개발) → 없으면 릴리스 wheel(CI — 커넥터
+// 저장소만 체크아웃돼 로컬 경로가 없다).
+const RELEASED_RUNTIME_WHEEL =
+  'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.6.0/xgen_agent_runtime-3.6.0-py3-none-any.whl';
+const localRuntimePath = join(WORKSPACE, 'xgen-agent-runtime');
+const RUNTIME_SPEC =
+  process.env.XGEN_RUNTIME_SPEC ||
+  (existsSync(localRuntimePath) ? localRuntimePath : RELEASED_RUNTIME_WHEEL);
 
 function log(m) {
   process.stdout.write(`[bundle-python-sidecar] ${m}\n`);
@@ -116,6 +123,9 @@ function cleanTree(root) {
 }
 
 async function main() {
+  // extraResources 가 이 dir 를 복사한다 — **없으면 패키징이 실패**하므로 스킵
+  // 경로에서도 빈 트리는 항상 만들어 둔다(빈 번들 = 사이드카 해석이 폴백).
+  mkdirSync(OUT, { recursive: true });
   if (process.env.XGEN_SIDECAR_SKIP === '1') {
     log('XGEN_SIDECAR_SKIP=1 — 조립 스킵(dev env 폴백).');
     return;
@@ -124,7 +134,6 @@ async function main() {
     log(`이미 조립됨 — 스킵 (${PY_DIR}). 다시 만들려면 이 폴더를 지운다.`);
     return;
   }
-  mkdirSync(OUT, { recursive: true });
 
   let triple;
   try {

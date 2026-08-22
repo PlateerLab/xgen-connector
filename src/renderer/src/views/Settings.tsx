@@ -112,6 +112,7 @@ export const Settings: React.FC<{
     installed: boolean;
     version?: string;
     pythonPath?: string;
+    source?: 'userData' | 'bundled' | null;
   } | null>(null);
   const [lrInstalling, setLrInstalling] = useState(false);
   const [lrMsg, setLrMsg] = useState<string | null>(null);
@@ -1011,8 +1012,10 @@ export const Settings: React.FC<{
                 에이전트 로컬 실행 런타임
                 <span className="small muted" style={{ marginLeft: 8 }}>
                   {lrStatus?.installed
-                    ? `설치됨 (런타임 ${lrStatus.version ?? '?'}) — 에이전트가 이 PC 에서 로컬로 돕니다`
-                    : '미설치 — 설치하면 에이전트가 서버 대신 이 PC(로컬 자원)에서 실행됩니다. 시스템 Python 을 건드리지 않는 독립 환경입니다.'}
+                    ? lrStatus.source === 'bundled'
+                      ? `앱에 내장됨 (런타임 ${lrStatus.version ?? '?'}) — 에이전트가 이 PC 에서 로컬로 돕니다`
+                      : `설치됨 (런타임 ${lrStatus.version ?? '?'}) — 에이전트가 이 PC 에서 로컬로 돕니다`
+                    : '없음 — 설치하면 에이전트가 서버 대신 이 PC(로컬 자원)에서 실행됩니다. 시스템 Python 을 건드리지 않는 독립 환경입니다.'}
                 </span>
               </span>
               <div className="row">
@@ -1036,7 +1039,13 @@ export const Settings: React.FC<{
                     }
                   }}
                 >
-                  {lrInstalling ? '설치 중…' : lrStatus?.installed ? '다시 설치' : '설치'}
+                  {lrInstalling
+                    ? '설치 중…'
+                    : lrStatus?.source === 'bundled'
+                      ? '업데이트 설치'
+                      : lrStatus?.installed
+                        ? '다시 설치'
+                        : '설치'}
                 </button>
               </div>
             </div>
