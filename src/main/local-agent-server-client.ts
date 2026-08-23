@@ -52,6 +52,9 @@ export interface RuntimeManifest {
     target?: string | null;
     current?: string | null;
     auth_mode?: string;
+    /** 서버가 커넥터에 전달할 수 있는 인증이 있나(중앙 토큰/자격증명/API 키). 없으면 CLI 턴은 서버에서 실행. */
+    auth_ready?: boolean;
+    auth_source?: string | null;
   };
   codex: {
     enabled?: boolean;
@@ -59,6 +62,8 @@ export interface RuntimeManifest {
     target?: string | null;
     current?: string | null;
     auth_mode?: string;
+    auth_ready?: boolean;
+    auth_source?: string | null;
   };
 }
 

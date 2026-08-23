@@ -116,44 +116,6 @@ export const Settings: React.FC<{
   const cliStatus = lrStatus?.cli ?? null;
   const [cliBusy, setCliBusy] = useState<'codex' | 'claude' | null>(null);
   const [lrRepairing, setLrRepairing] = useState(false);
-  // ── CLI 로그인(이 PC) — Claude auth login / Codex device-auth ──
-  type CliAuthSt = Awaited<ReturnType<typeof xgen.localRuntime.auth.status>>;
-  const [cliAuth, setCliAuth] = useState<{ codex?: CliAuthSt; claude?: CliAuthSt }>({});
-  const [authJob, setAuthJob] = useState<{ tool: 'codex' | 'claude'; jobId: string } | null>(null);
-  const [authLines, setAuthLines] = useState<{ channel: string; text: string }[]>([]);
-  const [authCode, setAuthCode] = useState('');
-  const refreshCliAuth = () => {
-    for (const tool of ['codex', 'claude'] as const) {
-      void xgen.localRuntime.auth
-        .status(tool)
-        .then((s) => setCliAuth((prev) => ({ ...prev, [tool]: s })))
-        .catch(() => {});
-    }
-  };
-  useEffect(() => {
-    refreshCliAuth();
-    return xgen.localRuntime.auth.onEvent((env) => {
-      setAuthJob((cur) => {
-        if (!cur || cur.jobId !== env.jobId) return cur;
-        setAuthLines((ls) => [...ls, env.event]);
-        if (env.event.channel === 'exit') {
-          refreshCliAuth();
-          return null;
-        }
-        return cur;
-      });
-    });
-  }, []);
-  const startCliLogin = async (tool: 'codex' | 'claude') => {
-    setAuthLines([]);
-    setAuthCode('');
-    const r = await xgen.localRuntime.auth.login(tool);
-    if (!r.ok || !r.jobId) {
-      setLrMsg(`로그인 시작 실패: ${r.error ?? '알 수 없음'}`);
-      return;
-    }
-    setAuthJob({ tool, jobId: r.jobId });
-  };
   const repairRuntime = async () => {
     setLrRepairing(true);
     setLrMsg(null);
@@ -839,26 +801,6 @@ export const Settings: React.FC<{
                     </span>
                   </span>
                   <div className="row">
-                    {cliStatus?.[tool]?.installed &&
-                      (cliAuth[tool]?.loggedIn ? (
-                        <button
-                          className="secondary"
-                          disabled={!!authJob}
-                          onClick={() => {
-                            void xgen.localRuntime.auth.logout(tool).then(refreshCliAuth);
-                          }}
-                        >
-                          로그아웃
-                        </button>
-                      ) : (
-                        <button
-                          className="secondary"
-                          disabled={!!authJob || cliBusy !== null}
-                          onClick={() => void startCliLogin(tool)}
-                        >
-                          {tool === 'codex' ? 'ChatGPT 로그인' : 'Claude 로그인'}
-                        </button>
-                      ))}
                     <button
                       className="secondary"
                       disabled={cliBusy !== null}
@@ -876,111 +818,43 @@ export const Settings: React.FC<{
                   </div>
                 </div>
               ))}
-              {/* CLI 인증 상태 — 이 PC 로그인 > 서버 설정(API 키/중앙 자격증명) > 없음(서버에서 실행) */}
+              {/* CLI 인증 — 서버 일원화: 서버(관리자 LLM 설정)가 준 인증만 쓴다. 없으면 그 CLI 턴은 서버에서 실행. */}
               <div className="field-row">
                 <span>
                   CLI 인증
                   <span className="small muted" style={{ marginLeft: 8 }}>
-                    {(['codex', 'claude'] as const)
-                      .map((tool) => {
-                        const a = cliAuth[tool];
-                        const name = tool === 'codex' ? 'Codex' : 'Claude Code';
-                        if (!a?.installed) return `${name}: 미설치`;
-                        if (a.loggedIn)
-                          return `${name}: 이 PC 로그인됨${a.method === 'api_key' ? '(API 키)' : ''}${a.email ? ` · ${a.email}` : ''}`;
-                        return `${name}: 로그인 없음 → 서버 설정(API 키/중앙 자격증명)을 쓰고, 그것도 없으면 서버에서 실행`;
-                      })
-                      .join(' · ')}
+                    {(() => {
+                      const sv = lrStatus?.server;
+                      if (!sv)
+                        return '서버 연결 후 표시됩니다 (인증은 서버 관리자 LLM 설정을 그대로 사용)';
+                      const describe = (
+                        name: string,
+                        a:
+                          | { mode?: string; ready?: boolean; source?: string | null }
+                          | null
+                          | undefined,
+                      ) => {
+                        if (!a) return `${name}: 서버 정보 없음`;
+                        const src =
+                          a.source === 'api_key'
+                            ? 'API 키'
+                            : a.source === 'setup_token'
+                              ? '중앙 장수명 토큰'
+                              : a.source === 'credentials'
+                                ? '중앙 ChatGPT 자격증명'
+                                : a.mode === 'oauth' && name.startsWith('Claude')
+                                  ? '서버 파드 로그인(PC 전달 불가)'
+                                  : '없음';
+                        return `${name}: ${a.ready ? `서버 인증 사용(${src})` : `서버 인증 없음(${src}) → 서버에서 실행`}`;
+                      };
+                      return [
+                        describe('Claude Code', sv.claudeAuth),
+                        describe('Codex', sv.codexAuth),
+                      ].join(' · ');
+                    })()}
                   </span>
                 </span>
               </div>
-              {authJob && (
-                <div className="field-row" style={{ alignItems: 'flex-start' }}>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    {authJob.tool === 'codex' ? 'ChatGPT 로그인 진행 중' : 'Claude 로그인 진행 중'}
-                    <div className="small muted" style={{ marginTop: 6 }}>
-                      {authJob.tool === 'codex'
-                        ? '아래 URL 을 열고, 표시된 일회용 코드를 브라우저에 입력하세요. 완료되면 자동으로 반영됩니다.'
-                        : '아래 URL 을 열어 Claude 계정으로 승인한 뒤, 브라우저가 보여 주는 코드를 여기에 붙여넣으세요.'}
-                    </div>
-                    {authLines
-                      .filter((l) => l.channel === 'url')
-                      .map((l) => (
-                        <div key={l.text} className="row" style={{ marginTop: 6, gap: 8 }}>
-                          <code className="small" style={{ wordBreak: 'break-all' }}>
-                            {l.text}
-                          </code>
-                          <button
-                            className="secondary"
-                            onClick={() => void xgen.openExternal(l.text)}
-                          >
-                            URL 열기
-                          </button>
-                        </div>
-                      ))}
-                    {authLines
-                      .filter((l) => l.channel === 'code')
-                      .slice(-1)
-                      .map((l) => (
-                        <div key={l.text} style={{ marginTop: 6 }}>
-                          <span className="small muted">브라우저에 입력할 코드: </span>
-                          <code style={{ fontSize: 18, fontWeight: 700, letterSpacing: 3 }}>
-                            {l.text}
-                          </code>
-                        </div>
-                      ))}
-                    {authJob.tool === 'claude' && (
-                      <div className="row" style={{ marginTop: 6, gap: 8 }}>
-                        <input
-                          type="text"
-                          value={authCode}
-                          onChange={(e) => setAuthCode(e.target.value)}
-                          placeholder="브라우저가 준 코드 붙여넣기"
-                          style={{ flex: 1 }}
-                        />
-                        <button
-                          className="secondary"
-                          disabled={!authCode.trim()}
-                          onClick={() => {
-                            void xgen.localRuntime.auth.input(authJob.jobId, authCode.trim());
-                            setAuthCode('');
-                          }}
-                        >
-                          제출
-                        </button>
-                      </div>
-                    )}
-                    <pre
-                      className="small"
-                      style={{
-                        marginTop: 6,
-                        maxHeight: 120,
-                        overflow: 'auto',
-                        whiteSpace: 'pre-wrap',
-                        fontSize: 11,
-                        opacity: 0.85,
-                      }}
-                    >
-                      {authLines
-                        .filter((l) => l.channel !== 'url' && l.channel !== 'code')
-                        .slice(-12)
-                        .map((l) => (l.channel === 'error' ? `! ${l.text}` : l.text))
-                        .join('\n')}
-                    </pre>
-                  </span>
-                  <div className="row">
-                    <button
-                      className="secondary"
-                      onClick={() => {
-                        void xgen.localRuntime.auth.cancel(authJob.jobId);
-                        setAuthJob(null);
-                      }}
-                    >
-                      취소
-                    </button>
-                  </div>
-                </div>
-              )}
               {lrStatus?.bootErrors && lrStatus.bootErrors.length > 0 && (
                 <div className="field-row">
                   <span className="small" style={{ color: '#b45309' }}>

@@ -45,10 +45,7 @@ export interface LocalChatDeps {
   cliSettings?: () => Record<string, string>;
   /** CLI provider 턴 직전 바이너리 보장(없으면 자동 설치). false = 준비 실패. */
   ensureCli?: (tool: 'codex' | 'claude') => Promise<boolean>;
-  /**
-   * CLI 인증 프리플라이트 — 이 PC 로그인(격리 홈)이 있으면 settings 를 oauth 로 덮고 서버 중앙
-   * 자격증명을 뺀다. 반환 ok=false 면 로컬에서 시작할 인증이 없다 → 서버 폴백(cli_auth_missing).
-   */
+  /** 테스트 주입: CLI 인증 프리플라이트 대체(기본 serverCliAuth — 서버 설정만 본다). */
   cliAuth?: (
     tool: 'codex' | 'claude',
     settings: Record<string, string>,
@@ -91,10 +88,44 @@ export function describeFallback(reason: LocalFallbackReason, detail?: string): 
     workspace_unavailable: '로컬 동기화 폴더를 확보하지 못해 서버 sandbox 에서 실행합니다',
     cli_missing: 'CLI 바이너리를 준비하지 못해 서버 sandbox 에서 실행합니다',
     cli_auth_missing:
-      '이 PC 에 CLI 로그인이 없고 서버 설정에도 인증이 없어 서버 sandbox 에서 실행합니다 (설정 → 설치 에서 로그인)',
+      '서버에 이 CLI 의 인증(API 키/중앙 토큰/자격증명)이 설정되어 있지 않아 서버에서 실행합니다 (관리자 설정 → LLM)',
     local_start_failed: '로컬 실행이 시작되지 못해 서버 sandbox 에서 실행합니다',
   };
   return detail ? `${base[reason]} (${detail})` : base[reason];
+}
+
+/**
+ * CLI provider 의 인증은 **서버 일원화** — 커넥터는 서버가 turn context 로 준 것만 쓴다:
+ *   Claude Code: api_key(anthropic 키) / setup_token(중앙 장수명 토큰 CLAUDE_CODE_OAUTH_TOKEN)
+ *   Codex      : api_key(openai 키) / oauth(중앙 ChatGPT 자격증명 CODEX_CREDENTIALS_JSON)
+ * 서버의 pod-로컬 oauth(Claude) 는 PC 로 가져올 수 없다 → 없음. 없으면 로컬에서 시작하지 않고
+ * 서버에서 실행한다(서버 자원). 개별 PC 로그인은 두지 않는다(인증 이원화 금지).
+ */
+export function serverCliAuth(
+  tool: 'codex' | 'claude',
+  settings: Record<string, string>,
+  apiKeys: Record<string, string>,
+): { ok: boolean; source: 'server_api_key' | 'server_token' | 'server_credentials' | 'none' } {
+  if (tool === 'codex') {
+    const mode = (settings.CODEX_AUTH_MODE || 'api_key').trim();
+    if (mode === 'api_key')
+      return apiKeys.openai || apiKeys.codex
+        ? { ok: true, source: 'server_api_key' }
+        : { ok: false, source: 'none' };
+    return settings.CODEX_CREDENTIALS_JSON
+      ? { ok: true, source: 'server_credentials' }
+      : { ok: false, source: 'none' };
+  }
+  const mode = (settings.CLAUDE_CODE_AUTH_MODE || 'api_key').trim();
+  if (mode === 'api_key')
+    return apiKeys.anthropic || apiKeys.claude_code
+      ? { ok: true, source: 'server_api_key' }
+      : { ok: false, source: 'none' };
+  if (mode === 'setup_token')
+    return settings.CLAUDE_CODE_OAUTH_TOKEN
+      ? { ok: true, source: 'server_token' }
+      : { ok: false, source: 'none' };
+  return { ok: false, source: 'none' };
 }
 
 function sidecarToolToChatEvent(data: Record<string, unknown>): ChatEvent | null {
@@ -164,11 +195,13 @@ export async function runLocalChatTurn(
   // settings 위에 로컬 설치 경로를 덮어써 codex/claude_code 가 로컬 설치본을 쓴다.
   const localSettings = deps.cliSettings?.() ?? {};
   let settings: Record<string, string> = { ...(ctx.context?.settings ?? {}), ...localSettings };
-  // CLI 인증 프리플라이트 — 이 PC 로그인 > 서버 설정. 둘 다 없으면 서버로(서버 자원 사용).
-  if (cliTool && deps.cliAuth) {
-    const auth = await deps
-      .cliAuth(cliTool, settings, ctx.context?.api_keys ?? {})
-      .catch(() => ({ ok: false, source: 'none', settings }));
+  // CLI 인증 프리플라이트 — **서버가 준 인증만**(일원화). 없으면 서버에서 실행(서버 자원).
+  if (cliTool) {
+    const auth = deps.cliAuth
+      ? await deps
+          .cliAuth(cliTool, settings, ctx.context?.api_keys ?? {})
+          .catch(() => ({ ok: false, source: 'none', settings }))
+      : { ...serverCliAuth(cliTool, settings, ctx.context?.api_keys ?? {}), settings };
     settings = auth.settings;
     if (!auth.ok) return fallback('cli_auth_missing', cliTool);
     diag(`cli auth source=${auth.source} tool=${cliTool}`);
