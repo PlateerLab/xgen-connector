@@ -60,7 +60,12 @@ test('consumeInstallOptions: 1회 소비(파일 삭제) + 패치 매핑, 없으�
     assert.equal(consumeInstallOptions(ud), null);
     writeFileSync(
       join(ud, INSTALL_OPTIONS_FILE),
-      JSON.stringify({ dataRoot: 'D:\\xgen-connector', autoRuntime: true, autoCodex: false, autoClaude: true }),
+      JSON.stringify({
+        dataRoot: 'D:\\xgen-connector',
+        autoRuntime: true,
+        autoCodex: false,
+        autoClaude: true,
+      }),
     );
     const patch = consumeInstallOptions(ud);
     assert.deepEqual(patch, {
@@ -105,4 +110,14 @@ test('writeCliInstallScripts: OS 별 스크립트를 루트에 배치(공식 소
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('readInstallerText: UTF-16LE(BOM)/UTF-8(BOM)/ANSI-ASCII 를 모두 읽는다 (한글 경로 안전)', async () => {
+  const { readInstallerText } = await import('../src/main/data-root');
+  const json = '{"dataRoot":"C:\\\\Users\\\\홍길동\\\\xgen-connector","autoRuntime":true}';
+  const u16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(json, 'utf16le')]);
+  assert.equal(JSON.parse(readInstallerText(u16)).dataRoot, 'C:\\Users\\홍길동\\xgen-connector');
+  const u8 = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(json, 'utf8')]);
+  assert.equal(JSON.parse(readInstallerText(u8)).autoRuntime, true);
+  assert.equal(JSON.parse(readInstallerText(Buffer.from('{"a":1}'))).a, 1);
 });

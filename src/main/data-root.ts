@@ -26,6 +26,33 @@ import type { ConnectorConfig } from './config';
 
 /** 인스톨러가 남기는 선택 파일 이름 (userData 아래). */
 export const INSTALL_OPTIONS_FILE = 'install-options.json';
+/** 앱이 매 부팅 남기는 **실효 데이터 루트** 마커(userData 아래, 평문 1줄). 인스톨러(업데이트)와
+ *  언인스톨러가 config.json 을 파싱하지 않고도 같은 루트를 보게 한다. */
+export const DATA_ROOT_MARKER_FILE = 'data-root.txt';
+
+/**
+ * 인스톨러가 쓴 텍스트 디코드 — NSIS Unicode 빌드의 FileWrite 는 ANSI(CP949…)로 쓰고
+ * FileWriteUTF16LE /BOM 은 UTF-16LE(BOM)로 쓴다. BOM 으로 판별하고, BOM 은 떼어 낸다
+ * (한글 프로필 경로가 U+FFFD 로 깨져 config 에 저장되던 문제).
+ */
+export function readInstallerText(buf: Buffer): string {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe)
+    return buf.subarray(2).toString('utf16le');
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
+    return buf.subarray(3).toString('utf8');
+  return buf.toString('utf8');
+}
+
+/** 실효 데이터 루트 마커 기록(부팅마다) — 실패는 무시. */
+export function writeDataRootMarker(userDataDir: string, root: string): void {
+  try {
+    mkdirSync(userDataDir, { recursive: true });
+    // UTF-16LE(BOM 없음) — NSIS Unicode 빌드의 FileReadUTF16LE 가 그대로 읽는다(한글 경로 안전).
+    writeFileSync(join(userDataDir, DATA_ROOT_MARKER_FILE), Buffer.from(root + '\r\n', 'utf16le'));
+  } catch {
+    /* 무시 */
+  }
+}
 
 export interface InstallOptions {
   dataRoot?: string;
@@ -88,7 +115,7 @@ export function consumeInstallOptions(userDataDir: string): Partial<ConnectorCon
   if (!existsSync(p)) return null;
   let opts: InstallOptions | null = null;
   try {
-    opts = JSON.parse(readFileSync(p, 'utf-8')) as InstallOptions;
+    opts = JSON.parse(readInstallerText(readFileSync(p))) as InstallOptions;
   } catch {
     opts = null;
   }

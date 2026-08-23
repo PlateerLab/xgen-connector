@@ -127,6 +127,8 @@ export class LocalSyncManager {
       });
       this.reconcile();
     }
+    // 연결 목록(targets)에 있지만 아직 live 가 안 선 창(로그인 직후 레이스) — 지금 세운다.
+    if (!this.live.has(workflowId)) this.reconcile();
     return this.dirFor(workflowId);
   }
 

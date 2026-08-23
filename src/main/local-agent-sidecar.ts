@@ -88,21 +88,34 @@ export function resolveSidecarCommand(opts?: {
   /** PATH 앞에 붙일 디렉터리(설치 폴더의 CLI bin 등). */
   prependPath?: string[];
 }): SidecarCommand {
-  const env = { ...(opts?.env ?? process.env) };
+  const base = opts?.env ?? process.env;
+  const devPython = base.XGEN_SIDECAR_PYTHON;
+  // 표준 경로(설치 폴더/번들/레거시)는 **격리 인터프리터**로 띄운다 — 사용자 PC 의
+  // PYTHONHOME/PYTHONPATH/PYTHONSTARTUP/user-site 가 내장 런타임을 깨거나 가리지 않게.
+  // dev override(XGEN_SIDECAR_PYTHON)는 PYTHONPATH 로 소스를 가리키므로 그대로 둔다.
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(base)) {
+    if (!devPython && /^PYTHON(HOME|PATH|STARTUP|USERBASE|SAFEPATH)$/i.test(k)) continue;
+    env[k] = v;
+  }
   // Python 측 stdout 은 프로토콜 채널 — 인코딩/버퍼링을 못 박는다(Windows cp949 방지).
   env.PYTHONIOENCODING = 'utf-8';
   env.PYTHONUNBUFFERED = '1';
+  if (!devPython) env.PYTHONNOUSERSITE = '1';
   if (opts?.prependPath?.length) {
     const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
     env[key] = [...opts.prependPath, env[key] ?? ''].filter(Boolean).join(delimiter);
   }
-  const args = ['-m', 'xgen_agent_runtime.host.sidecar', ...(opts?.serve ? ['--serve'] : [])];
-  const py = env.XGEN_SIDECAR_PYTHON;
+  const modArgs = ['-m', 'xgen_agent_runtime.host.sidecar', ...(opts?.serve ? ['--serve'] : [])];
+  // -I(격리: env/user-site/cwd 무시) -X utf8 -u(비버퍼) — -I 는 PYTHONIOENCODING/PYTHONUNBUFFERED
+  // 를 무시하므로 플래그로 못 박는다.
+  const args = ['-I', '-X', 'utf8', '-u', ...modArgs];
+  const py = devPython;
   const pyPath = env.XGEN_SIDECAR_PYTHONPATH;
   if (py) {
-    // 명시 env override(dev) — 최우선.
+    // 명시 env override(dev) — 최우선. PYTHONPATH 를 써야 하므로 격리 플래그 없음.
     if (pyPath) env.PYTHONPATH = pyPath;
-    return { command: py, args, env };
+    return { command: py, args: modArgs, env };
   }
   if (opts?.localRuntimePython) {
     // 설치 폴더의 독립 런타임 — 커넥터의 표준 경로.
@@ -221,7 +234,11 @@ export class SidecarDaemon {
     const cmd = this.opts.command();
     let child: ChildProcess;
     try {
-      child = spawn(cmd.command, cmd.args, { env: cmd.env, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(cmd.command, cmd.args, {
+        env: cmd.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
     } catch (err) {
       const msg = `사이드카 스폰 실패: ${(err as Error).message}`;
       this.info.lastError = msg;
@@ -488,7 +505,11 @@ export function runLocalTurn(
       onEvent(e);
     };
     try {
-      child = spawn(cmd.command, cmd.args, { env: cmd.env, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(cmd.command, cmd.args, {
+        env: cmd.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
     } catch (err) {
       emit({ type: 'error', message: `사이드카 스폰 실패: ${(err as Error).message}` });
       resolve({ code: null });
