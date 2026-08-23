@@ -137,6 +137,13 @@ Claude Code CLI → CLI 인증 → 서버 버전 맞추기 결과 → (부팅 �
   첫 줄 + 힌트 "앱을 다시 시작해도 남으면 진단 복사 후 공유". 대표 원인이었던 `Cannot find module './workspace-bridge-tools'`
   (런타임 `require('./…')` — 번들러가 해석하지 않음)는 정적 import 로 고쳤고 `test/no-local-require.test.ts` 가 재발을 막는다.
 
+### 설치 진행 화면의 로그
+- 설치 진행(INSTFILES) 페이지는 **처음부터** 상세 로그 뷰를 켠다(`build/installer.nsh` 의 `XgenInstFilesShow` —
+  `MUI_PAGE_CUSTOMFUNCTION_SHOW`): `1/3 앱 파일 압축 해제`(줄 로그 없음, 진행 막대) → `2/3 로컬 실행 환경 구성`
+  (런타임 복사/재사용·스모크 줄 단위) → `3/3 설치 완료`. 끝나도 자동으로 넘어가지 않고 **[다음]** 을 눌러야
+  마친다(`SetAutoClose false`) — 런타임을 재사용하는 업데이트는 그 구간이 1~2초라 자동 닫힘이면 로그를 볼 수 없다.
+- 같은 내용이 `%APPDATA%\XGEN-Connector\install.log` 에도 남는다(설정 → 설치 로그).
+
 ## 설치 시 런타임 재사용
 
 인스톨러는 `resources\python\RUNTIME_VERSION`(번들 스탬프)과 `<설치폴더>\local-runtime\python\RUNTIME_VERSION` 이
