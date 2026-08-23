@@ -88,7 +88,8 @@ test('writeCliInstallScripts: OS 별 스크립트를 루트에 배치(공식 소
       ['install-codex.sh', 'install-claude-code.sh'],
     );
     const codexSh = readFileSync(join(root, 'install-codex.sh'), 'utf-8');
-    assert.match(codexSh, /github\.com\/openai\/codex\/releases\/latest\/download/);
+    assert.match(codexSh, /releases\/latest\/download\/install\.sh/);
+    assert.match(codexSh, /CODEX_INSTALL_DIR/);
     assert.match(codexSh, /local-runtime\/bin/);
     const claudeSh = readFileSync(join(root, 'install-claude-code.sh'), 'utf-8');
     assert.match(claudeSh, /downloads\.claude\.ai\/claude-code-releases/);

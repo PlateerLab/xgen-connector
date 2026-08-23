@@ -67,7 +67,10 @@ import { makeWorkspaceApi } from './workspace-api';
 import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-transport';
 import { LocalSyncManager } from './local-sync-manager';
 import { registerLocalAgentIpc } from './local-agent-ipc';
-import { getStatusFast as localRuntimeGetStatusFast, installLocalRuntime } from './local-runtime-install';
+import {
+  getStatusFast as localRuntimeGetStatusFast,
+  installLocalRuntime,
+} from './local-runtime-install';
 import {
   cliSettings as localCliSettings,
   getCliStatus as localCliGetStatus,
@@ -1970,7 +1973,9 @@ ipcMain.handle(CHANNELS.appOpenFolder, async (_e, p: unknown) => {
   try {
     const { mkdirSync } = await import('node:fs');
     mkdirSync(dir, { recursive: true });
-  } catch { /* 열기에서 드러남 */ }
+  } catch {
+    /* 열기에서 드러남 */
+  }
   const err = await shell.openPath(dir);
   return { ok: !err, error: err || undefined };
 });
@@ -2541,25 +2546,41 @@ async function ensureLocalRuntimeOnBoot(): Promise<void> {
   const { diag } = await import('./diag-log');
   try {
     if (loadConfig().localExec?.autoRuntime === false) return; // 인스톨러에서 체크 해제
-    const { existsSync } = await import('node:fs');
+    const { cpSync, existsSync } = await import('node:fs');
     const { pythonExePath } = await import('./local-runtime-install');
-    if (existsSync(pythonExePath(localRuntimeDir()))) return; // userData 설치본
-    if (app.isPackaged && process.resourcesPath && existsSync(pythonExePath(process.resourcesPath)))
-      return; // 앱 내장 번들
+    const modernDir = runtimeDirOf(resolveDataRoot(loadConfig()));
+    if (existsSync(pythonExePath(modernDir))) return; // 설치 폴더에 이미 존재(정상)
+    if (existsSync(pythonExePath(join(app.getPath('userData'), 'local-runtime')))) return; // 레거시
     localRuntimeProvisioning = true;
-    diag('local-exec', '로컬 실행 런타임 없음 — 부팅 자동 설치 시작(백그라운드)');
+    // 1순위: 앱 내장 번들 → 설치 폴더로 **로컬 복사**(수 초, 네트워크 0).
+    //   윈도우는 NSIS 가 설치 시점에 이미 복사한다 — 이 경로는 mac/linux 와
+    //   구버전에서 업데이트된 설치의 안전망이다. UI 에 어떤 상태도 띄우지
+    //   않는다("설치 중" 개념 자체가 없어야 한다) — diag 로그만.
+    if (
+      app.isPackaged &&
+      process.resourcesPath &&
+      existsSync(pythonExePath(process.resourcesPath))
+    ) {
+      diag('local-exec', '설치 폴더에 런타임 없음 — 내장 번들을 복사(로컬)');
+      const src = join(process.resourcesPath, 'python');
+      const dst = join(modernDir, 'python');
+      cpSync(src, dst, { recursive: true });
+      diag('local-exec', `런타임 복사 완료: ${dst}`);
+      return;
+    }
+    // 2순위(dev 등 번들 자체가 없는 빌드): 조용한 백그라운드 설치.
+    diag('local-exec', '번들 없음(dev) — 백그라운드 자동 설치');
     const r = await installLocalRuntime(
-      { runtimeDir: localRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch },
-      (p) => safeSend(mainWindow, CHANNELS.localRuntimeProgress, p),
+      { runtimeDir: modernDir, fetch: mcpHttpFetch as unknown as typeof fetch },
+      () => {}, // 무소음 — UI 로 진행을 보내지 않는다
     );
-    diag('local-exec', r.ok ? `런타임 자동 설치 완료 (v${r.status?.version})` : `자동 설치 실패: ${r.error}`);
+    diag('local-exec', r.ok ? `런타임 설치 완료 (v${r.status?.version})` : `설치 실패: ${r.error}`);
   } catch (e) {
-    diag('local-exec', `런타임 자동 설치 예외(무시): ${e instanceof Error ? e.message : String(e)}`);
+    diag('local-exec', `런타임 준비 예외(무시): ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     localRuntimeProvisioning = false;
   }
 }
-/** 커넥터 로컬 채팅 라우팅에 필요한 deps (라이브 토큰/서버/동기화폴더/런타임상태). */
 function localChatDeps(signal?: AbortSignal): LocalChatDeps {
   return {
     serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
@@ -2599,8 +2620,10 @@ function ensureCliInstalled(tool: 'codex' | 'claude'): Promise<boolean> {
   const inflight = cliEnsureInflight.get(tool);
   if (inflight) return inflight;
   const p = (async () => {
-    const emit = (pr: unknown) => safeSend(mainWindow, CHANNELS.localRuntimeProgress, pr);
-    const r = tool === 'codex' ? await installCodexCli(deps, emit) : await installClaudeCli(deps, emit);
+    // 무소음 — 자동 경로는 UI 로 진행을 보내지 않는다(diag 만; 버튼 경로는 자체 표시).
+    const emit = () => {};
+    const r =
+      tool === 'codex' ? await installCodexCli(deps, emit) : await installClaudeCli(deps, emit);
     return r.ok;
   })().finally(() => cliEnsureInflight.delete(tool));
   cliEnsureInflight.set(tool, p);

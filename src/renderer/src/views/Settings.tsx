@@ -653,9 +653,7 @@ export const Settings: React.FC<{
                 <span>
                   에이전트 로컬 실행 런타임
                   <span className="small muted" style={{ marginLeft: 8 }}>
-                    {lrStatus?.installed
-                      ? `내장됨 (런타임 ${lrStatus.version ?? '?'})`
-                      : (lrMsg ?? '자동 설치 중…')}
+                    {lrStatus?.installed ? `설치됨 (런타임 ${lrStatus.version ?? '?'})` : '—'}
                   </span>
                 </span>
                 {/* 내장이 기본 — 설치 버튼 없음. 없으면 부팅이 자동 설치한다. */}
@@ -699,6 +697,11 @@ export const Settings: React.FC<{
                   </div>
                 </div>
               ))}
+              {lrMsg && (
+                <div className="field-row">
+                  <span className="small muted">{lrMsg}</span>
+                </div>
+              )}
             </SettingsSection>
           </>
         )}

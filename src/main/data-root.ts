@@ -99,7 +99,8 @@ export function consumeInstallOptions(userDataDir: string): Partial<ConnectorCon
   }
   if (!opts || typeof opts !== 'object') return null;
   const patch: Partial<ConnectorConfig> = {};
-  if (typeof opts.dataRoot === 'string' && opts.dataRoot.trim()) patch.dataRoot = opts.dataRoot.trim();
+  if (typeof opts.dataRoot === 'string' && opts.dataRoot.trim())
+    patch.dataRoot = opts.dataRoot.trim();
   const le: NonNullable<ConnectorConfig['localExec']> = {};
   if (typeof opts.autoRuntime === 'boolean') le.autoRuntime = opts.autoRuntime;
   if (typeof opts.autoCodex === 'boolean') le.autoCodex = opts.autoCodex;
@@ -118,21 +119,13 @@ export function consumeInstallOptions(userDataDir: string): Partial<ConnectorCon
 // (win .cmd 는 콘솔 코드페이지 문제를 피해 영어 메시지 — curl/tar 는 Win10+ 내장.)
 
 const SH_CODEX = `#!/bin/sh
-# XGEN Connector — codex CLI 설치 (공식 릴리스: github.com/openai/codex)
-# 설치 위치: <이 폴더>/local-runtime/bin/codex
+# XGEN Connector — codex CLI 설치 (공식 install.sh: github.com/openai/codex)
+# 설치 위치: <이 폴더>/local-runtime/bin/codex  (서버 파드와 같은 공식 채널)
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$DIR/local-runtime/bin"; mkdir -p "$BIN"
-case "$(uname -m)" in arm64|aarch64) A=aarch64;; *) A=x86_64;; esac
-case "$(uname -s)" in Darwin) T="$A-apple-darwin";; *) T="$A-unknown-linux-musl";; esac
-URL="https://github.com/openai/codex/releases/latest/download/codex-$T.tar.gz"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-echo "download: $URL"
-curl -fsSL "$URL" -o "$TMP/codex.tar.gz"
-tar -xzf "$TMP/codex.tar.gz" -C "$TMP"
-F="$(find "$TMP" -maxdepth 1 -type f -name 'codex*' ! -name '*.tar.gz' | head -1)"
-[ -n "$F" ] || { echo "codex binary not found in archive" >&2; exit 1; }
-install -m 755 "$F" "$BIN/codex"
+curl -fsSL https://github.com/openai/codex/releases/latest/download/install.sh \\
+  | CODEX_NON_INTERACTIVE=true CODEX_INSTALL_DIR="$BIN" sh
 "$BIN/codex" --version
 echo "installed: $BIN/codex"
 `;
@@ -207,13 +200,20 @@ exit /b 1\r
  * POSIX: install-codex.sh / install-claude-code.sh (0755)
  * win  : install-codex.cmd / install-claude-code.cmd
  */
-export function writeCliInstallScripts(root: string, platform: NodeJS.Platform = process.platform): string[] {
+export function writeCliInstallScripts(
+  root: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
   const out: string[] = [];
   const put = (name: string, body: string, exec: boolean) => {
     const p = join(root, name);
     writeFileSync(p, body);
     if (exec) {
-      try { chmodSync(p, 0o755); } catch { /* fs 제약 — 실행 시 sh 로 */ }
+      try {
+        chmodSync(p, 0o755);
+      } catch {
+        /* fs 제약 — 실행 시 sh 로 */
+      }
     }
     out.push(p);
   };
