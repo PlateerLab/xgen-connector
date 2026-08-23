@@ -16,6 +16,7 @@ import {
   describeFallback,
   runLocalChatTurn,
   WORKSPACE_UNSYNCED_DETAIL,
+  MEMORY_OFFLINE_DETAIL,
   type LocalChatDeps,
   serverCliAuth,
 } from '../src/main/local-chat-route';
@@ -157,6 +158,52 @@ test('로컬 턴: status(connector_local) → text/tool → end, 로컬 CLI 경�
   assert.equal(rep.model, 'gpt-5.3-codex');
   assert.equal(rep.deviceName, 'PC-1');
   assert.equal((rep.toolEvents as unknown[]).length, 1);
+});
+
+test('사이드카 notice(memory_offline) → status detail 부착(폴백 아님, 로컬 계속)', async () => {
+  const events: ChatEvent[] = [];
+  const server = fakeServer();
+  const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'started', surface: 'connector_local' });
+    emit({
+      type: 'notice',
+      data: { code: 'memory_offline', message: MEMORY_OFFLINE_DETAIL },
+    });
+    emit({ type: 'chunk', text: 'x' });
+    emit({ type: 'done', text: 'x' });
+    return 'done';
+  });
+  const r = await runLocalChatTurn(REQ, baseDeps({ server, runner }), (e) => events.push(e));
+  // 폴백이 아니다 — 로컬이 이 턴을 소유하고 정상 종료(text→end).
+  assert.equal(r.handled, true);
+  assert.deepEqual(
+    events.map((e) => e.kind),
+    ['status', 'status', 'text', 'end'],
+  );
+  // 두 번째 status 는 memory_offline 안내를 detail 로 실은 connector_local 상태.
+  const st = events[1] as Extract<ChatEvent, { kind: 'status' }>;
+  assert.equal(st.surface, 'connector_local');
+  assert.equal(st.detail, MEMORY_OFFLINE_DETAIL);
+  assert.equal(st.provider, 'codex');
+  // 보고는 정상(ok) — degrade 는 알림일 뿐 실패가 아니다.
+  assert.equal((server.reports[0] as { status: string }).status, 'ok');
+});
+
+test('notice(memory_offline) 메시지 없으면 기본 안내로 detail 부착; 미지의 code 는 무시', async () => {
+  const events: ChatEvent[] = [];
+  const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'notice', data: { code: 'something_else' } }); // 미지의 code → 무시
+    emit({ type: 'notice', data: { code: 'memory_offline' } }); // 메시지 없음 → 기본값
+    emit({ type: 'done', text: '' });
+    return 'done';
+  });
+  await runLocalChatTurn(REQ, baseDeps({ runner }), (e) => events.push(e));
+  const statuses = events.filter(
+    (e): e is Extract<ChatEvent, { kind: 'status' }> => e.kind === 'status',
+  );
+  // 초기 status + memory_offline status(미지 code 는 status 를 만들지 않는다).
+  assert.equal(statuses.length, 2);
+  assert.equal(statuses[1].detail, MEMORY_OFFLINE_DETAIL);
 });
 
 test('폴백 사유는 숨기지 않는다 — runtime_missing/attachments/composite/context/workspace/cli', async () => {
