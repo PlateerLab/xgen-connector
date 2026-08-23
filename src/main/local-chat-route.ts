@@ -104,6 +104,10 @@ export interface LocalRouteResult {
 /** 동기화 미완료 상태에서 로컬 실행을 시작할 때 상태 이벤트에 싣는 안내. */
 export const WORKSPACE_UNSYNCED_DETAIL = '동기화 미완료 — 일부 파일이 아직 없을 수 있음';
 
+/** 사이드카가 메모리 브릿지/첫 RPC 실패를 알려 왔을 때(notice code=memory_offline)
+ *  상태 이벤트 detail 로 부착하는 안내. 폴백이 아니라 무기억으로 계속 진행한다. */
+export const MEMORY_OFFLINE_DETAIL = '메모리 서버 연결 실패 — 이번 턴은 무기억으로 진행';
+
 /** 사람이 읽는 폴백 사유(상태 이벤트/진단용). */
 export function describeFallback(reason: LocalFallbackReason, detail?: string): string {
   const base: Record<LocalFallbackReason, string> = {
@@ -323,6 +327,19 @@ export async function runLocalChatTurn(
           if (ev) emit(ev);
           break;
         }
+        case 'notice':
+          // 진단 신호(첫 chunk 이전) — 폴백이 아니다. 로컬 실행은 계속되고, 무기억
+          // degrade 사실만 surface 상태 이벤트 detail 로 부착해 알린다.
+          if (se.data?.code === 'memory_offline') {
+            emit({
+              kind: 'status',
+              surface: 'connector_local',
+              provider,
+              workspaceDir,
+              detail: se.data.message || MEMORY_OFFLINE_DETAIL,
+            });
+          }
+          break;
         case 'usage':
           // 파이프라인 종료 후 1회 — 보고(report-turn) usage 로 서버에 기록(토큰 컬럼·output_data.usage).
           if (se.data && typeof se.data === 'object') usage = se.data as TurnUsage;

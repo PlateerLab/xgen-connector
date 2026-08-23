@@ -18,8 +18,8 @@
  *     되면 데몬을 내린다(다음 턴에 재기동).
  *
  * 계약(사이드카와 공유): 명령 {id, op:'turn'|'cancel'|'ping'|'shutdown', ...} →
- * 이벤트 {id, type:'ready'|'pong'|'started'|'chunk'|'tool'|'canvas_command'|'meta'|'usage'|
- * 'done'|'error'|'cancelled', ...}.
+ * 이벤트 {id, type:'ready'|'pong'|'started'|'chunk'|'tool'|'canvas_command'|'notice'|'meta'|
+ * 'usage'|'done'|'error'|'cancelled', ...}.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -61,6 +61,9 @@ export type SidecarEvent =
   | { type: 'chunk'; text: string }
   | { type: 'tool'; data: Record<string, unknown> }
   | { type: 'canvas_command'; data: unknown }
+  /** 진단 신호(0..1회, 첫 chunk 이전) — 폴백이 아니라 무기억 등 degrade 알림뿐.
+   *  code: 'memory_offline' = 메모리 서버 연결 실패, 이번 턴은 무기억으로 계속 진행. */
+  | { type: 'notice'; data: { code?: string; message?: string } }
   | { type: 'meta'; data: unknown }
   /** 토큰 사용량(v2 1급 이벤트, 파이프라인 종료 후 1회) — 보고(report-turn) usage 로 실린다. */
   | { type: 'usage'; data: Record<string, unknown> }
