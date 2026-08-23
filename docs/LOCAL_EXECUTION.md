@@ -52,3 +52,17 @@
 
 - 설정 → 스토리지 → [진단 로그 복사] 의 `local-exec` 항목: 폴백 사유, 사이드카 기동/종료, 수렴 계획.
 - 채팅 메시지 상단 배지: **이 PC에서 실행** / **서버에서 실행(사유)**.
+
+## CLI 인증 (이 PC 로그인) — `local-cli-auth.ts`
+
+XGEN 관리자 LLM 탭과 같은 로그인 흐름을 커넥터 안에서 제공한다. 자격증명은 설치 폴더의 격리 홈에만 남는다.
+
+| 도구 | 로그인 | 상태 | 로그아웃 |
+|---|---|---|---|
+| Claude Code | `claude auth login --claudeai` (파이프) → URL 열기 → 브라우저가 준 코드 입력(stdin) | `claude auth status` (JSON) | `claude auth logout` |
+| Codex | `codex login --device-auth` (파이프) → URL 열기 + 일회용 코드 표시 → CLI 폴링 완료 | `codex login status` | `codex logout` |
+
+로컬 턴 settings 우선순위: **이 PC 로그인(oauth) > 서버 설정(API 키 / 중앙 자격증명)**. 로그인이 있으면
+`CODEX_AUTH_MODE`/`CLAUDE_CODE_AUTH_MODE=oauth` 로 덮고 서버 중앙 자격증명은 제거한다(격리 홈을 덮어쓰지 않게).
+둘 다 없으면 로컬에서 시작하지 않고 **서버로 폴백**(`cli_auth_missing`). 로컬 실행이 첫 출력 전에 죽으면
+(인증 만료·바이너리 실행 실패·키 없음 등 "[ERROR] … could not start") 역시 서버로 폴백(`local_start_failed`).

@@ -275,6 +275,34 @@ const api = {
       tool: 'codex' | 'claude',
     ): Promise<{ ok: boolean; version?: string; error?: string }> =>
       ipcRenderer.invoke(CHANNELS.localCliInstall, tool),
+    /** CLI 로그인(이 PC) — XGEN 관리자 LLM 탭과 같은 흐름(URL 열기 → 코드). */
+    auth: {
+      status: (
+        tool: 'codex' | 'claude',
+      ): Promise<{
+        tool: string;
+        installed: boolean;
+        loggedIn: boolean;
+        method?: string | null;
+        email?: string | null;
+        detail?: string;
+      }> => ipcRenderer.invoke(CHANNELS.localCliAuthStatus, tool),
+      login: (tool: 'codex' | 'claude'): Promise<{ ok: boolean; jobId?: string; error?: string }> =>
+        ipcRenderer.invoke(CHANNELS.localCliAuthLogin, tool),
+      input: (jobId: string, text: string): Promise<{ ok: boolean; error?: string }> =>
+        ipcRenderer.invoke(CHANNELS.localCliAuthInput, jobId, text),
+      cancel: (jobId: string): Promise<{ ok: boolean }> =>
+        ipcRenderer.invoke(CHANNELS.localCliAuthCancel, jobId),
+      logout: (tool: 'codex' | 'claude'): Promise<{ ok: boolean; error?: string }> =>
+        ipcRenderer.invoke(CHANNELS.localCliAuthLogout, tool),
+      onEvent: (
+        cb: (env: { jobId: string; event: { channel: string; text: string } }) => void,
+      ): (() => void) => {
+        const h = (_e: unknown, env: unknown) => cb(env as never);
+        ipcRenderer.on(CHANNELS.localCliAuthEvent, h);
+        return () => ipcRenderer.removeListener(CHANNELS.localCliAuthEvent, h);
+      },
+    },
   },
 
   user: {

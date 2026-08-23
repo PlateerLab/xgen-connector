@@ -71,6 +71,11 @@ import { SidecarDaemon, defaultSidecarCommand } from './local-agent-sidecar';
 import { makeServerClient as makeLocalExecServerClient } from './local-agent-server-client';
 import { LocalRuntimeConverger } from './local-runtime-converge';
 import { LocalRuntimeEnsurer } from './local-runtime-ensure';
+import { LocalCliAuth, cliAuthAvailable } from './local-cli-auth';
+import {
+  cliBinaryPath as localCliBinaryPath,
+  cliHomeDir as localCliHomeDir,
+} from './cli-provision';
 import {
   cliSettings as localCliSettings,
   getCliStatus as localCliGetStatus,
@@ -2611,6 +2616,28 @@ function localRuntimeDir(): string {
 let localEnsurer: LocalRuntimeEnsurer | null = null;
 /** 부팅 배선 단계 실패(있으면) — 설정 화면에 그대로 드러낸다. */
 const localExecBootErrors: string[] = [];
+/** 이 PC 의 CLI 로그인(격리 홈) — Claude `auth login`, Codex `login --device-auth`. */
+let localCliAuth: LocalCliAuth | null = null;
+function getLocalCliAuth(): LocalCliAuth {
+  if (!localCliAuth) {
+    localCliAuth = new LocalCliAuth({
+      binaryPath: (tool) => {
+        const p = localCliBinaryPath({ runtimeDir: cliRuntimeDir() }, tool);
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { existsSync } = require('node:fs') as typeof import('node:fs');
+        return existsSync(p) ? p : null;
+      },
+      homeDir: (tool) => localCliHomeDir({ runtimeDir: cliRuntimeDir() }, tool),
+      prependPath: [join(cliRuntimeDir(), 'bin')],
+      log: (m) => {
+        void import('./diag-log')
+          .then(({ diag }) => diag('local-exec', `cli-auth: ${m}`))
+          .catch(() => {});
+      },
+    });
+  }
+  return localCliAuth;
+}
 function getLocalEnsurer(): LocalRuntimeEnsurer {
   if (!localEnsurer) {
     localEnsurer = new LocalRuntimeEnsurer({
@@ -2709,6 +2736,17 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
     cliSettings: () => localCliSettings({ runtimeDir: cliRuntimeDir() }),
     // CLI provider 턴 직전 바이너리 보장 — 없으면 공식 배포처에서 자동 설치(서버 목표 버전).
     ensureCli: (tool) => ensureCliInstalled(tool),
+    // CLI 인증 프리플라이트 — 이 PC 로그인 > 서버 설정; 둘 다 없으면 서버 폴백.
+    cliAuth: async (tool, settings, apiKeys) => {
+      const auth = getLocalCliAuth();
+      const ov = await auth.overlaySettings(settings, {
+        codex: tool === 'codex',
+        claude: tool === 'claude',
+      });
+      const localLoggedIn = tool === 'codex' ? ov.local.codex : ov.local.claude;
+      const avail = cliAuthAvailable(tool, ov.settings, apiKeys, localLoggedIn);
+      return { ok: avail.ok, source: avail.source, settings: ov.settings };
+    },
     flushSync: async (workflowId) => (await localSync?.flushSync(workflowId)) ?? false,
     deviceName: () => defaultDeviceName(hostname(), userInfo().username),
     diag: (m) => {
@@ -2766,6 +2804,10 @@ function localExecStatus() {
     runtimeDir: localRuntimeDir(),
     daemon: sidecarDaemon?.status() ?? { running: false, activeTurns: 0 },
     cli: localCliGetStatus({ runtimeDir: cliRuntimeDir() }),
+    cliAuth: {
+      codex: localCliAuth?.['statusCache']?.get('codex') ?? null,
+      claude: localCliAuth?.['statusCache']?.get('claude') ?? null,
+    },
     server: m
       ? {
           runtime: m.runtime?.version,
@@ -2857,6 +2899,45 @@ ipcMain.handle(CHANNELS.localCliInstall, async (event, tool: unknown) => {
   if (tool === 'claude')
     return installClaudeCli(deps, emit, { version: m?.claude?.target ?? undefined });
   return { ok: false, error: `알 수 없는 도구: ${String(tool)}` };
+});
+
+// ── CLI 로그인(이 PC 격리 홈) ─────────────────────────────────────────
+ipcMain.handle(CHANNELS.localCliAuthStatus, async (_e, tool: unknown) => {
+  if (tool !== 'codex' && tool !== 'claude')
+    return { tool: String(tool), installed: false, loggedIn: false };
+  return getLocalCliAuth().status(tool, { fresh: true });
+});
+ipcMain.handle(CHANNELS.localCliAuthLogin, async (event, tool: unknown) => {
+  if (tool !== 'codex' && tool !== 'claude')
+    return { ok: false, error: `알 수 없는 도구: ${String(tool)}` };
+  // 바이너리가 없으면 먼저 설치한다(서버 목표 버전).
+  const ready = await ensureCliInstalled(tool).catch(() => false);
+  if (!ready)
+    return { ok: false, error: `${tool} CLI 를 설치하지 못했습니다(설정 → 설치 → 설치 버튼).` };
+  const auth = getLocalCliAuth();
+  const r = auth.startLogin(tool);
+  if (!r.ok || !r.jobId) return r;
+  const sender = event.sender;
+  auth.subscribe(r.jobId, (ev) => {
+    try {
+      if (!sender.isDestroyed())
+        sender.send(CHANNELS.localCliAuthEvent, { jobId: r.jobId, event: ev });
+    } catch {
+      /* 렌더러 사라짐 */
+    }
+  });
+  return r;
+});
+ipcMain.handle(CHANNELS.localCliAuthInput, (_e, jobId: unknown, text: unknown) =>
+  getLocalCliAuth().submitInput(String(jobId), String(text ?? '')),
+);
+ipcMain.handle(CHANNELS.localCliAuthCancel, (_e, jobId: unknown) =>
+  getLocalCliAuth().cancel(String(jobId)),
+);
+ipcMain.handle(CHANNELS.localCliAuthLogout, async (_e, tool: unknown) => {
+  if (tool !== 'codex' && tool !== 'claude')
+    return { ok: false, error: `알 수 없는 도구: ${String(tool)}` };
+  return getLocalCliAuth().logout(tool);
 });
 
 ipcMain.handle(CHANNELS.syncStatus, () => {
