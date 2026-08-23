@@ -184,7 +184,18 @@
     DetailPrint "로컬 실행 런타임을 설치하는 중... (수십 초 소요)"
     CreateDirectory "$XgenDataRoot\local-runtime"
     RMDir /r "$XgenDataRoot\local-runtime\python"
+    ClearErrors
     CopyFiles /SILENT "$INSTDIR\resources\python" "$XgenDataRoot\local-runtime"
+    ${If} ${Errors}
+      DetailPrint "런타임 복사 중 오류 — 앱 첫 실행 시 자동 복구됩니다."
+    ${EndIf}
+    ; 복사본 검증(import 스모크) — 실패해도 설치는 계속한다(앱이 부팅 때 내장 번들에서 복구).
+    DetailPrint "로컬 실행 런타임을 검증하는 중..."
+    nsExec::ExecToLog '"$XgenDataRoot\local-runtime\python\python.exe" -c "import xgen_agent_runtime.host.sidecar"'
+    Pop $0
+    ${If} $0 != 0
+      DetailPrint "런타임 검증 실패(코드 $0) — 앱 첫 실행 시 자동 복구됩니다."
+    ${EndIf}
   ${EndIf}
 !macroend
 

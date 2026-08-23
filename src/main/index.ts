@@ -66,13 +66,11 @@ import { initWorkspaceManager, getWorkspaceManager } from './workspace-manager';
 import { makeWorkspaceApi } from './workspace-api';
 import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-transport';
 import { LocalSyncManager } from './local-sync-manager';
-import {
-  getStatusFast as localRuntimeGetStatusFast,
-  installLocalRuntime,
-} from './local-runtime-install';
+import { getStatusFast as localRuntimeGetStatusFast } from './local-runtime-install';
 import { SidecarDaemon, defaultSidecarCommand } from './local-agent-sidecar';
 import { makeServerClient as makeLocalExecServerClient } from './local-agent-server-client';
 import { LocalRuntimeConverger } from './local-runtime-converge';
+import { LocalRuntimeEnsurer } from './local-runtime-ensure';
 import {
   cliSettings as localCliSettings,
   getCliStatus as localCliGetStatus,
@@ -2502,7 +2500,7 @@ let sidecarDaemon: SidecarDaemon | null = null;
 function getSidecarDaemon(): SidecarDaemon {
   if (!sidecarDaemon) {
     sidecarDaemon = new SidecarDaemon({
-      command: () => defaultSidecarCommand(true),
+      command: () => defaultSidecarCommand(true, getLocalEnsurer().activePython()?.python),
       log: (m) => {
         void import('./diag-log')
           .then(({ diag }) => diag('local-exec', `sidecar: ${m}`))
@@ -2602,46 +2600,44 @@ function localRuntimeDir(): string {
  * 진행률은 메인 창으로 push — 설정 화면이 열려 있으면 실시간 표시된다.
  * 실패해도 앱을 막지 않는다(로컬 턴은 서버 폴백; [설치] 버튼이 수동 재시도).
  */
-let localRuntimeProvisioning = false;
-async function ensureLocalRuntimeOnBoot(): Promise<void> {
-  if (localRuntimeProvisioning) return;
-  const { diag } = await import('./diag-log');
-  try {
-    if (loadConfig().localExec?.autoRuntime === false) return; // 인스톨러에서 체크 해제
-    const { cpSync, existsSync } = await import('node:fs');
-    const { pythonExePath } = await import('./local-runtime-install');
-    const modernDir = runtimeDirOf(resolveDataRoot(loadConfig()));
-    if (existsSync(pythonExePath(modernDir))) return; // 설치 폴더에 이미 존재(정상)
-    if (existsSync(pythonExePath(join(app.getPath('userData'), 'local-runtime')))) return; // 레거시
-    localRuntimeProvisioning = true;
-    // 1순위: 앱 내장 번들 → 설치 폴더로 **로컬 복사**(수 초, 네트워크 0).
-    //   윈도우는 NSIS 가 설치 시점에 이미 복사한다 — 이 경로는 mac/linux 와
-    //   구버전에서 업데이트된 설치의 안전망이다. UI 에 어떤 상태도 띄우지
-    //   않는다("설치 중" 개념 자체가 없어야 한다) — diag 로그만.
-    if (
-      app.isPackaged &&
-      process.resourcesPath &&
-      existsSync(pythonExePath(process.resourcesPath))
-    ) {
-      diag('local-exec', '설치 폴더에 런타임 없음 — 내장 번들을 복사(로컬)');
-      const src = join(process.resourcesPath, 'python');
-      const dst = join(modernDir, 'python');
-      cpSync(src, dst, { recursive: true });
-      diag('local-exec', `런타임 복사 완료: ${dst}`);
-      return;
-    }
-    // 2순위(dev 등 번들 자체가 없는 빌드): 조용한 백그라운드 설치.
-    diag('local-exec', '번들 없음(dev) — 백그라운드 자동 설치');
-    const r = await installLocalRuntime(
-      { runtimeDir: modernDir, fetch: mcpHttpFetch as unknown as typeof fetch },
-      () => {}, // 무소음 — UI 로 진행을 보내지 않는다
-    );
-    diag('local-exec', r.ok ? `런타임 설치 완료 (v${r.status?.version})` : `설치 실패: ${r.error}`);
-  } catch (e) {
-    diag('local-exec', `런타임 준비 예외(무시): ${e instanceof Error ? e.message : String(e)}`);
-  } finally {
-    localRuntimeProvisioning = false;
+/**
+ * 런타임 자가치유 사다리(설치 폴더 → 내장 번들 복사 → 네트워크 설치) — 서버와 무관하게
+ * "항상 쓸 수 있는 런타임"을 보장하고, 상태/원인을 설정 화면에 그대로 드러낸다.
+ * 진행은 메인 창으로 push(localRuntimeProgress).
+ */
+let localEnsurer: LocalRuntimeEnsurer | null = null;
+function getLocalEnsurer(): LocalRuntimeEnsurer {
+  if (!localEnsurer) {
+    localEnsurer = new LocalRuntimeEnsurer({
+      installDir: () => runtimeDirOf(resolveDataRoot(loadConfig())),
+      bundleDir: () => (app.isPackaged && process.resourcesPath ? process.resourcesPath : null),
+      legacyDir: () => join(app.getPath('userData'), 'local-runtime'),
+      fetch: mcpHttpFetch as unknown as typeof fetch,
+      onProgress: (p) => {
+        try {
+          mainWindow?.webContents.send(CHANNELS.localRuntimeProgress, p);
+        } catch {
+          /* 창 없음 */
+        }
+      },
+      log: (m) => {
+        void import('./diag-log')
+          .then(({ diag }) => diag('local-exec', `ensure: ${m}`))
+          .catch(() => {});
+      },
+    });
   }
+  return localEnsurer;
+}
+async function ensureLocalRuntimeOnBoot(): Promise<void> {
+  if (loadConfig().localExec?.autoRuntime === false) {
+    // 인스톨러에서 런타임 체크 해제 — 복구는 하지 않되 현재 상태는 파악한다(번들/레거시 사용 가능).
+    await getLocalEnsurer()
+      .resolveActive()
+      .catch(() => undefined);
+    return;
+  }
+  await getLocalEnsurer().ensure('boot');
 }
 function localChatDeps(signal?: AbortSignal): LocalChatDeps {
   return {
@@ -2655,9 +2651,14 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
       return dir;
     },
     runtimeInstalled: async () => {
-      // 턴마다 스모크를 돌리지 않는다(무겁다) — 설치 폴더(또는 레거시 userData)에
-      // python + 사이드카 모듈이 실재하는지만 본다(상태 화면과 같은 진실).
-      return localRuntimeGetStatusFast({ runtimeDir: localRuntimeDir() }).installed;
+      // 건강한 런타임 후보(설치 폴더 → 내장 번들 → 레거시)가 있으면 로컬 실행. 없으면
+      // 사다리를 한 번 돌려 본다(번들 복사/다운로드는 백그라운드로 이어진다).
+      const e = getLocalEnsurer();
+      if (e.activePython()) return true;
+      const active = await e.resolveActive().catch(() => undefined);
+      if (active) return true;
+      void e.ensure('turn');
+      return false;
     },
     runner: getSidecarDaemon(),
     // 이 PC 에 설치된 CLI(codex/claude) 경로 + 격리 홈을 사이드카 settings 로 주입.
@@ -2701,7 +2702,17 @@ function localExecStatus() {
   // 유일한 진실 = **설치 폴더**. 인스톨러(NSIS 복사)와 부팅 안전망(cpSync)이
   // <설치폴더>/local-runtime 을 반드시 채우므로, 여기 존재 여부만 본다(레거시
   // userData 는 폴백). 상태 판정은 라우팅(localChatDeps.runtimeInstalled)과 같다.
-  const st = localRuntimeGetStatusFast({ runtimeDir: localRuntimeDir() });
+  const fast = localRuntimeGetStatusFast({ runtimeDir: localRuntimeDir() });
+  const active = getLocalEnsurer().activePython();
+  // installed = 지금 라우팅이 쓸 수 있는 건강한 런타임이 있다(설치 폴더/번들/레거시).
+  const st = active
+    ? {
+        ...fast,
+        installed: true,
+        pythonPath: active.python,
+        version: active.version ?? fast.version,
+      }
+    : fast;
   const conv = localConverger?.status() ?? { manifest: null, running: false };
   const m = conv.manifest;
   return {
@@ -2726,6 +2737,7 @@ function localExecStatus() {
       lastError: conv.lastError,
       summary: conv.summary,
     },
+    ensure: getLocalEnsurer().status(),
   };
 }
 ipcMain.handle(CHANNELS.localRuntimeSync, async () => {
@@ -2751,18 +2763,10 @@ ipcMain.handle(CHANNELS.localRuntimeStatus, async () => {
   }
   return st;
 });
-ipcMain.handle(CHANNELS.localRuntimeInstall, async (event) => {
-  // 진행률은 같은 sender 로 push. fetch 는 사설 인증서 정책이 반영된 세션 fetch.
-  return installLocalRuntime(
-    { runtimeDir: localRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch },
-    (p) => {
-      try {
-        event.sender.send(CHANNELS.localRuntimeProgress, p);
-      } catch {
-        /* 렌더러 사라짐 — 무시 */
-      }
-    },
-  );
+ipcMain.handle(CHANNELS.localRuntimeInstall, async () => {
+  // [지금 설치/복구] — 자가치유 사다리(설치 폴더 → 내장 번들 복사 → 네트워크 설치).
+  const st = await getLocalEnsurer().ensure('button');
+  return { ok: st.phase === 'ready' && !!st.active, status: st, error: st.lastError };
 });
 
 // CLI 바이너리(codex / Claude Code) 프로비저닝 — 진행률은 localRuntimeProgress 재사용.

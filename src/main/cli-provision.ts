@@ -125,11 +125,26 @@ export function claudePlatformKey(platform: NodeJS.Platform, arch: string): stri
   throw new Error(`지원하지 않는 platform: ${platform}`);
 }
 
-export function getCliStatus(deps: CliDeps): CliStatus {
+export function getCliStatus(deps: CliDeps, opts?: { probe?: boolean }): CliStatus {
   const stamp = readStamp(deps);
   const one = (tool: CliTool): CliToolStatus => {
     const p = cliBinaryPath(deps, tool);
-    return { installed: existsSync(p), path: p, version: stamp[tool] };
+    const installed = existsSync(p);
+    let version = stamp[tool];
+    // 스탬프가 없는 설치본(구버전이 latest 로 깔아 버전을 못 적은 경우) — 실행파일의
+    // --version 으로 한 번 확정하고 스탬프에 적어 둔다(이후엔 실행 없음).
+    if (installed && opts?.probe !== false && !/^\d+\.\d+\.\d+/.test(version ?? '')) {
+      const probed = probeCliVersion(deps, tool);
+      if (probed) {
+        version = probed;
+        try {
+          writeStamp(deps, tool, probed);
+        } catch {
+          /* 스탬프 쓰기 실패 — 다음에 다시 프로브 */
+        }
+      }
+    }
+    return { installed, path: p, version };
   };
   return { codex: one('codex'), claude: one('claude') };
 }

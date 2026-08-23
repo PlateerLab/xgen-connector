@@ -119,8 +119,8 @@ export function resolveSidecarCommand(opts?: {
 }
 
 /** 기본 명령 해석 — electron/설치 폴더 컨텍스트에서 표준 경로를 고른다(테스트 환경 안전). */
-export function defaultSidecarCommand(serve: boolean): SidecarCommand {
-  let localRuntimePython: string | undefined;
+export function defaultSidecarCommand(serve: boolean, pythonOverride?: string): SidecarCommand {
+  let localRuntimePython: string | undefined = pythonOverride;
   let resourcesPath: string | undefined;
   let isPackaged = false;
   const prependPath: string[] = [];
@@ -136,7 +136,7 @@ export function defaultSidecarCommand(serve: boolean): SidecarCommand {
       const { resolveDataRoot, runtimeDirOf } = require('./data-root');
       const runtimeDir = runtimeDirOf(resolveDataRoot(loadConfig()));
       const modern = pythonExePath(runtimeDir);
-      if (existsSync(modern)) localRuntimePython = modern;
+      if (!localRuntimePython && existsSync(modern)) localRuntimePython = modern;
       prependPath.push(join(runtimeDir, 'bin'));
     } catch {
       /* config 미가용(테스트) */
