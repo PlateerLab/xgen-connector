@@ -110,9 +110,12 @@ test('명령 해석 — 패키지 빌드는 번들 Python 을 가리킨다', () 
     env: {} as NodeJS.ProcessEnv,
   });
   // OS 경로 구분자 중립 — Windows 러너에서는 backslash 로 조립된다(join).
-  const expected = process.platform === 'win32'
-    ? join('/app/resources', 'python', 'python.exe')
-    : join('/app/resources', 'python', 'bin', 'python3');
+  const expected =
+    process.platform === 'win32'
+      ? join('/app/resources', 'python', 'python.exe')
+      : join('/app/resources', 'python', 'bin', 'python3');
   assert.equal(cmd.command, expected);
-  assert.deepEqual(cmd.args, ['-m', 'xgen_agent_runtime.host.sidecar']);
+  // 표준 경로는 격리 인터프리터(-I -X utf8 -u) — 사용자 PYTHON* 환경이 내장 런타임을 깨지 않게
+  assert.deepEqual(cmd.args, ['-I', '-X', 'utf8', '-u', '-m', 'xgen_agent_runtime.host.sidecar']);
+  assert.equal(cmd.env?.PYTHONNOUSERSITE, '1');
 });

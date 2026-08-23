@@ -34,7 +34,42 @@
 
   Page custom XgenDataPageCreate XgenDataPageLeave
 
+  ; 앱이 매 부팅 남기는 실효 데이터 루트 마커(UTF-16LE, 1줄) — 업데이트 설치/언인스톨이 읽는다.
+  Function XgenReadDataRootMarker
+    Push $0
+    Push $1
+    StrCpy $1 ""
+    IfFileExists "$APPDATA\XGEN-Connector\data-root.txt" 0 xrm_done
+    FileOpen $0 "$APPDATA\XGEN-Connector\data-root.txt" r
+    ${If} $0 != ""
+      FileReadUTF16LE $0 $1
+      FileClose $0
+    ${EndIf}
+    ; 개행/BOM 제거
+    xrm_trim:
+      StrCpy $0 $1 1 -1
+      ${If} $0 == "$\r"
+      ${OrIf} $0 == "$\n"
+        StrCpy $1 $1 -1
+        Goto xrm_trim
+      ${EndIf}
+      StrCpy $0 $1 1
+      ${If} $0 == "${U+FEFF}"
+        StrCpy $1 $1 "" 1
+      ${EndIf}
+  xrm_done:
+    Pop $0
+    Exch $1
+  FunctionEnd
+
   Function XgenDataPageCreate
+    ; 업데이트 설치(앱이 띄운 인스톨러)는 이 페이지를 건너뛴다 — 사용자가 정한 데이터 폴더/
+    ; 구성요소 선택을 기본값으로 덮어쓰지 않는다. 런타임 복사 대상은 마커에서 읽는다.
+    ${If} ${isUpdated}
+      Call XgenReadDataRootMarker
+      Pop $XgenDataRoot
+      Abort
+    ${EndIf}
     !insertmacro MUI_HEADER_TEXT "데이터 폴더" "에이전트 작업 폴더와 로컬 실행 구성요소가 설치될 위치입니다."
     nsDialogs::Create 1018
     Pop $XgenDlg
@@ -42,6 +77,10 @@
       Abort
     ${EndIf}
 
+    ${If} $XgenDataRoot == ""
+      Call XgenReadDataRootMarker
+      Pop $XgenDataRoot
+    ${EndIf}
     StrCmp $XgenDataRoot "" 0 +2
       StrCpy $XgenDataRoot "$PROFILE\xgen-connector"
 
@@ -206,8 +245,13 @@
   SetDetailsView show
   DetailPrint "XGEN Connector ${VERSION} — 앱 파일 설치 완료. 로컬 실행 환경을 구성합니다."
   DetailPrint "설치 로그: $APPDATA\XGEN-Connector\install.log"
+  ; 우리 파일(로그/옵션/마커)은 Electron 의 userData(%APPDATA%) 와 같은 곳 — per-machine 설치여도
+  ; 현재 사용자 컨텍스트로 쓴다(electron-builder 자신도 $LOCALAPPDATA 쓸 때 같은 방식).
+  ${If} $installMode == "all"
+    SetShellVarContext current
+  ${EndIf}
   !insertmacro XgenLog "==== XGEN Connector ${VERSION} install start ===="
-  !insertmacro XgenLog "INSTDIR=$INSTDIR"
+  !insertmacro XgenLog "INSTDIR=$INSTDIR installMode=$installMode"
   DetailPrint "WebDAV 파일 크기 상한을 조정하는 중..."
   ; 0xFFFFFFFF = 4GiB-1 (WebClient 가 받는 최대값)
   WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Services\WebClient\Parameters" "FileSizeLimitInBytes" 0xFFFFFFFF
@@ -230,6 +274,10 @@
   ; 첫 부팅(consumeInstallOptions)이 한 번 읽고 지운다. 페이지를 안 거친 경우
   ; (조용한 설치 /S)엔 기본값으로 남긴다.
   DetailPrint "데이터 폴더 설정을 기록하는 중..."
+  ${If} $XgenDataRoot == ""
+    Call XgenReadDataRootMarker
+    Pop $XgenDataRoot
+  ${EndIf}
   StrCmp $XgenDataRoot "" 0 +2
     StrCpy $XgenDataRoot "$PROFILE\xgen-connector"
   StrCmp $XgenRuntimeState "" 0 +2
@@ -253,14 +301,26 @@
   ${Else}
     StrCpy $3 "false"
   ${EndIf}
-  Push $XgenDataRoot
-  Call XgenJsonEscape
-  Pop $4
-  CreateDirectory "$APPDATA\XGEN-Connector"
-  FileOpen $0 "$APPDATA\XGEN-Connector\install-options.json" w
-  ${If} $0 != ""
-    FileWrite $0 '{"dataRoot":"$4","autoRuntime":$1,"autoCodex":$2,"autoClaude":$3}'
-    FileClose $0
+  ${If} ${isUpdated}
+    ; 업데이트: 사용자의 기존 선택(config)을 덮지 않는다 — 옵션 파일을 쓰지 않는다.
+    !insertmacro XgenLog "update install — install-options.json 미기록(기존 설정 유지)"
+  ${Else}
+    Push $XgenDataRoot
+    Call XgenJsonEscape
+    Pop $4
+    CreateDirectory "$APPDATA\XGEN-Connector"
+    FileOpen $0 "$APPDATA\XGEN-Connector\install-options.json" w
+    ${If} $0 != ""
+      ; UTF-16LE(BOM) — Unicode NSIS 의 FileWrite 는 ANSI 로 써 한글 경로가 깨진다(앱은 BOM 으로 판별).
+      FileWriteUTF16LE /BOM $0 '{"dataRoot":"$4","autoRuntime":$1,"autoCodex":$2,"autoClaude":$3}'
+      FileClose $0
+    ${EndIf}
+    ; 마커도 처음 한 번 써 둔다(앱이 부팅마다 갱신) — 언인스톨러가 런타임 위치를 안다.
+    FileOpen $0 "$APPDATA\XGEN-Connector\data-root.txt" w
+    ${If} $0 != ""
+      FileWriteUTF16LE $0 "$XgenDataRoot"
+      FileClose $0
+    ${EndIf}
   ${EndIf}
 
   ; ── 로컬 실행 런타임을 **설치 시점에** 설치 폴더로 복사 ────────────────
@@ -309,9 +369,45 @@
   DetailPrint "Codex / Claude Code CLI 는 앱 첫 실행 시 자동 설치·서버 버전 수렴됩니다(설정 → 설치 에서 확인)."
   DetailPrint "설치 완료."
   !insertmacro XgenLog "==== install end ===="
+  ${If} $installMode == "all"
+    SetShellVarContext all
+  ${EndIf}
 !macroend
 
 !macro customUnInstall
   ; 상한 조정은 되돌리지 않는다 — 다른 WebDAV 클라이언트도 쓰는 시스템
   ; 설정이고, 낮추는 것이 사용자에게 이득이 되는 경우가 없다.
+  ;
+  ; 로컬 실행 런타임(<데이터 폴더>\local-runtime: Python 1GB+, CLI, 격리 홈)은 사용자 데이터가
+  ; 아니다 — 진짜 제거(업데이트가 아닌)일 때 물어보고 지운다. workspace/·cloud/ 는 건드리지 않는다.
+  ${IfNot} ${isUpdated}
+  ${AndIfNot} ${Silent}
+    ${If} $installMode == "all"
+      SetShellVarContext current
+    ${EndIf}
+    StrCpy $1 ""
+    IfFileExists "$APPDATA\XGEN-Connector\data-root.txt" 0 +6
+      FileOpen $0 "$APPDATA\XGEN-Connector\data-root.txt" r
+      ${If} $0 != ""
+        FileReadUTF16LE $0 $1
+        FileClose $0
+      ${EndIf}
+    ; 개행 제거
+    un_trim:
+      StrCpy $0 $1 1 -1
+      ${If} $0 == "$\r"
+      ${OrIf} $0 == "$\n"
+        StrCpy $1 $1 -1
+        Goto un_trim
+      ${EndIf}
+    StrCmp $1 "" 0 +2
+      StrCpy $1 "$PROFILE\xgen-connector"
+    ${If} ${FileExists} "$1\local-runtime\*.*"
+      MessageBox MB_YESNO|MB_ICONQUESTION "로컬 실행 런타임 폴더도 삭제할까요?$\r$\n$1\local-runtime$\r$\n(작업 폴더 workspace\ 와 cloud\ 는 남습니다)" IDNO +2
+        RMDir /r "$1\local-runtime"
+    ${EndIf}
+    ${If} $installMode == "all"
+      SetShellVarContext all
+    ${EndIf}
+  ${EndIf}
 !macroend

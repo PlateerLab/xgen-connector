@@ -84,6 +84,7 @@ import {
   runtimeDirOf,
   settleDataRoot,
   writeCliInstallScripts,
+  writeDataRootMarker,
 } from './data-root';
 import type { SyncRemote } from './local-sync';
 import { isSafeRelPath } from './sync-plan';
@@ -2570,6 +2571,8 @@ function settleDataRootOnBoot(): void {
     if (installPatch) saveConfig(installPatch);
     const { root, patch } = settleDataRoot(loadConfig());
     if (Object.keys(patch).length) saveConfig(patch);
+    // 실효 루트 마커 — 인스톨러(업데이트 시 런타임 복사 대상)·언인스톨러가 읽는다.
+    writeDataRootMarker(app.getPath('userData'), root);
     // 설치 폴더 루트에 CLI 설치 스크립트 배치(부팅마다 최신으로 덮어씀) —
     // runtime(기본 설치) + install-codex + install-claude-code 가 한 지붕 아래.
     writeCliInstallScripts(root);
@@ -2624,6 +2627,7 @@ function getLocalEnsurer(): LocalRuntimeEnsurer {
         }
       },
       legacyDir: () => join(app.getPath('userData'), 'local-runtime'),
+      autoRepair: () => loadConfig().localExec?.autoRuntime !== false,
       fetch: mcpHttpFetch as unknown as typeof fetch,
       onProgress: (p) => {
         try {
@@ -2676,13 +2680,7 @@ async function ensureLocalRuntimeOnBoot(): Promise<void> {
   appendInstallLog(
     `[app] boot v${app.getVersion()} isPackaged=${app.isPackaged} resourcesPath=${process.resourcesPath ?? '(none)'} dataRoot=${resolveDataRoot(loadConfig())} userData=${app.getPath('userData')}`,
   );
-  if (loadConfig().localExec?.autoRuntime === false) {
-    // 인스톨러에서 런타임 체크 해제 — 복구는 하지 않되 현재 상태는 파악한다(번들/레거시 사용 가능).
-    await getLocalEnsurer()
-      .resolveActive()
-      .catch(() => undefined);
-    return;
-  }
+  // autoRuntime=false(인스톨러 체크 해제)는 사다리 안에서 게이트된다(복구 없이 상태만 파악).
   await getLocalEnsurer().ensure('boot');
 }
 function localChatDeps(signal?: AbortSignal): LocalChatDeps {
@@ -2690,8 +2688,8 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
     serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
     token: () => liveAccessToken(),
     fetch: mcpHttpFetch as unknown as NetworkFetch,
-    resolveWorkspaceDir: async (workflowId: string) => {
-      const r = await localSync?.ensureSynced(workflowId, workflowId);
+    resolveWorkspaceDir: async (workflowId: string, workflowName?: string) => {
+      const r = await localSync?.ensureSynced(workflowId, workflowName || workflowId);
       const dir = r?.dir ?? localSync?.dirFor(workflowId) ?? null;
       if (!dir) throw new Error('로컬 동기화 폴더 없음');
       return dir;
@@ -2722,11 +2720,12 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
 /** CLI 바이너리 자동 보장 — 도구별 single-flight(연타 턴이 중복 설치하지 않게). */
 const cliEnsureInflight = new Map<string, Promise<boolean>>();
 function ensureCliInstalled(tool: 'codex' | 'claude'): Promise<boolean> {
-  const le = loadConfig().localExec ?? {};
-  if ((tool === 'codex' ? le.autoCodex : le.autoClaude) === false) return Promise.resolve(false);
   const deps = { runtimeDir: cliRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch };
   const st = localCliGetStatus(deps);
+  // 이미 있으면(버튼/스크립트/이전 설치) 그대로 쓴다 — 인스톨러 체크 해제는 **자동 설치만** 끈다.
   if ((tool === 'codex' ? st.codex : st.claude).installed) return Promise.resolve(true);
+  const le = loadConfig().localExec ?? {};
+  if ((tool === 'codex' ? le.autoCodex : le.autoClaude) === false) return Promise.resolve(false);
   const inflight = cliEnsureInflight.get(tool);
   if (inflight) return inflight;
   const p = (async () => {

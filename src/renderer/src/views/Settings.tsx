@@ -161,6 +161,14 @@ export const Settings: React.FC<{
     });
     return off;
   }, []);
+  // 사다리가 도는 동안(검증/복사/다운로드)은 2초마다 상태를 당겨 온다 — 진행 이벤트를 내지
+  // 않는 경로에서도 화면이 '검증 중'에 머물지 않게.
+  useEffect(() => {
+    const ph = lrStatus?.ensure?.phase;
+    if (!(ph === 'idle' || ph === 'checking' || ph === 'copying' || ph === 'downloading')) return;
+    const t = setInterval(refreshLocalExec, 2000);
+    return () => clearInterval(t);
+  }, [lrStatus?.ensure?.phase]);
   const installCli = async (tool: 'codex' | 'claude') => {
     setCliBusy(tool);
     setLrMsg(null);

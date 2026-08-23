@@ -36,7 +36,7 @@ export interface LocalChatDeps {
   token: () => string | Promise<string>;
   fetch: NetworkFetch;
   /** 이 에이전트의 로컬 동기화 폴더(서버와 sync). 불가면 throw → 서버 폴백. */
-  resolveWorkspaceDir: (workflowId: string) => Promise<string>;
+  resolveWorkspaceDir: (workflowId: string, workflowName?: string) => Promise<string>;
   /** 독립 로컬 런타임이 설치돼 있나(설치 폴더). */
   runtimeInstalled: () => Promise<boolean>;
   /** 사이드카 실행기(상주 데몬). */
@@ -130,7 +130,7 @@ export async function runLocalChatTurn(
   // 2) 로컬 동기화 폴더 — 불가면 서버 폴백(로컬 자원 사용 불가).
   let workspaceDir: string;
   try {
-    workspaceDir = await deps.resolveWorkspaceDir(req.workflowId);
+    workspaceDir = await deps.resolveWorkspaceDir(req.workflowId, req.workflowName);
   } catch (err) {
     return fallback('workspace_unavailable', (err as Error).message?.slice(0, 200));
   }

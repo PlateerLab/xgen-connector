@@ -166,16 +166,19 @@ export async function getStatus(deps: InstallDeps): Promise<RuntimeStatus> {
   let version: string | undefined;
   let sidecarOk = false;
   try {
-    const { stdout } = await execFileP(py, [
-      '-c',
-      'import importlib.metadata as m; print(m.version("xgen-agent-runtime"))',
-    ]);
+    const { stdout } = await execFileP(
+      py,
+      ['-I', '-c', 'import importlib.metadata as m; print(m.version("xgen-agent-runtime"))'],
+      { windowsHide: true },
+    );
     version = stdout.trim() || undefined;
   } catch {
     /* 버전 조회 실패 — 설치 불완전 */
   }
   try {
-    await execFileP(py, ['-c', 'import xgen_agent_runtime.host.sidecar']);
+    await execFileP(py, ['-I', '-c', 'import xgen_agent_runtime.host.sidecar'], {
+      windowsHide: true,
+    });
     sidecarOk = true;
   } catch {
     sidecarOk = false;
@@ -218,7 +221,7 @@ export async function installLocalRuntime(
 
     onProgress({ phase: 'extract', message: 'Python 추출 중…' });
     // install_only tarball 은 최상위 python/ 로 풀린다.
-    await execFileP('tar', ['-xzf', tarball, '-C', tmp]);
+    await execFileP('tar', ['-xzf', tarball, '-C', tmp], { windowsHide: true });
     const extracted = join(tmp, 'python');
     if (!existsSync(extracted)) throw new Error('추출 결과에 python/ 없음');
     const stagedRoot = join(tmp, 'staged');
@@ -231,10 +234,13 @@ export async function installLocalRuntime(
     onProgress({ phase: 'pip', message: '에이전트 런타임 설치 중(수 분 소요)…' });
     await execFileP(py, ['-m', 'pip', 'install', '--no-warn-script-location', runtimeSpec], {
       maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
     });
 
     onProgress({ phase: 'smoke', message: '설치 검증 중…' });
-    await execFileP(py, ['-c', 'import xgen_agent_runtime.host.sidecar']);
+    await execFileP(py, ['-I', '-c', 'import xgen_agent_runtime.host.sidecar'], {
+      windowsHide: true,
+    });
 
     // 완성된 트리로 교체 — 기존 트리는 .old 로 밀어 두고 성공 후 삭제.
     const old = join(deps.runtimeDir, '.python.old');
@@ -281,7 +287,9 @@ export async function upgradeRuntimeWheel(
       },
     );
     onProgress({ phase: 'smoke', message: '업데이트 검증 중…' });
-    await execFileP(py, ['-c', 'import xgen_agent_runtime.host.sidecar']);
+    await execFileP(py, ['-I', '-c', 'import xgen_agent_runtime.host.sidecar'], {
+      windowsHide: true,
+    });
     const version = readInstalledVersion(deps.runtimeDir);
     onProgress({ phase: 'done', message: `런타임 업데이트 완료 (${version ?? '?'})` });
     return { ok: true, version };

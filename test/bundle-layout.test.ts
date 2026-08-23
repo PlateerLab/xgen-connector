@@ -29,6 +29,9 @@ test('NSIS 는 resources\\python 을 <dataRoot>\\local-runtime 으로 복사하�
     /Push "\$INSTDIR\\resources\\python"\s*\n\s*Push "\$XgenDataRoot\\local-runtime\\python"\s*\n\s*Call XgenCopyEntries/,
   );
   assert.match(nsh, /SetDetailsView show/);
+  assert.match(nsh, /FileWriteUTF16LE \/BOM \$0 '\{"dataRoot"/); // 한글 경로 안전(앱이 BOM 으로 판별)
+  assert.match(nsh, /\$\{If\} \$\{isUpdated\}[\s\S]*Call XgenReadDataRootMarker/); // 업데이트는 페이지 건너뜀+마커
+  assert.match(nsh, /RMDir \/r "\$1\\local-runtime"/); // 언인스톨 정리(질문 후)
   assert.match(nsh, /install\.log/);
   assert.match(nsh, /smoke (OK|FAILED)/);
 });

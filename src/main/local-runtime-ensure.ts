@@ -70,6 +70,8 @@ export interface EnsureDeps {
   smoke?: (python: string) => Promise<{ ok: boolean; error?: string }>;
   /** 테스트 주입: 트리 복사(기본 fs.cp + 긴 경로). */
   copyTree?: (src: string, dst: string) => Promise<void>;
+  /** 인스톨러에서 런타임 자동 설치를 껐나(false 면 버튼 외엔 복사/다운로드 안 함). */
+  autoRepair?: () => boolean;
   /** 테스트 주입: 네트워크 설치. */
   download?: (
     runtimeDir: string,
@@ -86,13 +88,49 @@ export function longPath(p: string): string {
   return p;
 }
 
+/** 격리 인터프리터 env — 사용자 PYTHONHOME/PYTHONPATH/PYTHONSTARTUP 이 내장 런타임을 깨지 않게. */
+export function isolatedPythonEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(base)) {
+    if (/^PYTHON(HOME|PATH|STARTUP|USERBASE|SAFEPATH)$/i.test(k)) continue;
+    env[k] = v;
+  }
+  env.PYTHONIOENCODING = 'utf-8';
+  env.PYTHONNOUSERSITE = '1';
+  return env;
+}
+
+/**
+ * 스모크: 사이드카 모듈 import + **sys.prefix 가 그 트리 안**인지 확인 — 심볼릭 링크가
+ * 원본(번들)을 가리키는 껍데기 복사본(mac/linux fs.cp 기본 동작)을 '건강'으로 오판하지 않게.
+ */
 async function defaultSmoke(python: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    await execFileP(python, ['-c', 'import xgen_agent_runtime.host.sidecar'], {
-      timeout: 120_000,
-      maxBuffer: 4 * 1024 * 1024,
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
-    });
+    const { stdout } = await execFileP(
+      python,
+      [
+        '-I',
+        '-X',
+        'utf8',
+        '-c',
+        'import os,sys; import xgen_agent_runtime.host.sidecar; print(os.path.realpath(sys.prefix))',
+      ],
+      { timeout: 120_000, maxBuffer: 4 * 1024 * 1024, env: isolatedPythonEnv(), windowsHide: true },
+    );
+    const prefix = String(stdout || '').trim();
+    if (prefix) {
+      const { realpathSync } = await import('node:fs');
+      const { dirname, resolve, sep } = await import('node:path');
+      let root = dirname(python);
+      if (process.platform !== 'win32') root = dirname(root); // …/python/bin/python3 → …/python
+      const rootReal = realpathSync(root);
+      const inside = resolve(prefix) === rootReal || resolve(prefix).startsWith(rootReal + sep);
+      if (!inside)
+        return {
+          ok: false,
+          error: `sys.prefix=${prefix} 가 런타임 트리(${rootReal}) 밖 — 링크 껍데기 복사본`,
+        };
+    }
     return { ok: true };
   } catch (e) {
     const err = e as { stderr?: string; message?: string };
@@ -101,7 +139,14 @@ async function defaultSmoke(python: string): Promise<{ ok: boolean; error?: stri
 }
 
 async function defaultCopyTree(src: string, dst: string): Promise<void> {
-  await fsp.cp(longPath(src), longPath(dst), { recursive: true, force: true, errorOnExist: false });
+  // verbatimSymlinks: bin/python3 → python3.12 같은 **상대** 링크를 그대로 보존한다(기본값은
+  // 원본 절대 경로로 풀어 써 복사본이 번들/.app/AppImage 마운트를 가리키는 껍데기가 된다).
+  await fsp.cp(longPath(src), longPath(dst), {
+    recursive: true,
+    force: true,
+    errorOnExist: false,
+    verbatimSymlinks: true,
+  });
 }
 
 /**
@@ -110,6 +155,7 @@ async function defaultCopyTree(src: string, dst: string): Promise<void> {
 export class LocalRuntimeEnsurer {
   private state: EnsureState = { phase: 'idle', candidates: [] };
   private inflight: Promise<EnsureState> | null = null;
+  private smokeInflight = new Map<string, Promise<RuntimeCandidate>>();
   private healthCache = new Map<
     string,
     { mtime: number; healthy: boolean; version?: string; error?: string }
@@ -158,28 +204,44 @@ export class LocalRuntimeEnsurer {
     return c;
   }
 
-  /** 후보 스모크(캐시). */
+  /** 후보 스모크(캐시 + 같은 python 에 대한 동시 스모크는 하나로 합친다). */
   async check(c: RuntimeCandidate): Promise<RuntimeCandidate> {
     if (!c.exists) return { ...c, healthy: false };
     const cached = this.cached(c.python);
     if (cached)
       return { ...c, healthy: cached.healthy, version: cached.version, error: cached.error };
-    const smoke = this.deps.smoke ?? defaultSmoke;
-    const r = await smoke(c.python);
-    let mtime = 0;
-    try {
-      mtime = statSync(c.python).mtimeMs;
-    } catch {
-      /* ignore */
+    const inflight = this.smokeInflight.get(c.python);
+    if (inflight) {
+      const r = await inflight;
+      return { ...c, healthy: r.healthy, version: r.version, error: r.error };
     }
-    const version = readInstalledVersion(c.runtimeDir);
-    this.healthCache.set(c.python, { mtime, healthy: r.ok, version, error: r.error });
-    return { ...c, healthy: r.ok, version, error: r.error };
+    const run = (async () => {
+      const smoke = this.deps.smoke ?? defaultSmoke;
+      const r = await smoke(c.python);
+      let mtime = 0;
+      try {
+        mtime = statSync(c.python).mtimeMs;
+      } catch {
+        /* ignore */
+      }
+      const version = readInstalledVersion(c.runtimeDir);
+      this.healthCache.set(c.python, { mtime, healthy: r.ok, version, error: r.error });
+      return { ...c, healthy: r.ok, version, error: r.error };
+    })().finally(() => this.smokeInflight.delete(c.python));
+    this.smokeInflight.set(c.python, run);
+    return run;
   }
 
   /** 지금 라우팅에 쓸 python — 건강한 첫 후보(설치 폴더 → 번들 → 레거시). 없으면 null. */
   activePython(): { source: RuntimeSource; python: string; version?: string } | null {
-    return this.state.active ?? null;
+    const a = this.state.active;
+    if (a && !existsSync(a.python)) {
+      // 부팅 후 런타임이 사라졌다(업데이트 RMDir/AV 격리/사용자 삭제) — 낡은 active 를 믿지 않는다.
+      this.healthCache.delete(a.python);
+      this.state.active = undefined;
+      return null;
+    }
+    return a ?? null;
   }
 
   /** 건강한 첫 후보를 찾아 active 로 기록(스모크 포함, 복구 없음). */
@@ -207,6 +269,12 @@ export class LocalRuntimeEnsurer {
     if (this.inflight) return this.inflight;
     this.inflight = this.run(reason).finally(() => {
       this.inflight = null;
+      // 최종 상태 1회 통지 — 설정 화면이 '검증 중'에 머물지 않게(설치 폴더 정상/복사 실패/예외
+      // 경로는 그동안 진행 이벤트를 내지 않았다).
+      this.deps.onProgress?.({
+        phase: this.state.active ? 'done' : 'error',
+        message: this.state.message ?? this.state.lastError ?? '',
+      });
     });
     return this.inflight;
   }
@@ -229,6 +297,15 @@ export class LocalRuntimeEnsurer {
         this.state.phase = 'ready';
         this.state.message = `설치 폴더 런타임 준비됨 (${install.version ?? '?'})`;
         log(`ensure(${reason}): install ok ${install.version ?? ''}`);
+        return this.status();
+      }
+      // 인스톨러에서 런타임 자동 설치를 끈 경우 — [지금 설치/복구] 버튼 외엔 복사/다운로드하지 않는다.
+      if (reason !== 'button' && this.deps.autoRepair?.() === false) {
+        this.state.phase = active ? 'ready' : 'failed';
+        this.state.message = active
+          ? '내장/기존 런타임 사용 중 (자동 설치·복구 꺼짐 — 인스톨러 선택)'
+          : '런타임 없음 (자동 설치 꺼짐 — [지금 설치/복구]로 수동 설치)';
+        log(`ensure(${reason}): autoRepair off — skip (active=${active?.source ?? 'none'})`);
         return this.status();
       }
       // 설치 폴더가 없거나 손상 — 번들이 건강하면 복사(그동안 라우팅은 번들 사용).

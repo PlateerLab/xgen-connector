@@ -154,7 +154,7 @@ export function probeCliVersion(deps: CliDeps, tool: CliTool): string | undefine
   const p = cliBinaryPath(deps, tool);
   if (!existsSync(p)) return undefined;
   try {
-    const out = execFileSync(p, ['--version'], { timeout: 15_000 }).toString();
+    const out = execFileSync(p, ['--version'], { timeout: 15_000, windowsHide: true }).toString();
     const m = /(\d+\.\d+\.\d+)/.exec(out);
     return m?.[1];
   } catch {
@@ -204,7 +204,7 @@ export async function installCodexCli(
     const tagVersion = (m?.[1] ?? opts?.version ?? 'latest').replace(/^rust-v?/, '');
 
     onProgress({ tool: 'codex', phase: 'extract', message: 'codex 추출 중…' });
-    execFileSync('tar', ['-xf', archive, '-C', tmp]); // bsdtar: tar.gz + zip 모두
+    execFileSync('tar', ['-xf', archive, '-C', tmp], { windowsHide: true }); // bsdtar: tar.gz + zip 모두
     // 추출물에서 codex 실행 **파일** 찾기 — 정확한 이름(codex[.exe]) 우선, 그다음
     // 자산명과 같은 이름의 파일(codex-x86_64-…). 디렉터리는 절대 고르지 않는다.
     const want = exeName('codex', platform);
@@ -227,7 +227,10 @@ export async function installCodexCli(
     // 설치본의 `--version` 출력("codex-cli X.Y.Z")이 정확한 진실이다.
     let version = tagVersion;
     try {
-      const out = execFileSync(staged, ['--version'], { timeout: 15_000 }).toString();
+      const out = execFileSync(staged, ['--version'], {
+        timeout: 15_000,
+        windowsHide: true,
+      }).toString();
       const vm = /(\d+\.\d+\.\d+)/.exec(out);
       if (vm) version = vm[1];
     } catch {
