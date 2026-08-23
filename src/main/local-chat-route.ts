@@ -32,6 +32,8 @@ export interface LocalChatDeps {
   runtimeInstalled: () => Promise<boolean>;
   /** 이 PC 에 설치된 CLI 경로 settings(CODEX_BINARY_PATH 등) — 사이드카 주입. */
   cliSettings?: () => Record<string, string>;
+  /** CLI provider 턴 직전 바이너리 보장(없으면 자동 설치). false = 준비 실패. */
+  ensureCli?: (tool: 'codex' | 'claude') => Promise<boolean>;
   /** 테스트 주입. */
   server?: ServerClient;
   runTurn?: typeof runLocalTurn;
@@ -74,6 +76,15 @@ export async function runLocalChatTurn(
   const provider = String((ctx.agent.provider as string) || 'openai');
   let agentText = '';
   let sawError = false;
+  // CLI provider 는 바이너리가 있어야 로컬 실행이 된다 — 없으면 **여기서 자동
+  // 설치**한다(부팅 자동 프로비저닝과 동형; 아직 아무것도 emit 안 한 시점이라
+  // 실패하면 깨끗이 서버로 폴백된다).
+  const cliTool = provider === 'codex' ? 'codex' : provider === 'claude_code' ? 'claude' : null;
+  if (cliTool && deps.ensureCli) {
+    const ready = await deps.ensureCli(cliTool).catch(() => false);
+    if (!ready) return { handled: false };
+  }
+
   // CLI 바이너리 경로는 **이 PC 의 것**이 유일하게 유효하다 — 서버가 보낸
   // settings 위에 로컬 설치 경로를 덮어써 codex/claude_code 가 로컬 설치본을 쓴다.
   const localSettings = deps.cliSettings?.() ?? {};

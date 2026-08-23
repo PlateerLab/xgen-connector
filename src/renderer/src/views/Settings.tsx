@@ -123,14 +123,24 @@ export const Settings: React.FC<{
   } | null>(null);
   const [cliBusy, setCliBusy] = useState<'codex' | 'claude' | null>(null);
   useEffect(() => {
-    void xgen.localRuntime
-      .status()
-      .then(setLrStatus)
-      .catch(() => setLrStatus(null));
-    void xgen.localRuntime
-      .cliStatus()
-      .then(setCliStatus)
-      .catch(() => setCliStatus(null));
+    const refresh = () => {
+      void xgen.localRuntime
+        .status()
+        .then(setLrStatus)
+        .catch(() => setLrStatus(null));
+      void xgen.localRuntime
+        .cliStatus()
+        .then(setCliStatus)
+        .catch(() => setCliStatus(null));
+    };
+    refresh();
+    // 부팅 자동 프로비저닝(런타임/CLI)의 진행을 실시간 반영 — 설치는 사용자
+    // 액션 없이도 백그라운드로 일어난다(내장이 기본, 이 화면은 상태 표시).
+    const off = xgen.localRuntime.onProgress((p) => {
+      setLrMsg(p.message);
+      if (p.phase === 'done' || p.phase === 'error') refresh();
+    });
+    return off;
   }, []);
   const installCli = async (tool: 'codex' | 'claude') => {
     setCliBusy(tool);
@@ -1040,7 +1050,7 @@ export const Settings: React.FC<{
                     ? lrStatus.source === 'bundled'
                       ? `앱에 내장됨 (런타임 ${lrStatus.version ?? '?'}) — 에이전트가 이 PC 에서 로컬로 돕니다`
                       : `설치됨 (런타임 ${lrStatus.version ?? '?'}) — 에이전트가 이 PC 에서 로컬로 돕니다`
-                    : '없음 — 설치하면 에이전트가 서버 대신 이 PC(로컬 자원)에서 실행됩니다. 시스템 Python 을 건드리지 않는 독립 환경입니다.'}
+                    : '준비 중 — 앱에 내장되며, 없으면 자동으로 설치됩니다(시스템 Python 을 건드리지 않는 독립 환경). 준비 전 턴은 서버에서 실행됩니다.'}
                 </span>
               </span>
               <div className="row">

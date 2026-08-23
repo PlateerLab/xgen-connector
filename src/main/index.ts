@@ -2481,6 +2481,36 @@ function wireLocalAgent(): void {
 function localRuntimeDir(): string {
   return join(app.getPath('userData'), 'local-runtime');
 }
+/**
+ * 부팅 자동 프로비저닝 — 로컬 실행 런타임은 **기본으로 존재**해야 한다(서버의
+ * apply_pin_on_boot 동형). 패키지 앱은 내장 번들이 이미 있으니 no-op; dev/구버전
+ * 업데이트/손상 설치처럼 번들이 없을 때만 userData 에 백그라운드 자동 설치한다.
+ * 진행률은 메인 창으로 push — 설정 화면이 열려 있으면 실시간 표시된다.
+ * 실패해도 앱을 막지 않는다(로컬 턴은 서버 폴백; [설치] 버튼이 수동 재시도).
+ */
+let localRuntimeProvisioning = false;
+async function ensureLocalRuntimeOnBoot(): Promise<void> {
+  if (localRuntimeProvisioning) return;
+  const { diag } = await import('./diag-log');
+  try {
+    const { existsSync } = await import('node:fs');
+    const { pythonExePath } = await import('./local-runtime-install');
+    if (existsSync(pythonExePath(localRuntimeDir()))) return; // userData 설치본
+    if (app.isPackaged && process.resourcesPath && existsSync(pythonExePath(process.resourcesPath)))
+      return; // 앱 내장 번들
+    localRuntimeProvisioning = true;
+    diag('local-exec', '로컬 실행 런타임 없음 — 부팅 자동 설치 시작(백그라운드)');
+    const r = await installLocalRuntime(
+      { runtimeDir: localRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch },
+      (p) => safeSend(mainWindow, CHANNELS.localRuntimeProgress, p),
+    );
+    diag('local-exec', r.ok ? `런타임 자동 설치 완료 (v${r.status?.version})` : `자동 설치 실패: ${r.error}`);
+  } catch (e) {
+    diag('local-exec', `런타임 자동 설치 예외(무시): ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    localRuntimeProvisioning = false;
+  }
+}
 /** 커넥터 로컬 채팅 라우팅에 필요한 deps (라이브 토큰/서버/동기화폴더/런타임상태). */
 function localChatDeps(signal?: AbortSignal): LocalChatDeps {
   return {
@@ -2505,8 +2535,26 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
     },
     // 이 PC 에 설치된 CLI(codex/claude) 경로를 사이드카 settings 로 주입.
     cliSettings: () => localCliSettings({ runtimeDir: localRuntimeDir() }),
+    // CLI provider 턴 직전 바이너리 보장 — 없으면 공식 배포처에서 자동 설치.
+    ensureCli: (tool) => ensureCliInstalled(tool),
     signal,
   };
+}
+/** CLI 바이너리 자동 보장 — 도구별 single-flight(연타 턴이 중복 설치하지 않게). */
+const cliEnsureInflight = new Map<string, Promise<boolean>>();
+function ensureCliInstalled(tool: 'codex' | 'claude'): Promise<boolean> {
+  const deps = { runtimeDir: localRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch };
+  const st = localCliGetStatus(deps);
+  if ((tool === 'codex' ? st.codex : st.claude).installed) return Promise.resolve(true);
+  const inflight = cliEnsureInflight.get(tool);
+  if (inflight) return inflight;
+  const p = (async () => {
+    const emit = (pr: unknown) => safeSend(mainWindow, CHANNELS.localRuntimeProgress, pr);
+    const r = tool === 'codex' ? await installCodexCli(deps, emit) : await installClaudeCli(deps, emit);
+    return r.ok;
+  })().finally(() => cliEnsureInflight.delete(tool));
+  cliEnsureInflight.set(tool, p);
+  return p;
 }
 ipcMain.handle(CHANNELS.localRuntimeStatus, async () => {
   // userData 설치본(업데이트/복구 오버라이드) → 앱 내장 번들(<resources>/python)
@@ -2871,6 +2919,7 @@ if (!gotLock) {
     wireWorkspaceManager();
     wireLocalSync();
     wireLocalAgent();
+    void ensureLocalRuntimeOnBoot();
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
       createQuickChat();

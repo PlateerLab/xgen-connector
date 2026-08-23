@@ -146,3 +146,43 @@ test('사이드카 error → error 이벤트 emit, 보고 안 함, handled=true(
   assert.ok(events.some((e) => e.kind === 'error' && e.detail === 'boom'));
   assert.equal(reports.length, 0); // 오류 턴은 보고 안 함
 });
+
+test('CLI provider(codex): ensureCli 가 먼저 돌고, 실패면 무 emit 서버 폴백', async () => {
+  const events: ChatEvent[] = [];
+  let ensured: string[] = [];
+  // 실패 케이스 — 아무것도 emit 하지 않고 폴백.
+  const r1 = await runLocalChatTurn(
+    REQ,
+    baseDeps({ ensureCli: async (t) => { ensured.push(t); return false; } }),
+    (e) => events.push(e),
+  );
+  assert.equal(r1.handled, false);
+  assert.equal(events.length, 0);
+  assert.deepEqual(ensured, ['codex']); // CTX.agent.provider === 'codex'
+  // 성공 케이스 — 정상 로컬 실행.
+  ensured = [];
+  const r2 = await runLocalChatTurn(
+    REQ,
+    baseDeps({ ensureCli: async (t) => { ensured.push(t); return true; } }),
+    () => {},
+  );
+  assert.equal(r2.handled, true);
+  assert.deepEqual(ensured, ['codex']);
+});
+
+test('비-CLI provider(openai): ensureCli 를 부르지 않는다', async () => {
+  let called = false;
+  const r = await runLocalChatTurn(
+    REQ,
+    baseDeps({
+      server: {
+        fetchLocalTurnContext: async () => ({ ...CTX, agent: { provider: 'openai' } }),
+        reportTurnResult: async () => {},
+      },
+      ensureCli: async () => { called = true; return true; },
+    }),
+    () => {},
+  );
+  assert.equal(r.handled, true);
+  assert.equal(called, false);
+});
