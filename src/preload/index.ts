@@ -60,6 +60,11 @@ export interface LocalExecStatus {
     manifestAt?: number;
   } | null;
   converge: { running: boolean; lastRunAt?: number; lastError?: string; summary?: string };
+  /** 앱 내장 번들 경로(<resources>/python) — 진단 표시용. */
+  bundlePath?: string | null;
+  isPackaged?: boolean;
+  /** 설치 로그 꼬리(인스톨러 + 앱) — 왜 실패했는지 화면에서 바로 본다. */
+  logs?: { path: string; lines: string[] }[];
   /** 런타임 자가치유 사다리 상태 — 지금 어떤 런타임을 쓰는지(active) + 후보별 진단. */
   ensure: {
     phase: 'idle' | 'checking' | 'copying' | 'downloading' | 'ready' | 'failed';
@@ -249,6 +254,9 @@ const api = {
       ipcRenderer.invoke(CHANNELS.localRuntimeInstall),
     /** 서버 매니페스트 기준으로 런타임/CLI 를 서버와 같은 버전으로 맞춘다. */
     sync: (): Promise<LocalExecStatus> => ipcRenderer.invoke(CHANNELS.localRuntimeSync),
+    /** 설치 로그(install.log)를 OS 기본 앱으로 연다. */
+    openLog: (): Promise<{ ok: boolean; path: string; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.localRuntimeOpenLog),
     onProgress: (
       cb: (p: { phase: string; message: string; tool?: string; fraction?: number }) => void,
     ): (() => void) => {

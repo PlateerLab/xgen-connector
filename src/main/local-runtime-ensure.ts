@@ -26,6 +26,7 @@ import {
   installLocalRuntime,
   pythonExePath,
   readInstalledVersion,
+  resolvePythonExe,
   type InstallProgress,
 } from './local-runtime-install';
 
@@ -125,16 +126,18 @@ export class LocalRuntimeEnsurer {
     const list: RuntimeCandidate[] = [];
     const push = (source: RuntimeSource, dir: string | null) => {
       if (!dir) return;
-      const python = pythonExePath(dir);
-      const exists = existsSync(python);
+      // 표준(<dir>/python) → 중첩(<dir>/python/python) 순으로 실재하는 python 을 고른다.
+      const r = resolvePythonExe(dir);
+      const python = r.python;
+      const exists = r.exists;
       const cached = exists ? this.cached(python) : undefined;
       list.push({
         source,
-        runtimeDir: dir,
+        runtimeDir: r.root,
         python,
         exists,
         healthy: cached?.healthy,
-        version: exists ? (cached?.version ?? readInstalledVersion(dir)) : undefined,
+        version: exists ? (cached?.version ?? readInstalledVersion(r.root)) : undefined,
         error: cached?.error,
       });
     };
@@ -255,6 +258,7 @@ export class LocalRuntimeEnsurer {
           await fsp.rename(staging, dst);
           await fsp.rm(longPath(old), { recursive: true, force: true }).catch(() => {});
           this.healthCache.delete(pythonExePath(installDir));
+          this.healthCache.delete(pythonExePath(join(installDir, 'python')));
           await this.resolveActive();
           this.state.phase = 'ready';
           this.progress({

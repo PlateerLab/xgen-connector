@@ -717,9 +717,9 @@ export const Settings: React.FC<{
                           ? bun.healthy
                             ? `앱 내장: 있음 (${bun.version ?? '?'})`
                             : bun.exists
-                              ? '앱 내장: 손상'
-                              : '앱 내장: 없음'
-                          : '앱 내장: 없음(개발 빌드)',
+                              ? `앱 내장: 손상${bun.error ? ` — ${bun.error.slice(0, 120)}` : ''}`
+                              : `앱 내장: 없음 (${bun.python})`
+                          : `앱 내장: 없음 (${lrStatus.bundlePath ?? '번들 경로 없음'}${lrStatus.isPackaged === false ? ', 개발 빌드' : ''})`,
                       );
                       if (lrStatus.server?.runtime) {
                         parts.push(
@@ -816,6 +816,42 @@ export const Settings: React.FC<{
                   </span>
                 </div>
               )}
+              {/* 설치 로그 — 인스톨러(NSIS)와 앱(자가치유)이 남긴 단계/원인. 실패 원인을 여기서 바로 본다. */}
+              <div className="field-row" style={{ alignItems: 'flex-start' }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  설치 로그
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {lrStatus?.logs?.length
+                      ? lrStatus.logs.map((l) => l.path).join(' · ')
+                      : '아직 로그 없음 (설치/복구를 실행하면 생성됩니다)'}
+                  </span>
+                  {lrStatus?.logs?.length ? (
+                    <pre
+                      className="small"
+                      style={{
+                        marginTop: 6,
+                        maxHeight: 180,
+                        overflow: 'auto',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        fontSize: 11,
+                        lineHeight: 1.4,
+                        opacity: 0.85,
+                      }}
+                    >
+                      {lrStatus.logs.map((l) => l.lines.slice(-25).join('\n')).join('\n')}
+                    </pre>
+                  ) : null}
+                </span>
+                <div className="row">
+                  <button className="secondary" onClick={() => void xgen.localRuntime.openLog()}>
+                    로그 열기
+                  </button>
+                  <button className="secondary" onClick={() => refreshLocalExec()}>
+                    새로고침
+                  </button>
+                </div>
+              </div>
             </SettingsSection>
           </>
         )}

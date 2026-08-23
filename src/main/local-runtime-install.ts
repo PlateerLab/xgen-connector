@@ -62,10 +62,30 @@ export interface RuntimeStatus {
   sidecarOk?: boolean;
 }
 
-/** 이 OS 의 python 실행파일 경로(설치 트리 기준). */
+/** 이 OS 의 python 실행파일 경로(설치 트리 기준 — 표준 레이아웃 <runtimeDir>/python/...). */
 export function pythonExePath(runtimeDir: string): string {
   const root = join(runtimeDir, 'python');
   return process.platform === 'win32' ? join(root, 'python.exe') : join(root, 'bin', 'python3');
+}
+
+/** 런타임 루트 후보 — 표준(<dir>/python) 과 한 단계 더 깊은 레이아웃(<dir>/python/python).
+ *  v1.62~1.66 설치본은 extraResources 의 from 이 상위 폴더라 번들/복사본이 한 단계 더
+ *  깊게 들어갔다. 그 트리도 그대로 쓸 수 있게(재복사 없이) 둘 다 인정한다. */
+export function pythonRootCandidates(runtimeDir: string): string[] {
+  return [runtimeDir, join(runtimeDir, 'python')];
+}
+
+/** 실제로 존재하는 python 실행파일(표준 → 중첩 순). 없으면 표준 경로(존재 X). */
+export function resolvePythonExe(runtimeDir: string): {
+  python: string;
+  root: string;
+  exists: boolean;
+} {
+  for (const root of pythonRootCandidates(runtimeDir)) {
+    const python = pythonExePath(root);
+    if (existsSync(python)) return { python, root, exists: true };
+  }
+  return { python: pythonExePath(runtimeDir), root: runtimeDir, exists: false };
 }
 
 /** 현재(또는 주입) OS/arch → python-build-standalone install_only 트리플. */
