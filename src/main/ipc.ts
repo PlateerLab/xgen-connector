@@ -181,6 +181,8 @@ export const CHANNELS = {
   localRuntimeInstall: 'local-runtime:install',
   localRuntimeProgress: 'local-runtime:progress',
   // CLI 바이너리(codex / Claude Code) 프로비저닝 — 공식 배포처에서 로컬 설치.
+  /** 설치 폴더 등 로컬 폴더를 OS 파일 관리자로 연다. */
+  appOpenFolder: 'app:openFolder',
   localCliStatus: 'local-cli:status',
   localCliInstall: 'local-cli:install', // arg: 'codex' | 'claude'
 } as const;

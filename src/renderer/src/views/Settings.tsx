@@ -114,7 +114,6 @@ export const Settings: React.FC<{
     pythonPath?: string;
     source?: 'userData' | 'bundled' | null;
   } | null>(null);
-  const [lrInstalling, setLrInstalling] = useState(false);
   const [lrMsg, setLrMsg] = useState<string | null>(null);
   // CLI 바이너리(codex / Claude Code) — 공식 배포처에서 로컬 설치.
   const [cliStatus, setCliStatus] = useState<{
@@ -1051,10 +1050,16 @@ export const Settings: React.FC<{
               <span>
                 설치 폴더
                 <span className="small muted" style={{ marginLeft: 8 }}>
-                  {installRoot} — PC 컨트롤·스토리지·로컬 실행이 전부 이 아래(workspace/ · cloud/ · local-runtime/)에 설치됩니다
+                  {installRoot}
                 </span>
               </span>
               <div className="row">
+                <button
+                  className="secondary"
+                  onClick={() => void xgen.appctl.openFolder()}
+                >
+                  열기
+                </button>
                 <button
                   className="secondary"
                   onClick={async () => {
@@ -1073,42 +1078,11 @@ export const Settings: React.FC<{
                 에이전트 로컬 실행 런타임
                 <span className="small muted" style={{ marginLeft: 8 }}>
                   {lrStatus?.installed
-                    ? lrStatus.source === 'bundled'
-                      ? `앱에 내장됨 (런타임 ${lrStatus.version ?? '?'}) — 에이전트가 이 PC 에서 로컬로 돕니다`
-                      : `설치됨 (런타임 ${lrStatus.version ?? '?'}) — 에이전트가 이 PC 에서 로컬로 돕니다`
-                    : '준비 중 — 앱에 내장되며, 없으면 자동으로 설치됩니다(시스템 Python 을 건드리지 않는 독립 환경). 준비 전 턴은 서버에서 실행됩니다.'}
+                    ? `내장됨 (런타임 ${lrStatus.version ?? '?'})`
+                    : lrMsg ?? '자동 설치 중…'}
                 </span>
               </span>
-              <div className="row">
-                {lrMsg && <span className="small muted">{lrMsg}</span>}
-                <button
-                  className="secondary"
-                  disabled={lrInstalling}
-                  onClick={async () => {
-                    setLrInstalling(true);
-                    setLrMsg('설치 준비 중…');
-                    const off = xgen.localRuntime.onProgress((p) => setLrMsg(p.message));
-                    try {
-                      const r = await xgen.localRuntime.install();
-                      if (!r.ok) setLrMsg(`실패: ${r.error ?? '알 수 없음'}`);
-                      setLrStatus(await xgen.localRuntime.status());
-                    } catch (e) {
-                      setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
-                    } finally {
-                      off();
-                      setLrInstalling(false);
-                    }
-                  }}
-                >
-                  {lrInstalling
-                    ? '설치 중…'
-                    : lrStatus?.source === 'bundled'
-                      ? '업데이트 설치'
-                      : lrStatus?.installed
-                        ? '다시 설치'
-                        : '설치'}
-                </button>
-              </div>
+              {/* 내장이 기본 — 설치 버튼 없음. 없으면 부팅이 자동 설치한다. */}
             </div>
 
             {/* CLI provider 바이너리 — 서버가 CLI 를 갖추듯 커넥터도 갖춘다. */}
