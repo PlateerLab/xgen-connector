@@ -714,6 +714,18 @@ export const Chat: React.FC<{
                 </div>
               )}
               <div className="msg-col">
+                {m.role === 'assistant' && m.surface && (
+                  <div
+                    className={`exec-surface ${m.surface}`}
+                    title={
+                      m.surface === 'connector_local'
+                        ? '이 PC 의 로컬 실행 환경(커넥터 사이드카)에서 실행 중 — 기억·파일은 서버와 공유'
+                        : `서버 sandbox 에서 실행${m.surfaceNote ? ` — ${m.surfaceNote}` : ''}`
+                    }
+                  >
+                    {m.surface === 'connector_local' ? '이 PC에서 실행' : '서버에서 실행'}
+                  </div>
+                )}
                 {m.tools && m.tools.length > 0 && (
                   <ToolActivity events={m.tools} streaming={!!m.streaming} />
                 )}

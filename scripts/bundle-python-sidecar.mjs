@@ -55,7 +55,7 @@ const PBS_PYTHON = process.env.PBS_PYTHON || '3.12.11';
 // 기본 SPEC: 워크스페이스 로컬 경로(개발) → 없으면 릴리스 wheel(CI — 커넥터
 // 저장소만 체크아웃돼 로컬 경로가 없다).
 const RELEASED_RUNTIME_WHEEL =
-  'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.6.0/xgen_agent_runtime-3.6.0-py3-none-any.whl';
+  'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.7.0/xgen_agent_runtime-3.7.0-py3-none-any.whl';
 const localRuntimePath = join(WORKSPACE, 'xgen-agent-runtime');
 const RUNTIME_SPEC =
   process.env.XGEN_RUNTIME_SPEC ||

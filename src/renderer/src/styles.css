@@ -4435,3 +4435,38 @@ button {
 .toollog-detail pre.err {
   color: #b91c1c;
 }
+
+/* ── 실행 환경 배지(커넥터 로컬 실행 v2) ── */
+.exec-surface {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 0 0 4px 2px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.01em;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  color: var(--muted, #6b7280);
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.08));
+}
+.exec-surface::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
+}
+.exec-surface.connector_local {
+  color: #0f766e;
+  border-color: rgba(15, 118, 110, 0.35);
+  background: rgba(15, 118, 110, 0.08);
+}
+.exec-surface.server_sandbox {
+  color: #92400e;
+  border-color: rgba(146, 64, 14, 0.35);
+  background: rgba(146, 64, 14, 0.08);
+}

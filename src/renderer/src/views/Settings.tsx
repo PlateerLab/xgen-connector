@@ -108,31 +108,39 @@ export const Settings: React.FC<{
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
-  // ── 독립 로컬 실행 환경 (일반 탭) ──
-  const [lrStatus, setLrStatus] = useState<{
-    installed: boolean;
-    version?: string;
-    pythonPath?: string;
-    source?: 'userData' | 'bundled' | null;
-  } | null>(null);
+  // ── 로컬 실행 환경 (일반 탭) — 상태는 메인의 localExecStatus 한 번에 ──
+  type LocalExecStatus = Awaited<ReturnType<typeof xgen.localRuntime.status>>;
+  const [lrStatus, setLrStatus] = useState<LocalExecStatus | null>(null);
   const [lrMsg, setLrMsg] = useState<string | null>(null);
-  // CLI 바이너리(codex / Claude Code) — 공식 배포처에서 로컬 설치.
-  const [cliStatus, setCliStatus] = useState<{
-    codex: { installed: boolean; version?: string };
-    claude: { installed: boolean; version?: string };
-  } | null>(null);
+  const [lrSyncing, setLrSyncing] = useState(false);
+  const cliStatus = lrStatus?.cli ?? null;
   const [cliBusy, setCliBusy] = useState<'codex' | 'claude' | null>(null);
+  const [localExecEnabled, setLocalExecEnabled] = useState<boolean>(
+    config.localExec?.enabled !== false,
+  );
+  const refreshLocalExec = () => {
+    void xgen.localRuntime
+      .status()
+      .then(setLrStatus)
+      .catch(() => setLrStatus(null));
+  };
+  const syncWithServer = async () => {
+    setLrSyncing(true);
+    setLrMsg(null);
+    try {
+      const st = await xgen.localRuntime.sync();
+      setLrStatus(st);
+      setLrMsg(
+        st.converge.lastError ? `실패: ${st.converge.lastError}` : (st.converge.summary ?? '완료'),
+      );
+    } catch (e) {
+      setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLrSyncing(false);
+    }
+  };
   useEffect(() => {
-    const refresh = () => {
-      void xgen.localRuntime
-        .status()
-        .then(setLrStatus)
-        .catch(() => setLrStatus(null));
-      void xgen.localRuntime
-        .cliStatus()
-        .then(setCliStatus)
-        .catch(() => setCliStatus(null));
-    };
+    const refresh = refreshLocalExec;
     refresh();
     // 부팅 자동 프로비저닝(런타임/CLI)의 진행을 실시간 반영 — 설치는 사용자
     // 액션 없이도 백그라운드로 일어난다(내장이 기본, 이 화면은 상태 표시).
@@ -149,7 +157,7 @@ export const Settings: React.FC<{
     try {
       const r = await xgen.localRuntime.cliInstall(tool);
       if (!r.ok) setLrMsg(`실패: ${r.error ?? '알 수 없음'}`);
-      setCliStatus(await xgen.localRuntime.cliStatus());
+      refreshLocalExec();
     } catch (e) {
       setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -651,12 +659,52 @@ export const Settings: React.FC<{
               </div>
               <div className="field-row">
                 <span>
-                  에이전트 로컬 실행 런타임
+                  Agent-XGeny 로컬 실행
                   <span className="small muted" style={{ marginLeft: 8 }}>
-                    {lrStatus?.installed ? `설치됨 (런타임 ${lrStatus.version ?? '?'})` : '—'}
+                    커넥터에서 시작한 대화는 이 PC 의 실행 환경에서 돌고, 기억·파일·이력은 서버와
+                    공유됩니다. 끄면 항상 서버 sandbox 에서 실행됩니다.
                   </span>
                 </span>
-                {/* 내장이 기본 — 설치 버튼 없음. 없으면 부팅이 자동 설치한다. */}
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={localExecEnabled}
+                    onChange={(e) => {
+                      setLocalExecEnabled(e.target.checked);
+                      void xgen.config
+                        .set({
+                          localExec: { ...(config.localExec ?? {}), enabled: e.target.checked },
+                        })
+                        .then(() => refreshLocalExec());
+                    }}
+                  />
+                  <span />
+                </label>
+              </div>
+              <div className="field-row">
+                <span>
+                  에이전트 로컬 실행 런타임
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {lrStatus?.installed
+                      ? `설치됨 (런타임 ${lrStatus.version ?? '?'}${
+                          lrStatus.server?.runtime
+                            ? lrStatus.server.runtime === lrStatus.version
+                              ? ' · 서버와 동일'
+                              : ` · 서버 ${lrStatus.server.runtime}`
+                            : ''
+                        })${lrStatus.daemon?.running ? ` · 실행기 대기 중(pid ${lrStatus.daemon.pid ?? '?'})` : ''}`
+                      : '— (설치 폴더에 런타임 없음)'}
+                  </span>
+                </span>
+                <div className="row">
+                  <button
+                    className="secondary"
+                    disabled={lrSyncing}
+                    onClick={() => void syncWithServer()}
+                  >
+                    {lrSyncing ? '맞추는 중…' : '서버 버전으로 맞추기'}
+                  </button>
+                </div>
               </div>
               {/* CLI provider 바이너리 — 서버가 CLI 를 갖추듯 커넥터도 갖춘다. */}
               {(
@@ -678,8 +726,14 @@ export const Settings: React.FC<{
                     {label}
                     <span className="small muted" style={{ marginLeft: 8 }}>
                       {cliStatus?.[tool]?.installed
-                        ? `설치됨${/\d/.test(cliStatus[tool].version ?? '') ? ` (v${cliStatus[tool].version})` : ''}`
-                        : desc}
+                        ? `설치됨${/\d/.test(cliStatus[tool].version ?? '') ? ` (v${cliStatus[tool].version})` : ''}${
+                            lrStatus?.server?.[tool]
+                              ? lrStatus.server[tool] === cliStatus[tool].version
+                                ? ' · 서버와 동일'
+                                : ` · 서버 v${lrStatus.server[tool]}`
+                              : ''
+                          }`
+                        : `${desc}${lrStatus?.server?.[tool] ? ` · 서버 v${lrStatus.server[tool]}` : ''}`}
                     </span>
                   </span>
                   <div className="row">
@@ -697,9 +751,11 @@ export const Settings: React.FC<{
                   </div>
                 </div>
               ))}
-              {lrMsg && (
+              {(lrMsg || lrStatus?.converge?.lastError || lrStatus?.daemon?.lastError) && (
                 <div className="field-row">
-                  <span className="small muted">{lrMsg}</span>
+                  <span className="small muted">
+                    {lrMsg ?? lrStatus?.converge?.lastError ?? lrStatus?.daemon?.lastError}
+                  </span>
                 </div>
               )}
             </SettingsSection>

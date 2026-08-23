@@ -130,7 +130,14 @@ export interface ConnectorConfig {
    *  부모. 인스톨러 선택 또는 설정에서 변경. 개별 경로 명시가 항상 우선. */
   dataRoot?: string;
   /** 로컬 실행 자동 프로비저닝 스위치(인스톨러 체크박스 미러; 기본 전부 true). */
-  localExec?: { autoRuntime?: boolean; autoCodex?: boolean; autoClaude?: boolean };
+  localExec?: {
+    /** 커넥터 로컬 실행 마스터 스위치. 기본 ON — 커넥터에서 시작한 Agent-XGeny 턴은
+     *  이 PC 의 사이드카에서 돈다(끄면 항상 서버 sandbox). */
+    enabled?: boolean;
+    autoRuntime?: boolean;
+    autoCodex?: boolean;
+    autoClaude?: boolean;
+  };
   /** Workspace 동기화 페어링 (에이전트 workflow ↔ 로컬 폴더). */
   /** 이 설치본의 안정 디바이스 id (최초 1회 생성) — 동기화 텔레메트리/충돌 사본 이름. */
   deviceId?: string;
