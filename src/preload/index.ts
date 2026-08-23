@@ -60,6 +60,23 @@ export interface LocalExecStatus {
     manifestAt?: number;
   } | null;
   converge: { running: boolean; lastRunAt?: number; lastError?: string; summary?: string };
+  /** 런타임 자가치유 사다리 상태 — 지금 어떤 런타임을 쓰는지(active) + 후보별 진단. */
+  ensure: {
+    phase: 'idle' | 'checking' | 'copying' | 'downloading' | 'ready' | 'failed';
+    message?: string;
+    lastError?: string;
+    lastRunAt?: number;
+    active?: { source: 'install' | 'bundle' | 'legacy'; python: string; version?: string };
+    candidates: {
+      source: 'install' | 'bundle' | 'legacy';
+      runtimeDir: string;
+      python: string;
+      exists: boolean;
+      healthy?: boolean;
+      version?: string;
+      error?: string;
+    }[];
+  };
 }
 
 /** 가상 드라이브 상태 (main workspace-manager.WorkspaceStatus 미러). */

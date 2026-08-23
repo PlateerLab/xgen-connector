@@ -115,9 +115,20 @@ export const Settings: React.FC<{
   const [lrSyncing, setLrSyncing] = useState(false);
   const cliStatus = lrStatus?.cli ?? null;
   const [cliBusy, setCliBusy] = useState<'codex' | 'claude' | null>(null);
-  const [localExecEnabled, setLocalExecEnabled] = useState<boolean>(
-    config.localExec?.enabled !== false,
-  );
+  const [lrRepairing, setLrRepairing] = useState(false);
+  const repairRuntime = async () => {
+    setLrRepairing(true);
+    setLrMsg(null);
+    try {
+      const r = await xgen.localRuntime.install();
+      if (!r.ok) setLrMsg(`실패: ${r.error ?? '알 수 없음'}`);
+      refreshLocalExec();
+    } catch (e) {
+      setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLrRepairing(false);
+    }
+  };
   const refreshLocalExec = () => {
     void xgen.localRuntime
       .status()
@@ -657,50 +668,94 @@ export const Settings: React.FC<{
                   </button>
                 </div>
               </div>
+              {/* 현재 상태 — 어떻게 구성돼 있고 어떻게 실행되는지(설정 아님, 설명). */}
               <div className="field-row">
                 <span>
-                  Agent-XGeny 로컬 실행
+                  Agent-XGeny 실행 환경
                   <span className="small muted" style={{ marginLeft: 8 }}>
-                    커넥터에서 시작한 대화는 이 PC 의 실행 환경에서 돌고, 기억·파일·이력은 서버와
-                    공유됩니다. 끄면 항상 서버 sandbox 에서 실행됩니다.
+                    {lrStatus == null
+                      ? '상태 확인 중…'
+                      : lrStatus.ensure?.active
+                        ? `이 PC 에서 실행 — 커넥터에서 시작한 대화는 이 PC 의 런타임(${
+                            { install: '설치 폴더', bundle: '앱 내장', legacy: '이전 설치' }[
+                              lrStatus.ensure.active.source
+                            ]
+                          }, ${lrStatus.ensure.active.version ?? '?'})에서 돌고, 기억·파일·이력은 서버와 공유됩니다.${
+                            lrStatus.daemon?.running
+                              ? ` 실행기 대기 중(pid ${lrStatus.daemon.pid ?? '?'}).`
+                              : ''
+                          }`
+                        : lrStatus.ensure?.phase === 'copying' ||
+                            lrStatus.ensure?.phase === 'downloading'
+                          ? `런타임 준비 중 — 준비될 때까지 대화는 서버 sandbox 에서 실행됩니다. (${lrStatus.ensure.message ?? ''})`
+                          : `서버 sandbox 에서 실행 — 이 PC 에 쓸 수 있는 런타임이 없습니다.${
+                              lrStatus.ensure?.lastError ? ` ${lrStatus.ensure.lastError}` : ''
+                            }`}
                   </span>
                 </span>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={localExecEnabled}
-                    onChange={(e) => {
-                      setLocalExecEnabled(e.target.checked);
-                      void xgen.config
-                        .set({
-                          localExec: { ...(config.localExec ?? {}), enabled: e.target.checked },
-                        })
-                        .then(() => refreshLocalExec());
-                    }}
-                  />
-                  <span />
-                </label>
               </div>
               <div className="field-row">
                 <span>
-                  에이전트 로컬 실행 런타임
+                  로컬 실행 런타임
                   <span className="small muted" style={{ marginLeft: 8 }}>
-                    {lrStatus?.installed
-                      ? `설치됨 (런타임 ${lrStatus.version ?? '?'}${
-                          lrStatus.server?.runtime
-                            ? lrStatus.server.runtime === lrStatus.version
-                              ? ' · 서버와 동일'
-                              : ` · 서버 ${lrStatus.server.runtime}`
-                            : ''
-                        })${lrStatus.daemon?.running ? ` · 실행기 대기 중(pid ${lrStatus.daemon.pid ?? '?'})` : ''}`
-                      : '— (설치 폴더에 런타임 없음)'}
+                    {(() => {
+                      const inst = lrStatus?.ensure?.candidates?.find(
+                        (c) => c.source === 'install',
+                      );
+                      const bun = lrStatus?.ensure?.candidates?.find((c) => c.source === 'bundle');
+                      if (!lrStatus) return '—';
+                      const parts: string[] = [];
+                      parts.push(
+                        inst?.healthy
+                          ? `설치 폴더: 설치됨 (${inst.version ?? '?'})`
+                          : inst?.exists
+                            ? `설치 폴더: 손상(검증 실패)${inst.error ? ` — ${inst.error.slice(0, 120)}` : ''}`
+                            : '설치 폴더: 없음',
+                      );
+                      parts.push(
+                        bun
+                          ? bun.healthy
+                            ? `앱 내장: 있음 (${bun.version ?? '?'})`
+                            : bun.exists
+                              ? '앱 내장: 손상'
+                              : '앱 내장: 없음'
+                          : '앱 내장: 없음(개발 빌드)',
+                      );
+                      if (lrStatus.server?.runtime) {
+                        parts.push(
+                          lrStatus.server.runtime ===
+                            (lrStatus.ensure?.active?.version ?? lrStatus.version)
+                            ? '서버와 동일'
+                            : `서버 ${lrStatus.server.runtime}`,
+                        );
+                      }
+                      return parts.join(' · ');
+                    })()}
                   </span>
                 </span>
                 <div className="row">
+                  {!lrStatus?.ensure?.candidates?.find((c) => c.source === 'install')?.healthy && (
+                    <button
+                      className="secondary"
+                      disabled={
+                        lrRepairing ||
+                        lrStatus?.ensure?.phase === 'copying' ||
+                        lrStatus?.ensure?.phase === 'downloading'
+                      }
+                      onClick={() => void repairRuntime()}
+                    >
+                      {lrRepairing ||
+                      lrStatus?.ensure?.phase === 'copying' ||
+                      lrStatus?.ensure?.phase === 'downloading'
+                        ? '설치 중…'
+                        : '지금 설치/복구'}
+                    </button>
+                  )}
                   <button
                     className="secondary"
                     disabled={lrSyncing}
                     onClick={() => void syncWithServer()}
+                    title="서버가 알려주는 런타임/CLI 목표 버전으로 맞춥니다 (서버가 버전 정보를 제공하지 않으면 현재 설치본 유지)"
                   >
                     {lrSyncing ? '맞추는 중…' : '서버 버전으로 맞추기'}
                   </button>
@@ -744,9 +799,12 @@ export const Settings: React.FC<{
                     >
                       {cliBusy === tool
                         ? '설치 중…'
-                        : cliStatus?.[tool]?.installed
-                          ? '업데이트'
-                          : '설치'}
+                        : !cliStatus?.[tool]?.installed
+                          ? '설치'
+                          : lrStatus?.server?.[tool] &&
+                              lrStatus.server[tool] !== cliStatus[tool].version
+                            ? `서버 버전(v${lrStatus.server[tool]})으로`
+                            : '재설치(최신)'}
                     </button>
                   </div>
                 </div>
