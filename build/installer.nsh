@@ -1,5 +1,108 @@
 ; XGEN Connector — NSIS 설치 커스터마이즈
 ;
+; ── 데이터 폴더 선택 페이지 ─────────────────────────────────────────────
+; 커넥터의 모든 작업 자산(workspace/ · cloud/ · local-runtime/ + codex/claude CLI)
+; 은 **통합 루트**(기본 %USERPROFILE%\xgen-connector) 아래에 모인다. 이 페이지가
+; 루트 경로와 구성요소 체크(기본 전부 체크)를 받아
+;   %APPDATA%\XGEN-Connector\install-options.json
+; 으로 남기면, 앱 첫 부팅(data-root.consumeInstallOptions)이 한 번 삼켜 config 에
+; 반영하고 체크된 것들을 자동 설치한다(인스톨러는 다운로드하지 않는다 — 오프라인
+; 설치를 깨지 않기 위해; 실제 설치는 앱의 부팅 프로비저닝이 수행).
+!include nsDialogs.nsh
+
+Var XgenDataRoot
+Var XgenDlg
+Var XgenDirBox
+Var XgenDirBtn
+Var XgenChkRuntime
+Var XgenChkCodex
+Var XgenChkClaude
+Var XgenRuntimeState
+Var XgenCodexState
+Var XgenClaudeState
+
+!macro customPageAfterChangeDir
+  Page custom XgenDataPageCreate XgenDataPageLeave
+!macroend
+
+Function XgenDataPageCreate
+  !insertmacro MUI_HEADER_TEXT "데이터 폴더" "에이전트 작업 폴더와 로컬 실행 구성요소가 설치될 위치입니다."
+  nsDialogs::Create 1018
+  Pop $XgenDlg
+  ${If} $XgenDlg == error
+    Abort
+  ${EndIf}
+
+  StrCmp $XgenDataRoot "" 0 +2
+    StrCpy $XgenDataRoot "$PROFILE\xgen-connector"
+
+  ${NSD_CreateLabel} 0 0 100% 24u "이 폴더 아래에 workspace\(작업·동기화), cloud\(스토리지), local-runtime\(에이전트 로컬 실행 런타임과 CLI)이 만들어집니다."
+  Pop $0
+
+  ${NSD_CreateDirRequest} 0 28u 82% 13u "$XgenDataRoot"
+  Pop $XgenDirBox
+  ${NSD_CreateBrowseButton} 84% 28u 16% 13u "찾아보기…"
+  Pop $XgenDirBtn
+  ${NSD_OnClick} $XgenDirBtn XgenBrowseDir
+
+  ${NSD_CreateCheckbox} 0 52u 100% 12u "에이전트 로컬 실행 런타임 (권장 — 에이전트가 이 PC 에서 실행됩니다)"
+  Pop $XgenChkRuntime
+  ${NSD_Check} $XgenChkRuntime
+  ${NSD_CreateCheckbox} 0 66u 100% 12u "Codex CLI (OpenAI Codex provider 로컬 실행)"
+  Pop $XgenChkCodex
+  ${NSD_Check} $XgenChkCodex
+  ${NSD_CreateCheckbox} 0 80u 100% 12u "Claude Code CLI (Claude Code provider 로컬 실행)"
+  Pop $XgenChkClaude
+  ${NSD_Check} $XgenChkClaude
+
+  ${NSD_CreateLabel} 0 98u 100% 20u "체크된 항목은 첫 실행 시 자동으로 설치됩니다. 나중에 [설정 → 일반]에서 변경할 수 있습니다."
+  Pop $0
+
+  nsDialogs::Show
+FunctionEnd
+
+Function XgenBrowseDir
+  ${NSD_GetText} $XgenDirBox $0
+  nsDialogs::SelectFolderDialog "데이터 폴더 선택" "$0"
+  Pop $0
+  ${If} $0 != error
+    ${NSD_SetText} $XgenDirBox "$0"
+  ${EndIf}
+FunctionEnd
+
+Function XgenDataPageLeave
+  ${NSD_GetText} $XgenDirBox $XgenDataRoot
+  ${NSD_GetState} $XgenChkRuntime $XgenRuntimeState
+  ${NSD_GetState} $XgenChkCodex $XgenCodexState
+  ${NSD_GetState} $XgenChkClaude $XgenClaudeState
+FunctionEnd
+
+; JSON 문자열 값으로 안전하게 — 백슬래시 이스케이프($\\ → \\\\).
+Function XgenJsonEscape
+  Exch $0
+  Push $1
+  Push $2
+  Push $3
+  StrCpy $1 ""
+  StrCpy $2 0
+  loop:
+    StrCpy $3 $0 1 $2
+    StrCmp $3 "" done
+    StrCmp $3 "\" 0 +3
+      StrCpy $1 "$1\\"
+      Goto next
+    StrCpy $1 "$1$3"
+  next:
+    IntOp $2 $2 + 1
+    Goto loop
+  done:
+  StrCpy $0 $1
+  Pop $3
+  Pop $2
+  Pop $1
+  Exch $0
+FunctionEnd
+;
 ; Windows 내장 WebDAV 클라이언트(WebClient)는 기본 **50MB 파일 상한**이 있다
 ; (FileSizeLimitInBytes). 가상 드라이브로 붙은 워크스페이스에서 그보다 큰
 ; 파일을 열거나 저장하면 탐색기가 조용히 거부한다 — 사용자에게는 "파일이
@@ -25,6 +128,43 @@
   ; WebClient 는 기본 수동 시작 — 자동으로 두면 마운트가 첫 시도에 붙는다.
   nsExec::ExecToLog 'sc config WebClient start= auto'
   Pop $0
+
+  ; ── 데이터 폴더/구성요소 선택을 앱에 전달 ──────────────────────────────
+  ; 첫 부팅(consumeInstallOptions)이 한 번 읽고 지운다. 페이지를 안 거친 경우
+  ; (조용한 설치 /S)엔 기본값으로 남긴다.
+  DetailPrint "데이터 폴더 설정을 기록하는 중..."
+  StrCmp $XgenDataRoot "" 0 +2
+    StrCpy $XgenDataRoot "$PROFILE\xgen-connector"
+  StrCmp $XgenRuntimeState "" 0 +2
+    StrCpy $XgenRuntimeState ${BST_CHECKED}
+  StrCmp $XgenCodexState "" 0 +2
+    StrCpy $XgenCodexState ${BST_CHECKED}
+  StrCmp $XgenClaudeState "" 0 +2
+    StrCpy $XgenClaudeState ${BST_CHECKED}
+  ${If} $XgenRuntimeState == ${BST_CHECKED}
+    StrCpy $1 "true"
+  ${Else}
+    StrCpy $1 "false"
+  ${EndIf}
+  ${If} $XgenCodexState == ${BST_CHECKED}
+    StrCpy $2 "true"
+  ${Else}
+    StrCpy $2 "false"
+  ${EndIf}
+  ${If} $XgenClaudeState == ${BST_CHECKED}
+    StrCpy $3 "true"
+  ${Else}
+    StrCpy $3 "false"
+  ${EndIf}
+  Push $XgenDataRoot
+  Call XgenJsonEscape
+  Pop $4
+  CreateDirectory "$APPDATA\XGEN-Connector"
+  FileOpen $0 "$APPDATA\XGEN-Connector\install-options.json" w
+  ${If} $0 != ""
+    FileWrite $0 '{"dataRoot":"$4","autoRuntime":$1,"autoCodex":$2,"autoClaude":$3}'
+    FileClose $0
+  ${EndIf}
 !macroend
 
 !macro customUnInstall

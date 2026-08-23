@@ -1044,6 +1044,27 @@ export const Settings: React.FC<{
             <div className="settings-section-title">로컬 실행 환경</div>
             <div className="field-row">
               <span>
+                데이터 폴더
+                <span className="small muted" style={{ marginLeft: 8 }}>
+                  {config.dataRoot || '~/xgen-connector'} — workspace/ · cloud/ · local-runtime/ 이 이 아래에 모입니다
+                </span>
+              </span>
+              <div className="row">
+                <button
+                  className="secondary"
+                  onClick={async () => {
+                    const p = await xgen.appctl.pickFolder();
+                    if (!p) return;
+                    await apply({ dataRoot: p });
+                    setLrMsg('데이터 폴더 변경 — 새 위치는 다음 자동 설치/동기화부터 적용됩니다(기존 파일은 이동하지 않음).');
+                  }}
+                >
+                  변경
+                </button>
+              </div>
+            </div>
+            <div className="field-row">
+              <span>
                 에이전트 로컬 실행 런타임
                 <span className="small muted" style={{ marginLeft: 8 }}>
                   {lrStatus?.installed

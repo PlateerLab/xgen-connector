@@ -75,6 +75,7 @@ import {
   installCodexCli,
 } from './cli-provision';
 import { runLocalChatTurn, type LocalChatDeps } from './local-chat-route';
+import { consumeInstallOptions, resolveDataRoot, runtimeDirOf, settleDataRoot } from './data-root';
 import type { SyncRemote } from './local-sync';
 import { isSafeRelPath } from './sync-plan';
 import { hostname, userInfo } from 'os';
@@ -2478,8 +2479,36 @@ function wireLocalAgent(): void {
 
 // ── 독립 로컬 실행 환경 설치 ([설정 → 일반]) ─────────────────────────
 /** userData 아래 로컬 런타임 트리 루트. */
+/**
+ * 통합 데이터 루트 정착(부팅 1회) — 인스톨러 선택(install-options.json)을 삼키고,
+ * dataRoot 트리(workspace/·cloud/·local-runtime/)를 만들고, 미설정 경로 기본을
+ * config 에 채운다. 명시 설정은 절대 덮지 않는다.
+ */
+function settleDataRootOnBoot(): void {
+  try {
+    const installPatch = consumeInstallOptions(app.getPath('userData'));
+    if (installPatch) saveConfig(installPatch);
+    const { patch } = settleDataRoot(loadConfig());
+    if (Object.keys(patch).length) saveConfig(patch);
+  } catch (e) {
+    console.error('[data-root] 정착 실패(무시):', e);
+  }
+}
 function localRuntimeDir(): string {
-  return join(app.getPath('userData'), 'local-runtime');
+  // 통합 루트 아래가 표준. 이전 버전(userData/local-runtime)에 이미 설치돼
+  // 있으면 그걸 계속 쓴다 — 마이그레이션으로 수 GB 를 다시 받게 하지 않는다.
+  const legacy = join(app.getPath('userData'), 'local-runtime');
+  const modern = runtimeDirOf(resolveDataRoot(loadConfig()));
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { existsSync } = require('node:fs');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { pythonExePath } = require('./local-runtime-install');
+    if (!existsSync(pythonExePath(modern)) && existsSync(pythonExePath(legacy))) return legacy;
+  } catch {
+    /* 해석 실패 — modern */
+  }
+  return modern;
 }
 /**
  * 부팅 자동 프로비저닝 — 로컬 실행 런타임은 **기본으로 존재**해야 한다(서버의
@@ -2493,6 +2522,7 @@ async function ensureLocalRuntimeOnBoot(): Promise<void> {
   if (localRuntimeProvisioning) return;
   const { diag } = await import('./diag-log');
   try {
+    if (loadConfig().localExec?.autoRuntime === false) return; // 인스톨러에서 체크 해제
     const { existsSync } = await import('node:fs');
     const { pythonExePath } = await import('./local-runtime-install');
     if (existsSync(pythonExePath(localRuntimeDir()))) return; // userData 설치본
@@ -2543,6 +2573,8 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
 /** CLI 바이너리 자동 보장 — 도구별 single-flight(연타 턴이 중복 설치하지 않게). */
 const cliEnsureInflight = new Map<string, Promise<boolean>>();
 function ensureCliInstalled(tool: 'codex' | 'claude'): Promise<boolean> {
+  const le = loadConfig().localExec ?? {};
+  if ((tool === 'codex' ? le.autoCodex : le.autoClaude) === false) return Promise.resolve(false);
   const deps = { runtimeDir: localRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch };
   const st = localCliGetStatus(deps);
   if ((tool === 'codex' ? st.codex : st.claude).installed) return Promise.resolve(true);
@@ -2916,10 +2948,16 @@ if (!gotLock) {
     const startHidden = process.argv.includes('--hidden') && trayOk;
     createWindow();
     if (startHidden) mainWindow?.removeAllListeners('ready-to-show');
+    settleDataRootOnBoot(); // 통합 루트(~/xgen-connector) 정착 — 아래 배선들이 새 기본을 읽는다.
     wireWorkspaceManager();
     wireLocalSync();
     wireLocalAgent();
-    void ensureLocalRuntimeOnBoot();
+    // 부팅 자동 프로비저닝: 런타임 → CLI(체크된 것) 순차 백그라운드.
+    void ensureLocalRuntimeOnBoot().then(async () => {
+      const le = loadConfig().localExec ?? {};
+      if (le.autoCodex !== false) await ensureCliInstalled('codex').catch(() => false);
+      if (le.autoClaude !== false) await ensureCliInstalled('claude').catch(() => false);
+    });
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
       createQuickChat();
