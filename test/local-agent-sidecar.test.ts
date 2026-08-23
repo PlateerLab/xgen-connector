@@ -3,6 +3,7 @@
 // 여기서는 **이벤트 스트림 파싱·종료·무언종료 합성·명령 해석**만 본다(가짜 사이드카).
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { join } from 'node:path';
 import {
   resolveSidecarCommand,
   runLocalTurn,
@@ -108,6 +109,10 @@ test('명령 해석 — 패키지 빌드는 번들 Python 을 가리킨다', () 
     resourcesPath: '/app/resources',
     env: {} as NodeJS.ProcessEnv,
   });
-  assert.match(cmd.command, /^\/app\/resources\/python/);
+  // OS 경로 구분자 중립 — Windows 러너에서는 backslash 로 조립된다(join).
+  const expected = process.platform === 'win32'
+    ? join('/app/resources', 'python', 'python.exe')
+    : join('/app/resources', 'python', 'bin', 'python3');
+  assert.equal(cmd.command, expected);
   assert.deepEqual(cmd.args, ['-m', 'xgen_agent_runtime.host.sidecar']);
 });
