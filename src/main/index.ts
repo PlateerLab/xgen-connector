@@ -2610,7 +2610,17 @@ function getLocalEnsurer(): LocalRuntimeEnsurer {
   if (!localEnsurer) {
     localEnsurer = new LocalRuntimeEnsurer({
       installDir: () => runtimeDirOf(resolveDataRoot(loadConfig())),
-      bundleDir: () => (app.isPackaged && process.resourcesPath ? process.resourcesPath : null),
+      // 앱 내장 번들 — isPackaged 와 무관하게 resources/python 이 실재하면 후보로 본다.
+      bundleDir: () => {
+        const rp = process.resourcesPath;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { existsSync } = require('node:fs') as typeof import('node:fs');
+          return rp && existsSync(join(rp, 'python')) ? rp : null;
+        } catch {
+          return null;
+        }
+      },
       legacyDir: () => join(app.getPath('userData'), 'local-runtime'),
       fetch: mcpHttpFetch as unknown as typeof fetch,
       onProgress: (p) => {
@@ -2624,12 +2634,46 @@ function getLocalEnsurer(): LocalRuntimeEnsurer {
         void import('./diag-log')
           .then(({ diag }) => diag('local-exec', `ensure: ${m}`))
           .catch(() => {});
+        appendInstallLog(`[app] ensure: ${m}`);
       },
     });
   }
   return localEnsurer;
 }
+/** 설치 폴더의 install.log — 인스톨러(NSIS)와 앱이 **같은 파일**에 이어 쓴다. */
+function installLogPath(): string {
+  return join(resolveDataRoot(loadConfig()), 'install.log');
+}
+function appendInstallLog(line: string): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { appendFileSync, mkdirSync } = require('node:fs') as typeof import('node:fs');
+    mkdirSync(resolveDataRoot(loadConfig()), { recursive: true });
+    appendFileSync(installLogPath(), `${new Date().toISOString()} ${line}\n`);
+  } catch {
+    /* 로그 실패는 무시 */
+  }
+}
+/** 인스톨러가 남긴 로그(%APPDATA%\XGEN-Connector\install.log, win) + 앱 로그 꼬리. */
+function readInstallLogs(maxLines = 120): { path: string; lines: string[] }[] {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { existsSync, readFileSync } = require('node:fs') as typeof import('node:fs');
+  const out: { path: string; lines: string[] }[] = [];
+  for (const p of [join(app.getPath('userData'), 'install.log'), installLogPath()]) {
+    if (!existsSync(p)) continue;
+    try {
+      const lines = readFileSync(p, 'utf-8').split(/\r?\n/).filter(Boolean);
+      out.push({ path: p, lines: lines.slice(-maxLines) });
+    } catch {
+      /* skip */
+    }
+  }
+  return out;
+}
 async function ensureLocalRuntimeOnBoot(): Promise<void> {
+  appendInstallLog(
+    `[app] boot v${app.getVersion()} isPackaged=${app.isPackaged} resourcesPath=${process.resourcesPath ?? '(none)'} dataRoot=${resolveDataRoot(loadConfig())} userData=${app.getPath('userData')}`,
+  );
   if (loadConfig().localExec?.autoRuntime === false) {
     // 인스톨러에서 런타임 체크 해제 — 복구는 하지 않되 현재 상태는 파악한다(번들/레거시 사용 가능).
     await getLocalEnsurer()
@@ -2738,8 +2782,20 @@ function localExecStatus() {
       summary: conv.summary,
     },
     ensure: getLocalEnsurer().status(),
+    bundlePath: process.resourcesPath ? join(process.resourcesPath, 'python') : null,
+    isPackaged: app.isPackaged,
+    logs: readInstallLogs(),
   };
 }
+ipcMain.handle(CHANNELS.localRuntimeOpenLog, async () => {
+  // 앱 로그가 없으면 인스톨러 로그, 둘 다 없으면 설치 폴더를 연다.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { existsSync } = require('node:fs') as typeof import('node:fs');
+  const candidates = [installLogPath(), join(app.getPath('userData'), 'install.log')];
+  const target = candidates.find((p) => existsSync(p)) ?? resolveDataRoot(loadConfig());
+  const err = await shell.openPath(target);
+  return { ok: !err, path: target, error: err || undefined };
+});
 ipcMain.handle(CHANNELS.localRuntimeSync, async () => {
   if (client?.user) await getLocalConverger().converge();
   return localExecStatus();

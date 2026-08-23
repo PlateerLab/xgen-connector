@@ -120,7 +120,23 @@
 ;
 ; 설치 프로그램은 관리자 권한으로 도므로 여기서 상한을 올린다(4GB).
 ; 서비스는 다음 시작 때 새 값을 읽는다.
+; ── 설치 로그 — %APPDATA%\XGEN-Connector\install.log (앱이 같은 이름의 로그를 설치 폴더에도 쓴다) ──
+; 런타임 복사/검증의 모든 단계와 결과를 남긴다 — "왜 실패했는지" 를 설치 직후 파일로 볼 수 있게.
+!macro XgenLog text
+  Push $9
+  CreateDirectory "$APPDATA\XGEN-Connector"
+  FileOpen $9 "$APPDATA\XGEN-Connector\install.log" a
+  ${If} $9 != ""
+    FileSeek $9 0 END
+    FileWrite $9 "${text}$\r$\n"
+    FileClose $9
+  ${EndIf}
+  Pop $9
+!macroend
+
 !macro customInstall
+  !insertmacro XgenLog "==== XGEN Connector ${VERSION} install start ===="
+  !insertmacro XgenLog "INSTDIR=$INSTDIR"
   DetailPrint "WebDAV 파일 크기 상한을 조정하는 중..."
   ; 0xFFFFFFFF = 4GiB-1 (WebClient 가 받는 최대값)
   WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Services\WebClient\Parameters" "FileSizeLimitInBytes" 0xFFFFFFFF
@@ -180,23 +196,46 @@
   ; 번들(resources\python)은 이 설치본 안에 이미 있다 — 앱이 뜬 뒤 내려받는
   ; 것이 아니라 인스톨러가 지금 깐다(오프라인, 결정적). 앱은 뜨는 순간
   ; <설치폴더>\local-runtime\python 을 발견한다("설치 중" 상태가 존재하지 않는다).
+  !insertmacro XgenLog "dataRoot=$XgenDataRoot runtime=$XgenRuntimeState codex=$XgenCodexState claude=$XgenClaudeState"
   ${If} $XgenRuntimeState == 1
     DetailPrint "로컬 실행 런타임을 설치하는 중... (수십 초 소요)"
+    ; 번들 레이아웃 확인 — resources\python\python.exe 가 있어야 한다(v1.62~1.66 은 한 단계
+    ; 더 깊게 들어가 있어 복사본이 앱·런타임 경로와 맞지 않았다).
+    ${If} ${FileExists} "$INSTDIR\resources\python\python.exe"
+      !insertmacro XgenLog "bundle OK: $INSTDIR\resources\python\python.exe"
+    ${Else}
+      !insertmacro XgenLog "bundle MISSING: $INSTDIR\resources\python\python.exe (앱 첫 실행 때 복구/다운로드)"
+    ${EndIf}
     CreateDirectory "$XgenDataRoot\local-runtime"
     RMDir /r "$XgenDataRoot\local-runtime\python"
     ClearErrors
     CopyFiles /SILENT "$INSTDIR\resources\python" "$XgenDataRoot\local-runtime"
     ${If} ${Errors}
       DetailPrint "런타임 복사 중 오류 — 앱 첫 실행 시 자동 복구됩니다."
+      !insertmacro XgenLog "copy ERROR (CopyFiles set error flag)"
+    ${Else}
+      !insertmacro XgenLog "copy done → $XgenDataRoot\local-runtime\python"
+    ${EndIf}
+    ${If} ${FileExists} "$XgenDataRoot\local-runtime\python\python.exe"
+      !insertmacro XgenLog "copied python.exe present"
+    ${Else}
+      !insertmacro XgenLog "copied python.exe MISSING after copy"
     ${EndIf}
     ; 복사본 검증(import 스모크) — 실패해도 설치는 계속한다(앱이 부팅 때 내장 번들에서 복구).
     DetailPrint "로컬 실행 런타임을 검증하는 중..."
-    nsExec::ExecToLog '"$XgenDataRoot\local-runtime\python\python.exe" -c "import xgen_agent_runtime.host.sidecar"'
+    nsExec::ExecToStack '"$XgenDataRoot\local-runtime\python\python.exe" -c "import xgen_agent_runtime.host.sidecar; print(1)"'
     Pop $0
-    ${If} $0 != 0
+    Pop $1
+    ${If} $0 == 0
+      !insertmacro XgenLog "smoke OK"
+    ${Else}
       DetailPrint "런타임 검증 실패(코드 $0) — 앱 첫 실행 시 자동 복구됩니다."
+      !insertmacro XgenLog "smoke FAILED rc=$0: $1"
     ${EndIf}
+  ${Else}
+    !insertmacro XgenLog "runtime install skipped (unchecked)"
   ${EndIf}
+  !insertmacro XgenLog "==== install end ===="
 !macroend
 
 !macro customUnInstall

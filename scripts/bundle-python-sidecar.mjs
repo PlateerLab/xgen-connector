@@ -125,6 +125,9 @@ async function main() {
   // extraResources 가 이 dir 를 복사한다 — **없으면 패키징이 실패**하므로 스킵
   // 경로에서도 빈 트리는 항상 만들어 둔다(빈 번들 = 사이드카 해석이 폴백).
   mkdirSync(OUT, { recursive: true });
+  // extraResources 의 from 은 OUT/python — 스킵 경로에서도 디렉터리는 있어야 패키징이
+  // 실패하지 않는다(빈 트리 = 앱이 "앱 내장: 없음" 으로 정직하게 표시).
+  mkdirSync(PY_DIR, { recursive: true });
   // 이전 실행이 크래시로 남긴 임시 트리 정리 — extraResources 에 실리면 안 된다.
   for (const e of readdirSync(OUT)) {
     if (e.startsWith('.tmp-')) rmSync(join(OUT, e), { recursive: true, force: true });
@@ -133,7 +136,7 @@ async function main() {
     log('XGEN_SIDECAR_SKIP=1 — 조립 스킵(dev env 폴백).');
     return;
   }
-  if (existsSync(PY_DIR)) {
+  if (existsSync(pythonExe(PY_DIR))) {
     log(`이미 조립됨 — 스킵 (${PY_DIR}). 다시 만들려면 이 폴더를 지운다.`);
     return;
   }
@@ -158,6 +161,7 @@ async function main() {
     execFileSync('tar', ['-xzf', tarball, '-C', tmp], { stdio: 'inherit' });
     const extracted = join(tmp, 'python');
     if (!existsSync(extracted)) throw new Error('추출 결과에 python/ 없음');
+    rmSync(PY_DIR, { recursive: true, force: true });
     renameSync(extracted, PY_DIR);
 
     const py = pythonExe(PY_DIR);
