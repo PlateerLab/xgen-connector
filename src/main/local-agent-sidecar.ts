@@ -110,8 +110,20 @@ export function runLocalTurn(
             const { pythonExePath } = require('./local-runtime-install');
             const { existsSync } = require('node:fs');
             const { join } = require('node:path');
-            const p = pythonExePath(join(app.getPath('userData'), 'local-runtime'));
-            if (existsSync(p)) localRuntimePython = p;
+            // 설치 폴더(dataRoot) 설치본 → 레거시 userData 순 — status/라우팅과
+            // 같은 해석(여기만 레거시만 보던 불일치가 실기에서 드러났다).
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const { loadConfig } = require('./config');
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const { resolveDataRoot, runtimeDirOf } = require('./data-root');
+              const modern = pythonExePath(runtimeDirOf(resolveDataRoot(loadConfig())));
+              if (existsSync(modern)) localRuntimePython = modern;
+            } catch { /* config 미가용(테스트) */ }
+            if (!localRuntimePython) {
+              const legacy = pythonExePath(join(app.getPath('userData'), 'local-runtime'));
+              if (existsSync(legacy)) localRuntimePython = legacy;
+            }
           } catch {
             /* 설치 모듈/electron 부재 — 무시 */
           }

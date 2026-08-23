@@ -75,7 +75,13 @@ import {
   installCodexCli,
 } from './cli-provision';
 import { runLocalChatTurn, type LocalChatDeps } from './local-chat-route';
-import { consumeInstallOptions, resolveDataRoot, runtimeDirOf, settleDataRoot } from './data-root';
+import {
+  consumeInstallOptions,
+  resolveDataRoot,
+  runtimeDirOf,
+  settleDataRoot,
+  writeCliInstallScripts,
+} from './data-root';
 import type { SyncRemote } from './local-sync';
 import { isSafeRelPath } from './sync-plan';
 import { hostname, userInfo } from 'os';
@@ -2497,8 +2503,11 @@ function settleDataRootOnBoot(): void {
   try {
     const installPatch = consumeInstallOptions(app.getPath('userData'));
     if (installPatch) saveConfig(installPatch);
-    const { patch } = settleDataRoot(loadConfig());
+    const { root, patch } = settleDataRoot(loadConfig());
     if (Object.keys(patch).length) saveConfig(patch);
+    // 설치 폴더 루트에 CLI 설치 스크립트 배치(부팅마다 최신으로 덮어씀) —
+    // runtime(기본 설치) + install-codex + install-claude-code 가 한 지붕 아래.
+    writeCliInstallScripts(root);
   } catch (e) {
     console.error('[data-root] 정착 실패(무시):', e);
   }
@@ -2573,7 +2582,7 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
       return false;
     },
     // 이 PC 에 설치된 CLI(codex/claude) 경로를 사이드카 settings 로 주입.
-    cliSettings: () => localCliSettings({ runtimeDir: localRuntimeDir() }),
+    cliSettings: () => localCliSettings({ runtimeDir: cliRuntimeDir() }),
     // CLI provider 턴 직전 바이너리 보장 — 없으면 공식 배포처에서 자동 설치.
     ensureCli: (tool) => ensureCliInstalled(tool),
     signal,
@@ -2584,7 +2593,7 @@ const cliEnsureInflight = new Map<string, Promise<boolean>>();
 function ensureCliInstalled(tool: 'codex' | 'claude'): Promise<boolean> {
   const le = loadConfig().localExec ?? {};
   if ((tool === 'codex' ? le.autoCodex : le.autoClaude) === false) return Promise.resolve(false);
-  const deps = { runtimeDir: localRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch };
+  const deps = { runtimeDir: cliRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch };
   const st = localCliGetStatus(deps);
   if ((tool === 'codex' ? st.codex : st.claude).installed) return Promise.resolve(true);
   const inflight = cliEnsureInflight.get(tool);
@@ -2623,7 +2632,11 @@ ipcMain.handle(CHANNELS.localRuntimeInstall, async (event) => {
 });
 
 // CLI 바이너리(codex / Claude Code) 프로비저닝 — 진행률은 localRuntimeProgress 재사용.
-ipcMain.handle(CHANNELS.localCliStatus, () => localCliGetStatus({ runtimeDir: localRuntimeDir() }));
+/** CLI 는 항상 설치 폴더 하위(local-runtime/bin) — 설치 스크립트와 같은 목적지. */
+function cliRuntimeDir(): string {
+  return runtimeDirOf(resolveDataRoot(loadConfig()));
+}
+ipcMain.handle(CHANNELS.localCliStatus, () => localCliGetStatus({ runtimeDir: cliRuntimeDir() }));
 ipcMain.handle(CHANNELS.localCliInstall, async (event, tool: unknown) => {
   const deps = { runtimeDir: localRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch };
   const emit = (p: unknown) => {
