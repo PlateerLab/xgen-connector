@@ -216,6 +216,22 @@
     Pop $1
   FunctionEnd
   
+  ; ── 설치 진행(INSTFILES) 페이지: 상세 로그를 **처음부터** 보이고, 끝나도 자동으로 넘어가지 않는다 ──
+  ; 템플릿은 ShowInstDetails nevershow + 섹션 시작 SetDetailsPrint none 이라 로그가 숨겨지고,
+  ; customInstall(앱 파일 추출 **후**)에서야 켜진다. 런타임을 재사용(같은 버전 → 복사 생략)하는
+  ; 설치/업데이트에서는 그 구간이 1~2초라 페이지가 바로 넘어가 사용자는 로그를 전혀 못 본다
+  ; (v1.71.0 실기: "로그 기능이 사라졌다"). INSTFILES SHOW 콜백은 섹션보다 먼저 돌므로 여기서
+  ; 상세 뷰를 켜고(SetDetailsView), 자동 닫힘을 끈다(SetAutoClose false → [다음] 을 눌러야 진행).
+  ; 이 define 은 바로 뒤의 MUI_PAGE_INSTFILES(템플릿 assistedInstaller.nsh)가 소비한다.
+  !define MUI_PAGE_CUSTOMFUNCTION_SHOW XgenInstFilesShow
+  Function XgenInstFilesShow
+    SetDetailsView show
+    SetAutoClose false
+    SetDetailsPrint both
+    DetailPrint "XGEN Connector ${VERSION} 설치를 시작합니다."
+    DetailPrint "1/3 앱 파일 압축 해제 — 진행 막대를 확인하세요 (이 단계는 줄 단위 로그가 없습니다)."
+    DetailPrint "설치 로그 파일: $APPDATA\XGEN-Connector\install.log"
+  FunctionEnd
 !macroend
 ;
 ; Windows 내장 WebDAV 클라이언트(WebClient)는 기본 **50MB 파일 상한**이 있다
@@ -246,7 +262,7 @@
   ; 설치 화면에 상세 로그를 **보이게** 한다(템플릿은 nevershow+DetailsPrint none — 여기서부터 켠다).
   SetDetailsPrint both
   SetDetailsView show
-  DetailPrint "XGEN Connector ${VERSION} — 앱 파일 설치 완료. 로컬 실행 환경을 구성합니다."
+  DetailPrint "2/3 앱 파일 설치 완료 — 로컬 실행 환경을 구성합니다."
   DetailPrint "설치 로그: $APPDATA\XGEN-Connector\install.log"
   ; 우리 파일(로그/옵션/마커)은 Electron 의 userData(%APPDATA%) 와 같은 곳 — per-machine 설치여도
   ; 현재 사용자 컨텍스트로 쓴다(electron-builder 자신도 $LOCALAPPDATA 쓸 때 같은 방식).
@@ -406,6 +422,7 @@
   DetailPrint "Codex / Claude Code CLI 는 앱 첫 실행 시 자동 설치·서버 버전 수렴됩니다(설정 → 설치 에서 확인)."
   DetailPrint "설치 완료."
   !insertmacro XgenLog "==== install end ===="
+  DetailPrint "3/3 설치 완료 — [다음] 을 누르면 마칩니다."
   ${If} $installMode == "all"
     SetShellVarContext all
   ${EndIf}
