@@ -678,7 +678,7 @@ export const Settings: React.FC<{
                     {label}
                     <span className="small muted" style={{ marginLeft: 8 }}>
                       {cliStatus?.[tool]?.installed
-                        ? `설치됨${cliStatus[tool].version ? ` (v${cliStatus[tool].version})` : ''}`
+                        ? `설치됨${/\d/.test(cliStatus[tool].version ?? '') ? ` (v${cliStatus[tool].version})` : ''}`
                         : desc}
                     </span>
                   </span>

@@ -2630,15 +2630,27 @@ function ensureCliInstalled(tool: 'codex' | 'claude'): Promise<boolean> {
   return p;
 }
 ipcMain.handle(CHANNELS.localRuntimeStatus, async () => {
-  // **파일 존재 기반**(getStatusFast) — 실행 스모크는 실기에서 보안정책 등으로
-  // 실패해 "내장인데 준비 중" 오표시를 냈다. userData 오버라이드 → 앱 내장 순.
-  const user = localRuntimeGetStatusFast({ runtimeDir: localRuntimeDir() });
-  if (user.installed) return { ...user, source: 'userData' as const };
-  if (app.isPackaged && process.resourcesPath) {
-    const bundled = localRuntimeGetStatusFast({ runtimeDir: process.resourcesPath });
-    if (bundled.installed) return { ...bundled, source: 'bundled' as const };
+  // 유일한 진실 = **설치 폴더**. 인스톨러(NSIS 복사)와 부팅 안전망(cpSync)이
+  // <설치폴더>/local-runtime 을 반드시 채우므로, 여기 존재 여부만 본다 —
+  // resourcesPath 검출은 실기에서 이유 불명 미검출을 냈고(v1.64.0, 아티팩트엔
+  // 번들 실재 확인) 더는 상태 판정에 쓰지 않는다(레거시 userData 는 폴백).
+  const st = localRuntimeGetStatusFast({ runtimeDir: localRuntimeDir() });
+  if (!st.installed) {
+    // 원인 확정용 진단(무 UI) — 스토리지 탭 [진단 로그 복사]로 회수된다.
+    try {
+      const { diag } = await import('./diag-log');
+      const { readdirSync, existsSync } = await import('node:fs');
+      const rp = process.resourcesPath ?? '(none)';
+      const listing = existsSync(rp) ? readdirSync(rp).join(',') : '(missing)';
+      diag(
+        'local-exec',
+        `런타임 미검출: dir=${localRuntimeDir()} resources=${rp} [${listing.slice(0, 300)}]`,
+      );
+    } catch {
+      /* 진단 실패 무시 */
+    }
   }
-  return { ...user, source: null };
+  return { ...st, source: st.installed ? ('userData' as const) : null };
 });
 ipcMain.handle(CHANNELS.localRuntimeInstall, async (event) => {
   // 진행률은 같은 sender 로 push. fetch 는 사설 인증서 정책이 반영된 세션 fetch.
