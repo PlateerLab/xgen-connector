@@ -5,6 +5,7 @@ import test from 'node:test';
 import type { ChatEvent, ChatRequest } from '../src/core/types';
 import {
   SidecarDaemon,
+  defaultSidecarCommand,
   resolveSidecarCommand,
   type LocalTurnRequest,
   type SidecarEvent,
@@ -14,11 +15,16 @@ import { makeServerClient, type ServerClient } from '../src/main/local-agent-ser
 import {
   describeFallback,
   runLocalChatTurn,
+  WORKSPACE_UNSYNCED_DETAIL,
   type LocalChatDeps,
   serverCliAuth,
 } from '../src/main/local-chat-route';
+import { QuotaExceededError } from '../src/main/local-agent-server-client';
+import { SessionStore, type SessionTransport } from '../src/renderer/src/session-store';
+import type { Agent } from '../src/core/types';
 import { planConverge } from '../src/main/local-runtime-converge';
 import { codexAssetUrl, ensureCliConverged } from '../src/main/cli-provision';
+import { pythonExePath } from '../src/main/local-runtime-install';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -78,7 +84,7 @@ function baseDeps(over: Partial<LocalChatDeps>): LocalChatDeps {
     serverUrl: () => 'https://s',
     token: () => 't',
     fetch: (async () => new Response()) as never,
-    resolveWorkspaceDir: async () => '/ws',
+    resolveWorkspaceDir: async () => ({ dir: '/ws', synced: true }),
     runtimeInstalled: async () => true,
     server: fakeServer(),
     runner: fakeRunner((_r, emit) => {
@@ -259,6 +265,7 @@ const FAKE_DAEMON = `
       if (c.text === 'slow') { timers.set(c.id, setTimeout(() => { out({ id: c.id, type: 'done', text: 'late' }); }, 5000)); return; }
       out({ id: c.id, type: 'chunk', text: 'echo:' + c.text });
       out({ id: c.id, type: 'tool', data: { type: 'tool_call', tool_name: 'Bash' } });
+      out({ id: c.id, type: 'usage', data: { input_tokens: 10, output_tokens: 3, model: 'm' } });
       out({ id: c.id, type: 'done', text: 'echo:' + c.text });
     }
   });
@@ -281,8 +288,14 @@ test('데몬: ready → 다중 턴 id 상관 → ping → 유휴 종료 없음(�
   assert.equal(r2.terminal, 'done');
   assert.deepEqual(
     ev1.map((e) => e.type),
-    ['started', 'chunk', 'tool', 'done'],
+    ['started', 'chunk', 'tool', 'usage', 'done'],
   );
+  // usage 는 1급 v2 이벤트 — 데몬이 그대로 통과시킨다(meta 로 강등 안 함).
+  assert.deepEqual((ev1[3] as { data: Record<string, unknown> }).data, {
+    input_tokens: 10,
+    output_tokens: 3,
+    model: 'm',
+  });
   assert.equal((ev1[1] as { text: string }).text, 'echo:a');
   assert.equal((ev2[1] as { text: string }).text, 'echo:b');
   const pong = await d.ping();
@@ -580,4 +593,367 @@ test('서버 인증이 없는 CLI provider 는 기본 프리플라이트만으�
   });
   const r = await runLocalChatTurn(REQ, baseDeps({ server, cliSettings: () => ({}) }), noEmit);
   assert.deepEqual([r.handled, r.reason], [false, 'cli_auth_missing']);
+});
+
+// ── 크로스-리포 계약: TLS · USAGE · GRAPH · QUOTA · 동기화 미완료 안내 ──────────
+
+test('[TLS] 사설 인증서 허용이면 사이드카 요청 server.tls.verify=false, 기본은 true', async () => {
+  const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'chunk', text: 'x' });
+    emit({ type: 'done', text: 'x' });
+    return 'done';
+  });
+  await runLocalChatTurn(REQ, baseDeps({ runner, tlsVerify: () => false }), () => {});
+  assert.deepEqual(runner.seen[0].server, { url: 'https://s', token: 't', tls: { verify: false } });
+  // tlsVerify 미주입(기본) → 검증 켜짐
+  await runLocalChatTurn(REQ, baseDeps({ runner }), () => {});
+  assert.equal(runner.seen[1].server?.tls?.verify, true);
+  await runLocalChatTurn(REQ, baseDeps({ runner, tlsVerify: () => true }), () => {});
+  assert.equal(runner.seen[2].server?.tls?.verify, true);
+});
+
+test('[USAGE] 사이드카 usage 이벤트 → report-turn usage (화면 표시 없음)', async () => {
+  const events: ChatEvent[] = [];
+  const server = fakeServer();
+  const usage = {
+    input_tokens: 120,
+    output_tokens: 45,
+    cache_read_tokens: 30,
+    cache_creation_tokens: null,
+    total_cost_usd: 0.0012,
+    model: 'gpt-5.3-codex',
+    provider: 'codex',
+  };
+  const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'chunk', text: 'x' });
+    emit({ type: 'usage', data: usage });
+    emit({ type: 'done', text: 'x' });
+    return 'done';
+  });
+  const r = await runLocalChatTurn(REQ, baseDeps({ server, runner }), (e) => events.push(e));
+  assert.equal(r.handled, true);
+  assert.deepEqual(
+    events.map((e) => e.kind),
+    ['status', 'text', 'end'],
+  );
+  const rep = server.reports[0] as { usage?: unknown };
+  assert.deepEqual(rep.usage, usage);
+  // usage 이벤트가 없으면 보고에도 없다(null 로 직렬화는 서버 클라이언트 몫).
+  const server2 = fakeServer();
+  await runLocalChatTurn(REQ, baseDeps({ server: server2 }), () => {});
+  assert.equal((server2.reports[0] as { usage?: unknown }).usage, undefined);
+});
+
+test('[GRAPH] graph.local_supported=false → graph_suppliers 폴백(무 emit), 사유 문구 한국어', async () => {
+  const noEmit = (e: ChatEvent) => assert.fail(`emit 금지: ${e.kind}`);
+  const runner = fakeRunner(() => 'done');
+  const r = await runLocalChatTurn(
+    REQ,
+    baseDeps({
+      runner,
+      server: fakeServer({
+        fetchLocalTurnContext: async () => ({
+          ...CTX,
+          graph: {
+            suppliers: [{ port: 'tools', node_id: 'n1', node_type: 'tool/mcp' }],
+            shipped: ['memory'],
+            unsupported: ['tools', 'rag'],
+            local_supported: false,
+          },
+        }),
+      }),
+    }),
+    noEmit,
+  );
+  assert.deepEqual([r.handled, r.reason, r.detail], [false, 'graph_suppliers', 'tools,rag']);
+  assert.equal(runner.seen.length, 0);
+  assert.equal(
+    describeFallback('graph_suppliers'),
+    '캔버스 공급 노드(도구·RAG 등)는 서버에서 실행',
+  );
+  assert.match(describeFallback('graph_suppliers', 'tools,rag'), /tools,rag/);
+  // local_supported=true(또는 graph 없음)면 로컬 진행
+  const runner2 = fakeRunner((_r, emit) => {
+    emit({ type: 'done', text: '' });
+    return 'done';
+  });
+  const r2 = await runLocalChatTurn(
+    REQ,
+    baseDeps({
+      runner: runner2,
+      server: fakeServer({
+        fetchLocalTurnContext: async () => ({
+          ...CTX,
+          graph: { suppliers: [], shipped: ['memory'], unsupported: [], local_supported: true },
+        }),
+      }),
+    }),
+    () => {},
+  );
+  assert.equal(r2.handled, true);
+  assert.equal(runner2.seen.length, 1);
+});
+
+test('[GRAPH] 서버가 실은 memory/output_schema 옵션은 사이드카 options 로 그대로 통과한다', async () => {
+  const memory = [
+    { role: 'user', content: '이전 질문' },
+    { role: 'assistant', content: '이전 답' },
+  ];
+  const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'done', text: '' });
+    return 'done';
+  });
+  await runLocalChatTurn(
+    REQ,
+    baseDeps({
+      runner,
+      server: fakeServer({
+        fetchLocalTurnContext: async () => ({
+          ...CTX,
+          // 에이전트 파라미터 옆(agent 안)에 실린 키
+          agent: { ...CTX.agent, memory },
+          // 별도 options 키로 실린 것도 통과
+          options: { output_schema: { type: 'object' } },
+        }),
+      }),
+    }),
+    () => {},
+  );
+  const opts = runner.seen[0].options ?? {};
+  assert.deepEqual(opts.memory, memory);
+  assert.deepEqual(opts.output_schema, { type: 'object' });
+  // 커넥터가 정하는 키는 서버 값 위에 덮인다(턴 상관 키).
+  assert.equal(opts.workflow_id, 'wf1');
+  assert.equal(opts.interaction_id, 'i1');
+  assert.equal(opts.streaming, true);
+});
+
+test('[QUOTA] 429 quota_exceeded → 서버 폴백 없이 차단: status(blocked) + error + end, 실행·보고 없음', async () => {
+  const events: ChatEvent[] = [];
+  const runner = fakeRunner(() => 'done');
+  const server = fakeServer({
+    fetchLocalTurnContext: async () => {
+      throw new QuotaExceededError('이번 달 토큰 한도를 초과했습니다', { used: 10 }, { max: 5 });
+    },
+  });
+  const r = await runLocalChatTurn(REQ, baseDeps({ runner, server }), (e) => events.push(e));
+  assert.deepEqual([r.handled, r.blocked, r.reason], [true, true, undefined]);
+  assert.deepEqual(
+    events.map((e) => e.kind),
+    ['status', 'error', 'end'],
+  );
+  const st = events[0] as Extract<ChatEvent, { kind: 'status' }>;
+  assert.equal(st.surface, 'blocked');
+  assert.equal(st.reason, 'quota_exceeded');
+  assert.equal(st.detail, '이번 달 토큰 한도를 초과했습니다');
+  assert.equal((events[1] as { detail: string }).detail, '이번 달 토큰 한도를 초과했습니다');
+  assert.equal(runner.seen.length, 0);
+  assert.equal(server.reports.length, 0);
+  // 실 HTTP 경로: makeServerClient 가 429 본문을 QuotaExceededError 로 승격 → 같은 차단
+  const fetch = (async () =>
+    ({
+      ok: false,
+      status: 429,
+      text: async () =>
+        JSON.stringify({
+          detail: { code: 'quota_exceeded', message: '한도 초과', usage: 1, limit: 1 },
+        }),
+    }) as unknown as Response) as never;
+  const events2: ChatEvent[] = [];
+  const r2 = await runLocalChatTurn(REQ, baseDeps({ runner, server: undefined, fetch }), (e) =>
+    events2.push(e),
+  );
+  assert.equal(r2.blocked, true);
+  assert.deepEqual(
+    events2.map((e) => e.kind),
+    ['status', 'error', 'end'],
+  );
+  assert.equal((events2[0] as { detail?: string }).detail, '한도 초과');
+  // 429 라도 quota_exceeded 계약이 아니면 기존대로 context_unavailable 폴백
+  const fetch3 = (async () =>
+    ({
+      ok: false,
+      status: 429,
+      text: async () => JSON.stringify({ detail: 'rate limited' }),
+    }) as unknown as Response) as never;
+  const r3 = await runLocalChatTurn(
+    REQ,
+    baseDeps({ runner, server: undefined, fetch: fetch3 }),
+    () => assert.fail('emit 금지'),
+  );
+  assert.deepEqual([r3.handled, r3.reason], [false, 'context_unavailable']);
+});
+
+test('[M#19] 동기화 미완료(synced=false)면 폴백 없이 로컬 실행 + status detail 안내', async () => {
+  const events: ChatEvent[] = [];
+  const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'chunk', text: 'x' });
+    emit({ type: 'done', text: 'x' });
+    return 'done';
+  });
+  const r = await runLocalChatTurn(
+    REQ,
+    baseDeps({ runner, resolveWorkspaceDir: async () => ({ dir: '/ws', synced: false }) }),
+    (e) => events.push(e),
+  );
+  assert.equal(r.handled, true);
+  const st = events[0] as Extract<ChatEvent, { kind: 'status' }>;
+  assert.equal(st.surface, 'connector_local');
+  assert.equal(st.workspaceDir, '/ws');
+  assert.equal(st.detail, WORKSPACE_UNSYNCED_DETAIL);
+  assert.equal(runner.seen[0].workspace_dir, '/ws');
+  // synced=true 면 detail 없음
+  const events2: ChatEvent[] = [];
+  await runLocalChatTurn(REQ, baseDeps({ runner }), (e) => events2.push(e));
+  assert.equal((events2[0] as { detail?: string }).detail, undefined);
+});
+
+// ── 렌더러 배지(session-store) — blocked / 동기화 미완료 안내 텍스트 ──────────
+
+function badgeStore() {
+  const streams: Array<{ onEvent: (e: ChatEvent) => void }> = [];
+  const transport: SessionTransport = {
+    stream(_req, onEvent) {
+      streams.push({ onEvent });
+      return { cancel: () => {} };
+    },
+    async historyTurns() {
+      return [];
+    },
+  };
+  const agent: Agent = {
+    id: 1,
+    workflowId: 'wf1',
+    workflowName: 'A',
+    nodeCount: 1,
+    isShared: false,
+    isDeployed: false,
+    isCompleted: true,
+    workflowType: 'canvas',
+    description: '',
+    username: '',
+    fullName: '',
+    createdAt: '',
+    updatedAt: '',
+  };
+  const store = new SessionStore(transport, () => 1);
+  const key = store.openNew(agent);
+  store.send(key, 'q');
+  return { store, key, stream: streams[0] };
+}
+
+test('렌더러 배지: blocked 상태는 surface=blocked + 차단 메시지, 로컬 안내(detail)는 connector_local 옆에', () => {
+  const a = badgeStore();
+  a.stream.onEvent({
+    kind: 'status',
+    surface: 'blocked',
+    reason: 'quota_exceeded',
+    detail: '한도 초과',
+  });
+  a.stream.onEvent({ kind: 'error', detail: '한도 초과' });
+  a.stream.onEvent({ kind: 'end' });
+  let last = a.store.get(a.key)!.messages.at(-1)!;
+  assert.equal(last.surface, 'blocked');
+  assert.equal(last.surfaceNote, '한도 초과');
+  assert.equal(last.error, true);
+
+  const b = badgeStore();
+  b.stream.onEvent({
+    kind: 'status',
+    surface: 'connector_local',
+    provider: 'codex',
+    workspaceDir: '/ws',
+    detail: WORKSPACE_UNSYNCED_DETAIL,
+  });
+  last = b.store.get(b.key)!.messages.at(-1)!;
+  assert.equal(last.surface, 'connector_local');
+  assert.equal(last.surfaceNote, WORKSPACE_UNSYNCED_DETAIL);
+
+  const c = badgeStore();
+  c.stream.onEvent({ kind: 'status', surface: 'connector_local', provider: 'codex' });
+  assert.equal(c.store.get(c.key)!.messages.at(-1)!.surfaceNote, undefined);
+
+  const d = badgeStore();
+  d.stream.onEvent({
+    kind: 'status',
+    surface: 'server_sandbox',
+    reason: describeFallback('graph_suppliers'),
+  });
+  assert.equal(
+    d.store.get(d.key)!.messages.at(-1)!.surfaceNote,
+    '캔버스 공급 노드(도구·RAG 등)는 서버에서 실행',
+  );
+});
+
+// ── preflight_error: 서버 사전 점검 실패 → 사이드카 미기동, reason 'preflight' ──────────
+
+test('[PREFLIGHT] ctx.preflight_error 문자열이면 사이드카를 시작하지 않고 preflight 로 서버 폴백(무 emit), detail 은 120자 절단', async () => {
+  const noEmit = (e: ChatEvent) => assert.fail(`emit 금지: ${e.kind}`);
+  const longMsg = 'vLLM 모델이 선택되지 않았습니다. ' + 'x'.repeat(200);
+  const server = fakeServer({
+    fetchLocalTurnContext: async () => ({ ...CTX, preflight_error: longMsg }),
+  });
+  const runner = fakeRunner(() => assert.fail('사이드카 기동 금지'));
+  let wsResolved = false;
+  const r = await runLocalChatTurn(
+    REQ,
+    baseDeps({
+      server,
+      runner,
+      resolveWorkspaceDir: async () => ((wsResolved = true), { dir: '/ws', synced: true }),
+    }),
+    noEmit,
+  );
+  assert.deepEqual([r.handled, r.reason], [false, 'preflight']);
+  assert.equal(r.detail?.length, 120);
+  assert.ok(r.detail?.startsWith('vLLM 모델이 선택되지 않았습니다.'));
+  assert.equal(runner.seen.length, 0);
+  assert.equal(wsResolved, false, '워크스페이스 확보 전에 끊는다');
+  assert.equal(server.reports.length, 0);
+  // 배지 문구(렌더러는 describeFallback 결과를 그대로 보인다)
+  assert.equal(
+    describeFallback('preflight'),
+    '사전 점검 실패(모델 미선택·비활성·미인가) — 서버가 같은 안내 문구를 냅니다',
+  );
+  assert.match(describeFallback('preflight', 'vLLM 모델 미선택'), /\(vLLM 모델 미선택\)$/);
+});
+
+test('[PREFLIGHT] preflight_error 가 null/빈 문자열/공백이면 통과(기존 경로 그대로 로컬 실행)', async () => {
+  for (const v of [null, '', '   ', undefined]) {
+    const runner = fakeRunner((_r, emit) => {
+      emit({ type: 'chunk', text: 'ok' });
+      emit({ type: 'done', text: 'ok' });
+      return 'done';
+    });
+    const server = fakeServer({
+      fetchLocalTurnContext: async () => ({ ...CTX, preflight_error: v as string | null }),
+    });
+    const r = await runLocalChatTurn(REQ, baseDeps({ server, runner }), () => {});
+    assert.equal(r.handled, true, String(v));
+    assert.equal(runner.seen.length, 1);
+  }
+});
+
+// ── defaultSidecarCommand: 설치 폴더 런타임 루트는 호출부가 넘긴다(정적 import, config 비의존) ──
+
+test('defaultSidecarCommand: runtimeDir 의 python 이 있으면 그걸 쓰고 PATH 앞에 <runtimeDir>/bin 을 붙인다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sidecar-cmd-'));
+  try {
+    const py = pythonExePath(dir);
+    mkdirSync(join(py, '..'), { recursive: true });
+    writeFileSync(py, '');
+    const cmd = defaultSidecarCommand(true, undefined, { runtimeDir: dir });
+    assert.equal(cmd.command, py);
+    assert.ok(cmd.args.includes('--serve'));
+    const env = cmd.env ?? {};
+    const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+    assert.ok(String(env[pathKey]).startsWith(join(dir, 'bin')), env[pathKey]);
+    // override 가 우선
+    assert.equal(
+      defaultSidecarCommand(true, '/override/python', { runtimeDir: dir }).command,
+      '/override/python',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

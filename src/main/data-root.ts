@@ -43,6 +43,54 @@ export function readInstallerText(buf: Buffer): string {
   return buf.toString('utf8');
 }
 
+/**
+ * 설치 로그 **한 줄** 디코드 — install.log 는 인스톨러(NSIS `FileWrite` = ANSI, 한국어 Windows 에선
+ * CP949)와 앱(UTF-8)이 같은 파일에 이어 쓴다. 통째로 utf-8 로 읽으면 인스톨러 줄의 '→'/한글이
+ * U+FFFD 로 깨진다(v1.68~1.70 설정 화면의 "copy done �� C:\…"). 줄마다
+ *   BOM(FF FE) → UTF-16LE · 유효한 UTF-8 → 그대로 · 아니면 EUC-KR(CP949) · (ICU 부재) latin1
+ * 순으로 판별한다. 끝의 \r 과 앞의 \0(UTF-16 줄 분할 잔여)은 떼어 낸다.
+ */
+export function decodeInstallerLogLine(line: Buffer): string {
+  let b = line;
+  if (b.length >= 2 && b[0] === 0xff && b[1] === 0xfe) return stripCr(b.subarray(2).toString('utf16le'));
+  let start = 0;
+  while (start < b.length && b[start] === 0x00) start++;
+  if (start) b = b.subarray(start);
+  if (b.length >= 3 && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) b = b.subarray(3);
+  try {
+    return stripCr(new TextDecoder('utf-8', { fatal: true }).decode(b));
+  } catch {
+    /* UTF-8 아님 — 인스톨러(ANSI) 줄 */
+  }
+  try {
+    return stripCr(new TextDecoder('euc-kr').decode(b));
+  } catch {
+    return stripCr(b.toString('latin1'));
+  }
+}
+function stripCr(s: string): string {
+  return s.replace(/\r+$/, '');
+}
+
+/** 설치 로그 전체 → 줄 배열(줄별 인코딩 판별). 파일 전체가 UTF-16LE(BOM)면 그대로 한 번에. */
+export function readInstallLogText(buf: Buffer): string[] {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe)
+    return buf
+      .subarray(2)
+      .toString('utf16le')
+      .split(/\r?\n/)
+      .map((l) => l.replace(/^\uFEFF/, ''));
+  const out: string[] = [];
+  let from = 0;
+  for (let i = 0; i <= buf.length; i++) {
+    if (i === buf.length || buf[i] === 0x0a) {
+      out.push(decodeInstallerLogLine(buf.subarray(from, i)));
+      from = i + 1;
+    }
+  }
+  return out;
+}
+
 /** 실효 데이터 루트 마커 기록(부팅마다) — 실패는 무시. */
 export function writeDataRootMarker(userDataDir: string, root: string): void {
   try {

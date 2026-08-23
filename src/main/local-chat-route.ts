@@ -14,11 +14,23 @@
  *   · 서버가 로컬-턴 컨텍스트를 못 줌(미지원/오류) → context_unavailable
  *   · 로컬 워크스페이스(동기화 폴더) 확보 불가     → workspace_unavailable
  *   · CLI provider 바이너리 준비 실패             → cli_missing
+ *   · 캔버스 공급 노드(도구·RAG 등) 로컬 미지원    → graph_suppliers
+ *   · 서버 사전 점검 실패(모델 미선택·provider 비활성·미인가) → preflight (사이드카 미기동)
  * 일단 로컬 청크가 흐르기 시작하면 로컬이 그 턴을 끝까지 소유한다.
+ *
+ * 서버 폴백이 **아닌** 차단(handled=true, blocked=true): 서버가 local-turn-context 를
+ * 429 quota_exceeded 로 거부하면 서버에서 돌려도 같은 한도에 걸리므로 상태 이벤트
+ * (surface:'blocked', reason:'quota_exceeded') + error 로 턴을 끝낸다.
  */
 import { frameToChatEvent } from '../core/chat';
 import type { ChatEvent, ChatRequest } from '../core/types';
-import { makeServerClient, type ServerClient, type TurnReport } from './local-agent-server-client';
+import {
+  makeServerClient,
+  QuotaExceededError,
+  type ServerClient,
+  type TurnReport,
+  type TurnUsage,
+} from './local-agent-server-client';
 import type { LocalTurnRequest, SidecarEvent, SidecarTerminal } from './local-agent-sidecar';
 import type { NetworkFetch } from './sync-transport';
 
@@ -35,8 +47,13 @@ export interface LocalChatDeps {
   serverUrl: () => string;
   token: () => string | Promise<string>;
   fetch: NetworkFetch;
-  /** 이 에이전트의 로컬 동기화 폴더(서버와 sync). 불가면 throw → 서버 폴백. */
-  resolveWorkspaceDir: (workflowId: string, workflowName?: string) => Promise<string>;
+  /** 이 에이전트의 로컬 동기화 폴더(서버와 sync). 불가면 throw → 서버 폴백.
+   *  synced=false 면 폴더는 있으나 하이드레이트가 제한시간 내 끝나지 않은 상태 — 실행은
+   *  진행하되 상태 이벤트 detail 로 알린다(폴백 아님). */
+  resolveWorkspaceDir: (
+    workflowId: string,
+    workflowName?: string,
+  ) => Promise<{ dir: string; synced: boolean }>;
   /** 독립 로컬 런타임이 설치돼 있나(설치 폴더). */
   runtimeInstalled: () => Promise<boolean>;
   /** 사이드카 실행기(상주 데몬). */
@@ -45,6 +62,8 @@ export interface LocalChatDeps {
   cliSettings?: () => Record<string, string>;
   /** CLI provider 턴 직전 바이너리 보장(없으면 자동 설치). false = 준비 실패. */
   ensureCli?: (tool: 'codex' | 'claude') => Promise<boolean>;
+  /** 서버 브릿지 TLS 검증 여부(config.allowPrivateCertificate 의 반대). 기본 true(검증). */
+  tlsVerify?: () => boolean;
   /** 테스트 주입: CLI 인증 프리플라이트 대체(기본 serverCliAuth — 서버 설정만 본다). */
   cliAuth?: (
     tool: 'codex' | 'claude',
@@ -70,13 +89,20 @@ export type LocalFallbackReason =
   | 'workspace_unavailable'
   | 'cli_missing'
   | 'cli_auth_missing'
-  | 'local_start_failed';
+  | 'local_start_failed'
+  | 'graph_suppliers'
+  | 'preflight';
 
 export interface LocalRouteResult {
   handled: boolean;
   reason?: LocalFallbackReason;
   detail?: string;
+  /** true = 서버 폴백 없이 턴이 차단·종료됨(quota_exceeded 등; handled=true 와 함께). */
+  blocked?: boolean;
 }
+
+/** 동기화 미완료 상태에서 로컬 실행을 시작할 때 상태 이벤트에 싣는 안내. */
+export const WORKSPACE_UNSYNCED_DETAIL = '동기화 미완료 — 일부 파일이 아직 없을 수 있음';
 
 /** 사람이 읽는 폴백 사유(상태 이벤트/진단용). */
 export function describeFallback(reason: LocalFallbackReason, detail?: string): string {
@@ -90,6 +116,8 @@ export function describeFallback(reason: LocalFallbackReason, detail?: string): 
     cli_auth_missing:
       '서버에 이 CLI 의 인증(API 키/중앙 토큰/자격증명)이 설정되어 있지 않아 서버에서 실행합니다 (관리자 설정 → LLM)',
     local_start_failed: '로컬 실행이 시작되지 못해 서버 sandbox 에서 실행합니다',
+    graph_suppliers: '캔버스 공급 노드(도구·RAG 등)는 서버에서 실행',
+    preflight: '사전 점검 실패(모델 미선택·비활성·미인가) — 서버가 같은 안내 문구를 냅니다',
   };
   return detail ? `${base[reason]} (${detail})` : base[reason];
 }
@@ -165,17 +193,45 @@ export async function runLocalChatTurn(
     makeServerClient({ serverUrl: deps.serverUrl, token: deps.token, fetch: deps.fetch });
 
   // 1) 서버 turn context — 실패하면 아무것도 안 보낸 채 서버 폴백.
+  //    단, 429 quota_exceeded 는 폴백이 아니라 **차단**(서버에서 돌려도 같은 한도).
   let ctx;
   try {
     ctx = await server.fetchLocalTurnContext(req.workflowId, req.interactionId);
   } catch (err) {
+    if (
+      err instanceof QuotaExceededError ||
+      (err as { code?: unknown })?.code === 'quota_exceeded'
+    ) {
+      const message = (err as Error).message || '사용량 한도를 초과하여 실행할 수 없습니다';
+      diag(`blocked: quota_exceeded wf=${req.workflowId} (${message.slice(0, 200)})`);
+      emit({ kind: 'status', surface: 'blocked', reason: 'quota_exceeded', detail: message });
+      emit({ kind: 'error', detail: message });
+      emit({ kind: 'end' });
+      return { handled: true, blocked: true, detail: message };
+    }
     return fallback('context_unavailable', (err as Error).message?.slice(0, 200));
+  }
+
+  // 서버 사전 점검 실패(vLLM 모델 미선택·provider 비활성·모델 미인가 등) — 로컬에서 돌려도 같은
+  // 이유로 실패한다. 사이드카를 시작하지 않고 서버로 보낸다(서버가 같은 안내 문구를 낸다).
+  if (typeof ctx.preflight_error === 'string' && ctx.preflight_error.trim()) {
+    return fallback('preflight', ctx.preflight_error.trim().slice(0, 120));
+  }
+
+  // 캔버스 공급 노드(도구·RAG 등 입력 포트)를 로컬에서 재현할 수 없으면 서버에서 실행.
+  if (ctx.graph && ctx.graph.local_supported === false) {
+    const unsupported = (ctx.graph.unsupported ?? []).filter(Boolean).join(',');
+    return fallback('graph_suppliers', unsupported || undefined);
   }
 
   // 2) 로컬 동기화 폴더 — 불가면 서버 폴백(로컬 자원 사용 불가).
   let workspaceDir: string;
+  let workspaceSynced = true;
   try {
-    workspaceDir = await deps.resolveWorkspaceDir(req.workflowId, req.workflowName);
+    const ws = await deps.resolveWorkspaceDir(req.workflowId, req.workflowName);
+    workspaceDir = ws.dir;
+    workspaceSynced = ws.synced !== false;
+    if (!workspaceDir) throw new Error('로컬 동기화 폴더 없음');
   } catch (err) {
     return fallback('workspace_unavailable', (err as Error).message?.slice(0, 200));
   }
@@ -209,12 +265,25 @@ export async function runLocalChatTurn(
 
   // 여기부터 로컬이 이 턴을 소유한다(handled=true) — 단, 시작 단계에서 죽으면(첫 출력 전
   // 오류: 인증 만료·바이너리 실행 실패 등) 서버로 폴백한다(아직 내용을 보여 준 게 없다).
-  emit({ kind: 'status', surface: 'connector_local', provider, workspaceDir });
+  if (!workspaceSynced) diag(`workspace unsynced at turn start wf=${req.workflowId}`);
+  emit({
+    kind: 'status',
+    surface: 'connector_local',
+    provider,
+    workspaceDir,
+    ...(workspaceSynced ? {} : { detail: WORKSPACE_UNSYNCED_DETAIL }),
+  });
   const mergedContext = { ...ctx.context, settings };
+  // 서버 브릿지 TLS 정책 — 커넥터의 사설 인증서 허용 설정을 사이드카에도 동일 적용.
+  const tlsVerify = deps.tlsVerify ? deps.tlsVerify() !== false : true;
+  const serverBridge = ctx.server
+    ? { ...ctx.server, tls: { ...(ctx.server.tls ?? {}), verify: tlsVerify } }
+    : undefined;
 
   const startedAt = Date.now();
   let agentText = '';
   let errorDetail = '';
+  let usage: TurnUsage | undefined;
   let sawOutput = false; // 텍스트/도구 이벤트를 하나라도 보여 줬나(시작 실패 폴백 판정)
   const toolEvents: Record<string, unknown>[] = [];
   const result = await deps.runner.runTurn(
@@ -223,9 +292,12 @@ export async function runLocalChatTurn(
       provider,
       text: req.input,
       context: mergedContext,
-      server: ctx.server,
+      server: serverBridge,
       options: {
+        // 에이전트 파라미터 + 서버가 옆에 실은 추가 옵션(memory 이력·output_schema 등)을
+        // 그대로 통과시킨다 — 서버가 진실이라 키를 골라내지 않는다.
         ...ctx.agent,
+        ...(ctx.options ?? {}),
         workflow_id: req.workflowId,
         interaction_id: req.interactionId,
         streaming: true,
@@ -251,6 +323,10 @@ export async function runLocalChatTurn(
           if (ev) emit(ev);
           break;
         }
+        case 'usage':
+          // 파이프라인 종료 후 1회 — 보고(report-turn) usage 로 서버에 기록(토큰 컬럼·output_data.usage).
+          if (se.data && typeof se.data === 'object') usage = se.data as TurnUsage;
+          break;
         case 'done':
           if (se.text) agentText = se.text;
           break;
@@ -285,6 +361,7 @@ export async function runLocalChatTurn(
       status,
       error: errorDetail || undefined,
       toolEvents,
+      usage,
       provider,
       model,
       durationMs: Date.now() - startedAt,

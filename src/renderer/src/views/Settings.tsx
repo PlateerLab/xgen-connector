@@ -8,6 +8,15 @@ import {
 import type { ConnectorConfig } from '../../../main/config';
 import { HotkeyCapture } from './HotkeyCapture';
 import { SettingsSection } from './SettingsSection';
+import {
+  BOOT_ERROR_HINT,
+  SOURCE_LABEL,
+  cliInstallButtonLabel,
+  describeCliAuthRow,
+  describeCliRow,
+  describeConverge,
+  describeRuntimeCandidates,
+} from '../local-exec-text';
 import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
@@ -141,9 +150,7 @@ export const Settings: React.FC<{
     try {
       const st = await xgen.localRuntime.sync();
       setLrStatus(st);
-      setLrMsg(
-        st.converge.lastError ? `실패: ${st.converge.lastError}` : (st.converge.summary ?? '완료'),
-      );
+      setLrMsg(`서버 버전 맞추기: ${describeConverge(st.converge, st.server)}`);
     } catch (e) {
       setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -663,6 +670,9 @@ export const Settings: React.FC<{
             </SettingsSection>
 
             <SettingsSection title="설치">
+              {/* 상태 전용 섹션(토글 없음) — 어떻게 구성돼 있고 어떻게 실행되는지 순서대로 보여 준다:
+                  설치 폴더 → 실행 환경 → 런타임 → Codex CLI → Claude Code CLI → CLI 인증 →
+                  서버 버전 맞추기 결과 → (부팅 오류) → 설치 로그. 문구는 local-exec-text.ts(테스트됨). */}
               <div className="field-row">
                 <span>
                   설치 폴더
@@ -676,7 +686,6 @@ export const Settings: React.FC<{
                   </button>
                 </div>
               </div>
-              {/* 현재 상태 — 어떻게 구성돼 있고 어떻게 실행되는지(설정 아님, 설명). */}
               <div className="field-row">
                 <span>
                   Agent-XGeny 실행 환경
@@ -685,9 +694,7 @@ export const Settings: React.FC<{
                       ? '상태 확인 중…'
                       : lrStatus.ensure?.active
                         ? `이 PC 에서 실행 — 커넥터에서 시작한 대화는 이 PC 의 런타임(${
-                            { install: '설치 폴더', bundle: '앱 내장', legacy: '이전 설치' }[
-                              lrStatus.ensure.active.source
-                            ]
+                            SOURCE_LABEL[lrStatus.ensure.active.source]
                           }, ${lrStatus.ensure.active.version ?? '?'})에서 돌고, 기억·파일·이력은 서버와 공유됩니다.${
                             lrStatus.daemon?.running
                               ? ` 실행기 대기 중(pid ${lrStatus.daemon.pid ?? '?'}).`
@@ -707,39 +714,7 @@ export const Settings: React.FC<{
                 <span>
                   로컬 실행 런타임
                   <span className="small muted" style={{ marginLeft: 8 }}>
-                    {(() => {
-                      const inst = lrStatus?.ensure?.candidates?.find(
-                        (c) => c.source === 'install',
-                      );
-                      const bun = lrStatus?.ensure?.candidates?.find((c) => c.source === 'bundle');
-                      if (!lrStatus) return '—';
-                      const parts: string[] = [];
-                      parts.push(
-                        inst?.healthy
-                          ? `설치 폴더: 설치됨 (${inst.version ?? '?'})`
-                          : inst?.exists
-                            ? `설치 폴더: 손상(검증 실패)${inst.error ? ` — ${inst.error.slice(0, 120)}` : ''}`
-                            : '설치 폴더: 없음',
-                      );
-                      parts.push(
-                        bun
-                          ? bun.healthy
-                            ? `앱 내장: 있음 (${bun.version ?? '?'})`
-                            : bun.exists
-                              ? `앱 내장: 손상${bun.error ? ` — ${bun.error.slice(0, 120)}` : ''}`
-                              : `앱 내장: 없음 (${bun.python})`
-                          : `앱 내장: 없음 (${lrStatus.bundlePath ?? '번들 경로 없음'}${lrStatus.isPackaged === false ? ', 개발 빌드' : ''})`,
-                      );
-                      if (lrStatus.server?.runtime) {
-                        parts.push(
-                          lrStatus.server.runtime ===
-                            (lrStatus.ensure?.active?.version ?? lrStatus.version)
-                            ? '서버와 동일'
-                            : `서버 ${lrStatus.server.runtime}`,
-                        );
-                      }
-                      return parts.join(' · ');
-                    })()}
+                    {lrStatus ? describeRuntimeCandidates(lrStatus) : '—'}
                   </span>
                 </span>
                 <div className="row">
@@ -752,6 +727,7 @@ export const Settings: React.FC<{
                         lrStatus?.ensure?.phase === 'downloading'
                       }
                       onClick={() => void repairRuntime()}
+                      title="설치 폴더 런타임을 내장 번들 복사(없으면 네트워크 설치)로 복구합니다"
                     >
                       {lrRepairing ||
                       lrStatus?.ensure?.phase === 'copying' ||
@@ -770,7 +746,7 @@ export const Settings: React.FC<{
                   </button>
                 </div>
               </div>
-              {/* CLI provider 바이너리 — 서버가 CLI 를 갖추듯 커넥터도 갖춘다. */}
+              {/* CLI provider 바이너리 — 서버가 CLI 를 갖추듯 커넥터도 갖춘다(설치는 서버 매니페스트 목표 버전). */}
               {(
                 [
                   [
@@ -789,15 +765,7 @@ export const Settings: React.FC<{
                   <span>
                     {label}
                     <span className="small muted" style={{ marginLeft: 8 }}>
-                      {cliStatus?.[tool]?.installed
-                        ? `설치됨${/\d/.test(cliStatus[tool].version ?? '') ? ` (v${cliStatus[tool].version})` : ''}${
-                            lrStatus?.server?.[tool]
-                              ? lrStatus.server[tool] === cliStatus[tool].version
-                                ? ' · 서버와 동일'
-                                : ` · 서버 v${lrStatus.server[tool]}`
-                              : ''
-                          }`
-                        : `${desc}${lrStatus?.server?.[tool] ? ` · 서버 v${lrStatus.server[tool]}` : ''}`}
+                      {describeCliRow(tool, desc, cliStatus?.[tool], lrStatus?.server)}
                     </span>
                   </span>
                   <div className="row">
@@ -805,15 +773,14 @@ export const Settings: React.FC<{
                       className="secondary"
                       disabled={cliBusy !== null}
                       onClick={() => void installCli(tool)}
+                      title="공식 배포처에서 서버 매니페스트 목표 버전을 설치합니다 (서버 정보가 없으면 최신)"
                     >
-                      {cliBusy === tool
-                        ? '설치 중…'
-                        : !cliStatus?.[tool]?.installed
-                          ? '설치'
-                          : lrStatus?.server?.[tool] &&
-                              lrStatus.server[tool] !== cliStatus[tool].version
-                            ? `서버 버전(v${lrStatus.server[tool]})으로`
-                            : '재설치(최신)'}
+                      {cliInstallButtonLabel({
+                        busy: cliBusy === tool,
+                        installed: !!cliStatus?.[tool]?.installed,
+                        serverVersion: lrStatus?.server?.[tool] ?? null,
+                        installedVersion: cliStatus?.[tool]?.version,
+                      })}
                     </button>
                   </div>
                 </div>
@@ -823,49 +790,44 @@ export const Settings: React.FC<{
                 <span>
                   CLI 인증
                   <span className="small muted" style={{ marginLeft: 8 }}>
-                    {(() => {
-                      const sv = lrStatus?.server;
-                      if (!sv)
-                        return '서버 연결 후 표시됩니다 (인증은 서버 관리자 LLM 설정을 그대로 사용)';
-                      const describe = (
-                        name: string,
-                        a:
-                          | { mode?: string; ready?: boolean; source?: string | null }
-                          | null
-                          | undefined,
-                      ) => {
-                        if (!a) return `${name}: 서버 정보 없음`;
-                        const src =
-                          a.source === 'api_key'
-                            ? 'API 키'
-                            : a.source === 'setup_token'
-                              ? '중앙 장수명 토큰'
-                              : a.source === 'credentials'
-                                ? '중앙 ChatGPT 자격증명'
-                                : a.mode === 'oauth' && name.startsWith('Claude')
-                                  ? '서버 파드 로그인(PC 전달 불가)'
-                                  : '없음';
-                        return `${name}: ${a.ready ? `서버 인증 사용(${src})` : `서버 인증 없음(${src}) → 서버에서 실행`}`;
-                      };
-                      return [
-                        describe('Claude Code', sv.claudeAuth),
-                        describe('Codex', sv.codexAuth),
-                      ].join(' · ');
-                    })()}
+                    {describeCliAuthRow(lrStatus?.server)}
                   </span>
                 </span>
               </div>
-              {lrStatus?.bootErrors && lrStatus.bootErrors.length > 0 && (
-                <div className="field-row">
-                  <span className="small" style={{ color: '#b45309' }}>
-                    부팅 오류: {lrStatus.bootErrors.join(' · ')}
+              {/* 서버 버전 맞추기 결과 — 수렴기의 마지막 실행(로그인 직후 자동 + 버튼). */}
+              <div className="field-row">
+                <span>
+                  서버 버전 맞추기 결과
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {lrStatus
+                      ? `${describeConverge(lrStatus.converge, lrStatus.server)}${
+                          lrStatus.converge?.lastRunAt && !lrStatus.converge.running
+                            ? ` (${new Date(lrStatus.converge.lastRunAt).toLocaleString()})`
+                            : ''
+                        }`
+                      : '—'}
                   </span>
+                </span>
+              </div>
+              {(lrMsg || lrStatus?.daemon?.lastError) && (
+                <div className="field-row">
+                  <span className="small muted">{lrMsg ?? lrStatus?.daemon?.lastError}</span>
                 </div>
               )}
-              {(lrMsg || lrStatus?.converge?.lastError || lrStatus?.daemon?.lastError) && (
-                <div className="field-row">
-                  <span className="small muted">
-                    {lrMsg ?? lrStatus?.converge?.lastError ?? lrStatus?.daemon?.lastError}
+              {lrStatus?.bootErrors && lrStatus.bootErrors.length > 0 && (
+                <div className="field-row" style={{ alignItems: 'flex-start' }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ color: '#b45309' }}>부팅 오류</span>
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      {BOOT_ERROR_HINT}
+                    </span>
+                    <ul className="small" style={{ margin: '6px 0 0 16px', color: '#b45309' }}>
+                      {lrStatus.bootErrors.map((e, i) => (
+                        <li key={i} style={{ wordBreak: 'break-all' }}>
+                          {e}
+                        </li>
+                      ))}
+                    </ul>
                   </span>
                 </div>
               )}
@@ -873,11 +835,19 @@ export const Settings: React.FC<{
               <div className="field-row" style={{ alignItems: 'flex-start' }}>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   설치 로그
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    {lrStatus?.logs?.length
-                      ? lrStatus.logs.map((l) => l.path).join(' · ')
-                      : '아직 로그 없음 (설치/복구를 실행하면 생성됩니다)'}
-                  </span>
+                  {lrStatus?.logs?.length ? (
+                    <ul className="small muted" style={{ margin: '4px 0 0 16px' }}>
+                      {lrStatus.logs.map((l) => (
+                        <li key={l.path} style={{ wordBreak: 'break-all' }}>
+                          {l.path}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      아직 로그 없음 (설치/복구를 실행하면 생성됩니다)
+                    </span>
+                  )}
                   {lrStatus?.logs?.length ? (
                     <pre
                       className="small"
