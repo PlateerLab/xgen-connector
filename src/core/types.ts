@@ -119,10 +119,11 @@ export type ChatEvent =
   | { kind: 'summary'; text: string; data: Record<string, unknown> }
   | { kind: 'error'; detail: string }
   // 실행 환경 안내(커넥터 전용) — 이 턴이 어디서 도는지. connector_local = 이 PC 의
-  // 사이드카, server_sandbox = 서버 sandbox(로컬 불가 사유 reason 포함).
+  // 사이드카, server_sandbox = 서버 sandbox(로컬 불가 사유 reason 포함),
+  // blocked = 실행 자체가 차단됨(reason: 'quota_exceeded' 등 — 서버 폴백 없이 턴 종료).
   | {
       kind: 'status';
-      surface: 'connector_local' | 'server_sandbox';
+      surface: 'connector_local' | 'server_sandbox' | 'blocked';
       provider?: string;
       workspaceDir?: string;
       reason?: string;

@@ -17,10 +17,16 @@
  *     긴 경로 접두로 MAX_PATH 우회) → 스모크 → 끝. 복사 중에도 라우팅은 번들을 바로 쓴다.
  *   · 번들도 없으면 → 네트워크 설치(이식형 Python 다운로드 + pip, 비파괴).
  * 모든 단계는 진행/실패를 상태로 남겨 설정 화면이 **현재 상태와 원인**을 그대로 보여준다.
+ *
+ * 사다리는 **첫 건강한 후보에서 멈춘다**(설치 폴더가 건강하면 번들은 스모크하지 않는다) — 그래서
+ * 나머지 후보는 healthy=undefined(미검증)로 남는다. UI 가 이를 '손상'으로 오표시하지 않도록
+ * (v1.68~1.70 "앱 내장: 손상") ensure 가 active 를 정하고 나면 **나머지 실재 후보를 백그라운드로
+ * 스모크**한다(verifyOtherCandidates: single-flight·mtime 캐시·스로틀, 라우팅을 막지 않음) —
+ * 상태가 곧 확정(healthy true/false)된다.
  */
 import { execFile } from 'node:child_process';
 import { existsSync, promises as fsp, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   installLocalRuntime,
@@ -120,7 +126,7 @@ async function defaultSmoke(python: string): Promise<{ ok: boolean; error?: stri
     const prefix = String(stdout || '').trim();
     if (prefix) {
       const { realpathSync } = await import('node:fs');
-      const { dirname, resolve, sep } = await import('node:path');
+      const { resolve, sep } = await import('node:path');
       let root = dirname(python);
       if (process.platform !== 'win32') root = dirname(root); // …/python/bin/python3 → …/python
       const rootReal = realpathSync(root);
@@ -149,6 +155,13 @@ async function defaultCopyTree(src: string, dst: string): Promise<void> {
   });
 }
 
+/** python 실행파일 → 런타임 루트(python/ 의 부모). win: <root>/python/python.exe, 그 외 <root>/python/bin/python3. */
+function dirOfPython(python: string): string {
+  let d = dirname(python); // …/python (win) | …/python/bin
+  if (process.platform !== 'win32') d = dirname(d);
+  return dirname(d);
+}
+
 /**
  * 런타임 보장 — 상태는 status() 로 읽고, ensure() 는 single-flight.
  */
@@ -156,6 +169,11 @@ export class LocalRuntimeEnsurer {
   private state: EnsureState = { phase: 'idle', candidates: [] };
   private inflight: Promise<EnsureState> | null = null;
   private smokeInflight = new Map<string, Promise<RuntimeCandidate>>();
+  /** 나머지 후보 백그라운드 검증 — single-flight + 스로틀(같은 후보 집합은 캐시가 막는다). */
+  private verifyInflight: Promise<void> | null = null;
+  private verifyAt = 0;
+  /** 백그라운드 검증 최소 간격(ms) — 상태 조회 연타가 스모크 폭주로 이어지지 않게. */
+  static readonly VERIFY_THROTTLE_MS = 60_000;
   private healthCache = new Map<
     string,
     { mtime: number; healthy: boolean; version?: string; error?: string }
@@ -232,6 +250,27 @@ export class LocalRuntimeEnsurer {
     return run;
   }
 
+  /**
+   * 건강/버전 캐시 무효화 — 런타임 wheel 이 **같은 python 트리 안에서** 바뀐 뒤(수렴기의
+   * pip upgrade). 캐시 키가 python 실행파일 mtime 이라 wheel 교체는 감지되지 않는다 — 여기서
+   * 비워야 다음 resolveActive 가 새 버전을 스모크·기록하고 UI 가 진짜 버전을 보인다(감사 #17).
+   * active 의 version 도 즉시 새로 읽는다(경로는 그대로 — 라우팅은 끊기지 않는다).
+   */
+  invalidate(): void {
+    this.healthCache.clear();
+    const a = this.state.active;
+    if (a) {
+      const cand = this.candidates().find((c) => c.python === a.python);
+      this.state.active = { ...a, version: cand?.version ?? readInstalledVersion(dirOfPython(a.python)) };
+    }
+    this.state.candidates = this.state.candidates.map((c) => ({
+      ...c,
+      healthy: undefined,
+      error: undefined,
+      version: c.exists ? readInstalledVersion(c.runtimeDir) : undefined,
+    }));
+  }
+
   /** 지금 라우팅에 쓸 python — 건강한 첫 후보(설치 폴더 → 번들 → 레거시). 없으면 null. */
   activePython(): { source: RuntimeSource; python: string; version?: string } | null {
     const a = this.state.active;
@@ -275,8 +314,51 @@ export class LocalRuntimeEnsurer {
         phase: this.state.active ? 'done' : 'error',
         message: this.state.message ?? this.state.lastError ?? '',
       });
+      // active 가 정해졌으면 나머지 실재 후보(번들/레거시…)를 백그라운드로 스모크해 상태를
+      // 확정한다 — 라우팅/호출부를 기다리게 하지 않는다(void).
+      if (this.state.active) void this.verifyOtherCandidates().catch(() => undefined);
     });
     return this.inflight;
+  }
+
+  /**
+   * active 가 아닌 **실재·미검증** 후보를 스모크해 status().candidates 의 healthy 를 확정한다.
+   * single-flight, VERIFY_THROTTLE_MS 스로틀(force 로 해제), 결과는 mtime 캐시(check) — 같은 후보를
+   * 다시 돌리지 않는다. 사다리(ensure)가 도는 중이면 건너뛴다(상태 경합 방지).
+   * 반환: 이번에 검증을 돌렸으면 그 완료 Promise, 스로틀/진행중이면 기존 Promise 또는 즉시 resolve.
+   */
+  verifyOtherCandidates(opts?: { force?: boolean }): Promise<void> {
+    if (this.verifyInflight) return this.verifyInflight;
+    if (this.inflight) return Promise.resolve();
+    const now = Date.now();
+    if (!opts?.force && now - this.verifyAt < LocalRuntimeEnsurer.VERIFY_THROTTLE_MS)
+      return Promise.resolve();
+    const active = this.state.active;
+    const targets = this.state.candidates.filter(
+      (c) => c.exists && c.healthy === undefined && c.python !== active?.python,
+    );
+    if (!targets.length) return Promise.resolve();
+    this.verifyAt = now;
+    const log = this.deps.log ?? (() => {});
+    this.verifyInflight = (async () => {
+      for (const c of targets) {
+        if (this.inflight) break; // 사다리가 새로 돌기 시작 — 그쪽이 상태를 다시 쓴다
+        try {
+          const checked = await this.check(c);
+          this.state.candidates = this.state.candidates.map((x) =>
+            x.python === checked.python ? { ...x, ...checked } : x,
+          );
+          log(
+            `verify ${checked.source}: ${checked.healthy ? 'ok' : 'FAILED'} ${checked.version ?? ''} ${checked.error ?? ''}`.trim(),
+          );
+        } catch (e) {
+          log(`verify ${c.source} threw: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    })().finally(() => {
+      this.verifyInflight = null;
+    });
+    return this.verifyInflight;
   }
 
   private progress(p: InstallProgress): void {

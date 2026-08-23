@@ -227,6 +227,9 @@
 ; 서비스는 다음 시작 때 새 값을 읽는다.
 ; ── 설치 로그 — %APPDATA%\XGEN-Connector\install.log (앱이 같은 이름의 로그를 설치 폴더에도 쓴다) ──
 ; 런타임 복사/검증의 모든 단계와 결과를 남긴다 — "왜 실패했는지" 를 설치 직후 파일로 볼 수 있게.
+; ⚠ 메시지는 **ASCII 만**(화살표 -> / 대시 - / 영문) — Unicode NSIS 의 FileWrite 는 ANSI(CP949)로 쓰고
+;   앱은 같은 파일에 UTF-8 로 이어 쓴다. 비ASCII 를 넣으면 앱 화면에서 "copy done �� C:\…" 로 깨진다
+;   (v1.68~1.70). 경로($XgenDataRoot 등)의 한글은 앱이 줄 단위 EUC-KR 폴백으로 디코드한다.
 !macro XgenLog text
   Push $9
   CreateDirectory "$APPDATA\XGEN-Connector"
@@ -303,7 +306,7 @@
   ${EndIf}
   ${If} ${isUpdated}
     ; 업데이트: 사용자의 기존 선택(config)을 덮지 않는다 — 옵션 파일을 쓰지 않는다.
-    !insertmacro XgenLog "update install — install-options.json 미기록(기존 설정 유지)"
+    !insertmacro XgenLog "update install - install-options.json not written (keep existing config)"
   ${Else}
     Push $XgenDataRoot
     Call XgenJsonEscape
@@ -335,7 +338,7 @@
     ${If} ${FileExists} "$INSTDIR\resources\python\python.exe"
       !insertmacro XgenLog "bundle OK: $INSTDIR\resources\python\python.exe"
     ${Else}
-      !insertmacro XgenLog "bundle MISSING: $INSTDIR\resources\python\python.exe (앱 첫 실행 때 복구/다운로드)"
+      !insertmacro XgenLog "bundle MISSING: $INSTDIR\resources\python\python.exe (app repairs/downloads on first run)"
     ${EndIf}
     ; ── 재사용 판정: 설치 폴더에 **같은 버전**의 런타임이 이미 있고 실행되면 다시 복사하지 않는다
     ;    (업데이트 때 1GB 삭제/복사로 시간을 낭비하지 않는다). 버전 스탬프 RUNTIME_VERSION(번들 스크립트) 비교.
@@ -368,17 +371,17 @@
     ${EndIf}
     ${If} $7 == 1
       DetailPrint "로컬 실행 런타임 재사용 — 이미 같은 버전이 설치되어 있습니다 ($5)"
-      !insertmacro XgenLog "runtime reuse (same version $5, smoke OK) — copy skipped"
+      !insertmacro XgenLog "runtime reuse (same version $5, smoke OK) - copy skipped"
     ${Else}
       DetailPrint "런타임 복사: $INSTDIR\resources\python → $XgenDataRoot\local-runtime\python"
-      !insertmacro XgenLog "copy start → $XgenDataRoot\local-runtime\python (bundle=$5 installed=$6)"
+      !insertmacro XgenLog "copy start -> $XgenDataRoot\local-runtime\python (bundle=$5 installed=$6)"
       CreateDirectory "$XgenDataRoot\local-runtime"
       RMDir /r "$XgenDataRoot\local-runtime\python"
       Push "$INSTDIR\resources\python"
       Push "$XgenDataRoot\local-runtime\python"
       Call XgenCopyEntries
       DetailPrint "런타임 복사 완료"
-      !insertmacro XgenLog "copy done → $XgenDataRoot\local-runtime\python"
+      !insertmacro XgenLog "copy done -> $XgenDataRoot\local-runtime\python"
     ${EndIf}
     ${If} ${FileExists} "$XgenDataRoot\local-runtime\python\python.exe"
       !insertmacro XgenLog "copied python.exe present"

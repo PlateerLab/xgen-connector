@@ -18,13 +18,17 @@
  *     되면 데몬을 내린다(다음 턴에 재기동).
  *
  * 계약(사이드카와 공유): 명령 {id, op:'turn'|'cancel'|'ping'|'shutdown', ...} →
- * 이벤트 {id, type:'ready'|'pong'|'started'|'chunk'|'tool'|'canvas_command'|'meta'|
+ * 이벤트 {id, type:'ready'|'pong'|'started'|'chunk'|'tool'|'canvas_command'|'meta'|'usage'|
  * 'done'|'error'|'cancelled', ...}.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { createInterface } from 'node:readline';
+// ⚠ 로컬 모듈은 **정적 import** — 런타임 require 로 './…' 를 부르면 번들러가 해석하지 않아
+// 패키징본에서 'Cannot find module' 로 죽는다(v1.68~1.70 부팅 오류). 'electron' 같은
+// 외부 모듈만 (테스트 환경 부재 대비) try/require 로 느슨하게 잡는다.
+import { pythonExePath } from './local-runtime-install';
 
 /** 사이드카에 보내는 turn 요청 (Python 계약과 동일 shape). 상태는 서버가 해석. */
 export interface LocalTurnRequest {
@@ -38,8 +42,9 @@ export interface LocalTurnRequest {
     credentials?: Record<string, unknown>;
     settings?: Record<string, string>;
   };
-  /** 라이브 서버 브릿지(메모리 등 공유 상태). */
-  server?: { url: string; token: string };
+  /** 라이브 서버 브릿지(메모리 등 공유 상태). tls.verify=false 면 사설 인증서 허용
+   *  (커넥터 config.allowPrivateCertificate 와 동일 정책 — 사이드카가 server.tls 를 읽는다). */
+  server?: { url: string; token: string; tls?: { verify: boolean; ca_file?: string } };
   options?: Record<string, unknown>;
 }
 
@@ -57,6 +62,8 @@ export type SidecarEvent =
   | { type: 'tool'; data: Record<string, unknown> }
   | { type: 'canvas_command'; data: unknown }
   | { type: 'meta'; data: unknown }
+  /** 토큰 사용량(v2 1급 이벤트, 파이프라인 종료 후 1회) — 보고(report-turn) usage 로 실린다. */
+  | { type: 'usage'; data: Record<string, unknown> }
   | { type: 'done'; text: string }
   | { type: 'error'; message: string }
   | { type: 'cancelled' };
@@ -131,29 +138,28 @@ export function resolveSidecarCommand(opts?: {
   return { command: 'python3', args, env };
 }
 
-/** 기본 명령 해석 — electron/설치 폴더 컨텍스트에서 표준 경로를 고른다(테스트 환경 안전). */
-export function defaultSidecarCommand(serve: boolean, pythonOverride?: string): SidecarCommand {
+/**
+ * 기본 명령 해석 — electron/설치 폴더 컨텍스트에서 표준 경로를 고른다(테스트 환경 안전).
+ * `runtimeDir` = 설치 폴더 런타임 루트(<dataRoot>/local-runtime) — 호출부(index.ts)가
+ * config 로 해석해 넘긴다(이 모듈은 electron/config 에 정적 의존하지 않는다).
+ */
+export function defaultSidecarCommand(
+  serve: boolean,
+  pythonOverride?: string,
+  opts?: { runtimeDir?: string },
+): SidecarCommand {
   let localRuntimePython: string | undefined = pythonOverride;
   let resourcesPath: string | undefined;
   let isPackaged = false;
   const prependPath: string[] = [];
+  if (opts?.runtimeDir) {
+    const modern = pythonExePath(opts.runtimeDir);
+    if (!localRuntimePython && existsSync(modern)) localRuntimePython = modern;
+    prependPath.push(join(opts.runtimeDir, 'bin'));
+  }
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { app } = require('electron');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { pythonExePath } = require('./local-runtime-install');
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { loadConfig } = require('./config');
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { resolveDataRoot, runtimeDirOf } = require('./data-root');
-      const runtimeDir = runtimeDirOf(resolveDataRoot(loadConfig()));
-      const modern = pythonExePath(runtimeDir);
-      if (!localRuntimePython && existsSync(modern)) localRuntimePython = modern;
-      prependPath.push(join(runtimeDir, 'bin'));
-    } catch {
-      /* config 미가용(테스트) */
-    }
     if (!localRuntimePython) {
       const legacy = pythonExePath(join(app.getPath('userData'), 'local-runtime'));
       if (existsSync(legacy)) localRuntimePython = legacy;

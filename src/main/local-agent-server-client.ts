@@ -22,10 +22,79 @@ export interface LocalTurnContext {
     credentials?: Record<string, unknown>;
     settings?: Record<string, string>;
   };
-  /** 라이브 브릿지(메모리 등 공유 상태) — 사이드카가 이 서버로 RPC. */
-  server?: { url: string; token: string };
+  /** 라이브 브릿지(메모리 등 공유 상태) — 사이드카가 이 서버로 RPC. tls 는 커넥터가 채운다. */
+  server?: { url: string; token: string; tls?: { verify: boolean; ca_file?: string } };
   /** 서버 계약 버전(v2=2). 없으면 v1 서버. */
   protocol?: number;
+  /** 서버가 에이전트 파라미터 옆에 싣는 추가 실행 옵션(memory 이력·output_schema 등) — 그대로 전달. */
+  options?: Record<string, unknown>;
+  /**
+   * 캔버스 공급 노드 요약 — 이 에이전트에 연결된 입력 포트(도구·RAG 등)를 서버가 집계.
+   * local_supported=false 면 로컬에서 재현할 수 없는 공급이 있다 → 서버에서 실행(graph_suppliers).
+   */
+  graph?: {
+    suppliers?: { port: string; node_id: string; node_type: string }[];
+    shipped?: string[];
+    unsupported?: string[];
+    local_supported?: boolean;
+  };
+  /**
+   * 서버 사전 점검 실패 메시지(문자열이면 실패) — vLLM 모델 미선택 / provider 비활성 / 모델 미인가
+   * 등. 서버가 같은 문구로 턴을 거절하므로 커넥터는 사이드카를 **시작하지 않고** 서버로 보낸다
+   * (reason 'preflight'). null/없음 = 통과.
+   */
+  preflight_error?: string | null;
+}
+
+/** 로컬 턴 토큰 사용량(사이드카 usage 이벤트 data 와 같은 shape). */
+export interface TurnUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number | null;
+  cache_creation_tokens?: number | null;
+  total_cost_usd?: number | null;
+  model?: string | null;
+  provider?: string | null;
+  [k: string]: unknown;
+}
+
+/**
+ * 서버가 턴 실행을 거부(HTTP 429 quota_exceeded)했을 때 — 서버 폴백 **없이** 턴을 차단해야 한다
+ * (서버에서 돌려도 같은 한도에 걸린다). `authed()` 가 429 본문 detail.code 로 판정해 던진다.
+ */
+export class QuotaExceededError extends Error {
+  readonly code = 'quota_exceeded' as const;
+  readonly status = 429;
+  constructor(
+    message: string,
+    readonly usage: unknown = null,
+    readonly limit: unknown = null,
+  ) {
+    super(message);
+    this.name = 'QuotaExceededError';
+  }
+}
+
+/** 본문에서 429 quota_exceeded 계약을 읽는다 — 아니면 null. */
+export function parseQuotaExceeded(status: number, body: string): QuotaExceededError | null {
+  if (status !== 429) return null;
+  try {
+    const j = JSON.parse(body) as { detail?: unknown };
+    const d = j?.detail;
+    if (d && typeof d === 'object' && (d as { code?: unknown }).code === 'quota_exceeded') {
+      const det = d as { message?: unknown; usage?: unknown; limit?: unknown };
+      return new QuotaExceededError(
+        typeof det.message === 'string' && det.message
+          ? det.message
+          : '사용량 한도를 초과하여 실행할 수 없습니다',
+        det.usage ?? null,
+        det.limit ?? null,
+      );
+    }
+  } catch {
+    /* JSON 아님 */
+  }
+  return null;
 }
 
 /** 턴 결과 보고(v2) — 대화/기억이 서버에 저장되어 웹과 공유된다. */
@@ -35,7 +104,8 @@ export interface TurnReport {
   status?: 'ok' | 'error' | 'cancelled';
   error?: string;
   toolEvents?: Record<string, unknown>[];
-  usage?: { input_tokens?: number; output_tokens?: number };
+  /** 토큰 사용량(사이드카 usage 이벤트) — 서버가 output_data.usage·토큰 컬럼에 기록. */
+  usage?: TurnUsage;
   provider?: string;
   model?: string;
   durationMs?: number;
@@ -106,6 +176,8 @@ export function makeServerClient(deps: ServerClientDeps): ServerClient {
       } catch {
         /* 본문 없음 */
       }
+      const quota = parseQuotaExceeded(res.status, body);
+      if (quota) throw quota;
       throw new Error(`${res.status} ${body}`.slice(0, 400).trim());
     }
     return res;

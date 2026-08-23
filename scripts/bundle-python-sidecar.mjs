@@ -54,8 +54,10 @@ const PBS_PYTHON = process.env.PBS_PYTHON || '3.12.11';
 // 으로 합쳐졌다 — 런타임 하나만 설치하면 사이드카까지 들어온다.
 // 기본 SPEC: 워크스페이스 로컬 경로(개발) → 없으면 릴리스 wheel(CI — 커넥터
 // 저장소만 체크아웃돼 로컬 경로가 없다).
-const RELEASED_RUNTIME_WHEEL =
-  'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.7.0/xgen_agent_runtime-3.7.0-py3-none-any.whl';
+// ⚠ src/main/local-runtime-install.ts 의 RUNTIME_WHEEL_VERSION 과 같은 버전이어야 한다
+//   (test/bundle-layout.test.ts 가 잠근다 — .mjs 는 TS 상수를 import 하지 못한다).
+const RELEASED_RUNTIME_VERSION = '3.8.0';
+const RELEASED_RUNTIME_WHEEL = `https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v${RELEASED_RUNTIME_VERSION}/xgen_agent_runtime-${RELEASED_RUNTIME_VERSION}-py3-none-any.whl`;
 const localRuntimePath = join(WORKSPACE, 'xgen-agent-runtime');
 const RUNTIME_SPEC =
   process.env.XGEN_RUNTIME_SPEC ||

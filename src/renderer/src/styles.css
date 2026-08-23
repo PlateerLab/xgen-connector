@@ -4470,3 +4470,8 @@ button {
   border-color: rgba(146, 64, 14, 0.35);
   background: rgba(146, 64, 14, 0.08);
 }
+.exec-surface.blocked {
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.35);
+  background: rgba(185, 28, 28, 0.08);
+}

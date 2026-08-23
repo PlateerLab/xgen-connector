@@ -343,6 +343,52 @@ export async function ensureCliConverged(
 }
 
 /**
+ * 격리 홈에 물질화되는 **자격증명 파일** — 로그아웃/계정 전환 시 지워야 한다(감사 #41).
+ *   codex  : <codex-home>/auth.json (LocalHostServices._materialize_codex_credentials,
+ *            서버 중앙 CODEX_CREDENTIALS_JSON 을 파일로) + 쓰다 만 auth.json.tmp-*
+ *   claude : <claude-home>/.credentials.json (Claude Code 가 로그인 시 쓰는 토큰 파일 — 런타임은
+ *            setup_token 을 env 로만 주지만, CLI 가 파일을 남겼을 수 있다) + .tmp-*
+ */
+export const CLI_CREDENTIAL_FILES: Record<CliTool, string[]> = {
+  codex: ['auth.json'],
+  claude: ['.credentials.json'],
+};
+
+/**
+ * 격리 홈의 자격증명 파일 삭제 — 로그아웃/계정 전환 시. 바이너리·설정(xgen-local-settings.json)
+ * 은 남긴다(다음 로그인에 재사용). 없는 파일/홈은 조용히 넘어간다.
+ */
+export function purgeCliCredentials(deps: Pick<CliDeps, 'runtimeDir'>): {
+  removed: string[];
+  errors: string[];
+} {
+  const removed: string[] = [];
+  const errors: string[] = [];
+  for (const tool of ['codex', 'claude'] as const) {
+    const home = cliHomeDir(deps, tool);
+    let entries: string[];
+    try {
+      entries = readdirSync(home);
+    } catch {
+      continue; // 홈 없음
+    }
+    for (const name of CLI_CREDENTIAL_FILES[tool]) {
+      for (const f of entries) {
+        if (f !== name && !f.startsWith(`${name}.tmp-`)) continue;
+        const p = join(home, f);
+        try {
+          rmSync(p, { force: true });
+          removed.push(p);
+        } catch (e) {
+          errors.push(`${p}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+  }
+  return { removed, errors };
+}
+
+/**
  * 사이드카 turn 에 주입할 CLI settings — 설치된 바이너리 경로 + **격리 홈**.
  * LocalHostServices.setting() 이 context.settings 를 우선 읽으므로, 이 값이
  * codex/claude_code provider 의 바이너리·홈 해석을 이 PC 설치본으로 고정한다.

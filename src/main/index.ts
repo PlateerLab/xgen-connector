@@ -27,7 +27,15 @@ import {
 } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, sep } from 'node:path';
 import { XgenClient, type ChatEvent, type ChatRequest, type TtsSpeakOptions } from '../core/index';
@@ -66,20 +74,26 @@ import { initWorkspaceManager, getWorkspaceManager } from './workspace-manager';
 import { makeWorkspaceApi } from './workspace-api';
 import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-transport';
 import { LocalSyncManager } from './local-sync-manager';
-import { getStatusFast as localRuntimeGetStatusFast } from './local-runtime-install';
+import { WorkspaceBridge } from './workspace-bridge-tools';
+import {
+  getStatusFast as localRuntimeGetStatusFast,
+  pythonExePath as localRuntimePythonExePath,
+} from './local-runtime-install';
 import { SidecarDaemon, defaultSidecarCommand } from './local-agent-sidecar';
 import { makeServerClient as makeLocalExecServerClient } from './local-agent-server-client';
-import { LocalRuntimeConverger } from './local-runtime-converge';
+import { LocalRuntimeConverger, restartSidecarWhenIdle } from './local-runtime-converge';
 import { LocalRuntimeEnsurer } from './local-runtime-ensure';
 import {
   cliSettings as localCliSettings,
   getCliStatus as localCliGetStatus,
   installClaudeCli,
   installCodexCli,
+  purgeCliCredentials as localCliPurgeCredentials,
 } from './cli-provision';
 import { runLocalChatTurn, describeFallback, type LocalChatDeps } from './local-chat-route';
 import {
   consumeInstallOptions,
+  readInstallLogText,
   resolveDataRoot,
   runtimeDirOf,
   settleDataRoot,
@@ -1409,6 +1423,9 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     await getWorkspaceManager()?.reconcile();
     await tokenStore.clear();
     await credentialStore.clear();
+    // 구 서버의 CLI 자격증명(격리 홈 auth.json 등)·상주 사이드카·매니페스트 캐시는 새 서버와 무관.
+    purgeLocalExecCredentials('server-changed');
+    localConverger?.clearManifest();
     patch = { ...patch, autoLogin: false }; // 저장된 자동 로그인은 구 서버 계정
   }
   const next = saveConfig(patch);
@@ -1669,6 +1686,9 @@ ipcMain.handle(CHANNELS.authLogout, async () => {
   // An explicit logout also disables auto-login (else next launch signs right back in).
   await credentialStore.clear();
   saveConfig({ autoLogin: false });
+  // 로컬 실행 자격증명 — 격리 홈에 물질화된 서버 중앙 토큰 파일을 지우고, 그 토큰을 메모리에
+  // 들고 있을 상주 사이드카를 내린다(감사 #41).
+  purgeLocalExecCredentials('logout');
   return true;
 });
 
@@ -2462,8 +2482,8 @@ function wireLocalSync(): void {
 
   // 워크스페이스 브리지 — 서버의 ConnectorLocalSandbox 가 이 PC 를 실행
   // 환경으로 쓰는 내부 도구(_Exec 등). 로컬 동기화 매니저와 같은 수명이다.
-  const { WorkspaceBridge } =
-    require('./workspace-bridge-tools') as typeof import('./workspace-bridge-tools');
+  // (WorkspaceBridge 는 파일 상단의 **정적 import** — 런타임 require('./…') 는 패키징본에서
+  //  'Cannot find module' 로 죽는다. v1.68~1.70 부팅 오류의 원인.)
   getLocalToolProvider().configureWorkspaceBridge(
     new WorkspaceBridge({
       infoFor: (workflowId: string, workflowName?: string) => {
@@ -2501,7 +2521,10 @@ let sidecarDaemon: SidecarDaemon | null = null;
 function getSidecarDaemon(): SidecarDaemon {
   if (!sidecarDaemon) {
     sidecarDaemon = new SidecarDaemon({
-      command: () => defaultSidecarCommand(true, getLocalEnsurer().activePython()?.python),
+      command: () =>
+        defaultSidecarCommand(true, getLocalEnsurer().activePython()?.python, {
+          runtimeDir: cliRuntimeDir(),
+        }),
       log: (m) => {
         void import('./diag-log')
           .then(({ diag }) => diag('local-exec', `sidecar: ${m}`))
@@ -2540,22 +2563,53 @@ function getLocalConverger(): LocalRuntimeConverger {
             .then(({ diag }) => diag('local-exec', `converge: ${m}`))
             .catch(() => {});
         },
+        // 런타임 wheel 업그레이드 성공 → 캐시된 버전/건강 무효화 + 상주 사이드카 유휴 재기동
+        // (옛 코드를 든 프로세스가 다음 턴을 받지 않게, 감사 #17).
+        onRuntimeUpgraded: (info) => onLocalRuntimeUpgraded(info),
       };
     });
   }
   return localConverger;
 }
-/** 로그인 직후/부팅 후 — 서버와 같은 버전으로(무소음, 실패는 상태로만). */
-function convergeLocalRuntimeInBackground(why: string): void {
-  if (!client?.user) return;
-  void getLocalConverger()
-    .converge()
-    .then((st) =>
-      import('./diag-log').then(({ diag }) =>
-        diag('local-exec', `converge(${why}): ${st.summary ?? st.lastError ?? 'done'}`),
-      ),
-    )
+/** 런타임 wheel 교체 후 — ensurer 캐시 무효화(버전·스모크 재확인) + 사이드카를 유휴 시점에 내린다. */
+function onLocalRuntimeUpgraded(info: { from?: string; to?: string }): void {
+  const log = (m: string) =>
+    void import('./diag-log')
+      .then(({ diag }) => diag('local-exec', m))
+      .catch(() => {});
+  log(`runtime upgraded ${info.from ?? '?'}→${info.to ?? '?'} — ensurer 캐시 무효화·사이드카 재기동 예약`);
+  const e = getLocalEnsurer();
+  e.invalidate();
+  void e.resolveActive().catch(() => undefined);
+  if (sidecarDaemon) void restartSidecarWhenIdle(sidecarDaemon, { log }).done;
+}
+/** 로그아웃/계정 전환 — 격리 홈의 CLI 자격증명 파일 삭제 + 상주 사이드카 종료(감사 #41). */
+function purgeLocalExecCredentials(why: string): void {
+  let note = '';
+  try {
+    const r = localCliPurgeCredentials({ runtimeDir: cliRuntimeDir() });
+    note = `removed=${r.removed.length}${r.errors.length ? ` errors=${r.errors.join('; ')}` : ''}`;
+  } catch (e) {
+    note = `purge 실패: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  sidecarDaemon?.shutdown();
+  void import('./diag-log')
+    .then(({ diag }) => diag('local-exec', `credentials purge(${why}): ${note}; sidecar shutdown`))
     .catch(() => {});
+}
+/** 로그인 직후/부팅 후 — 서버와 같은 버전으로(무소음, 실패는 상태로만). 미로그인이면 no-op. */
+async function convergeLocalRuntime(why: string): Promise<void> {
+  if (!client?.user) return;
+  try {
+    const st = await getLocalConverger().converge();
+    const { diag } = await import('./diag-log');
+    diag('local-exec', `converge(${why}): ${st.summary ?? st.lastError ?? 'done'}`);
+  } catch {
+    /* 상태로만 */
+  }
+}
+function convergeLocalRuntimeInBackground(why: string): void {
+  void convergeLocalRuntime(why);
 }
 
 // ── 독립 로컬 실행 환경 설치 ([설정 → 일반]) ─────────────────────────
@@ -2586,11 +2640,11 @@ function localRuntimeDir(): string {
   const legacy = join(app.getPath('userData'), 'local-runtime');
   const modern = runtimeDirOf(resolveDataRoot(loadConfig()));
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { existsSync } = require('node:fs');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { pythonExePath } = require('./local-runtime-install');
-    if (!existsSync(pythonExePath(modern)) && existsSync(pythonExePath(legacy))) return legacy;
+    if (
+      !existsSync(localRuntimePythonExePath(modern)) &&
+      existsSync(localRuntimePythonExePath(legacy))
+    )
+      return legacy;
   } catch {
     /* 해석 실패 — modern */
   }
@@ -2619,8 +2673,6 @@ function getLocalEnsurer(): LocalRuntimeEnsurer {
       bundleDir: () => {
         const rp = process.resourcesPath;
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { existsSync } = require('node:fs') as typeof import('node:fs');
           return rp && existsSync(join(rp, 'python')) ? rp : null;
         } catch {
           return null;
@@ -2652,23 +2704,23 @@ function installLogPath(): string {
 }
 function appendInstallLog(line: string): void {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { appendFileSync, mkdirSync } = require('node:fs') as typeof import('node:fs');
     mkdirSync(resolveDataRoot(loadConfig()), { recursive: true });
     appendFileSync(installLogPath(), `${new Date().toISOString()} ${line}\n`);
   } catch {
     /* 로그 실패는 무시 */
   }
 }
-/** 인스톨러가 남긴 로그(%APPDATA%\XGEN-Connector\install.log, win) + 앱 로그 꼬리. */
+/**
+ * 인스톨러가 남긴 로그(%APPDATA%\XGEN-Connector\install.log, win) + 앱 로그 꼬리.
+ * 인스톨러(NSIS FileWrite = ANSI/CP949)와 앱(UTF-8)이 **같은 파일**에 섞어 쓰므로 줄 단위로
+ * 인코딩을 판별해 디코드한다(readInstallLogText) — 통째로 utf-8 로 읽으면 '→'/한글이 깨진다.
+ */
 function readInstallLogs(maxLines = 120): { path: string; lines: string[] }[] {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { existsSync, readFileSync } = require('node:fs') as typeof import('node:fs');
   const out: { path: string; lines: string[] }[] = [];
   for (const p of [join(app.getPath('userData'), 'install.log'), installLogPath()]) {
     if (!existsSync(p)) continue;
     try {
-      const lines = readFileSync(p, 'utf-8').split(/\r?\n/).filter(Boolean);
+      const lines = readInstallLogText(readFileSync(p)).filter(Boolean);
       out.push({ path: p, lines: lines.slice(-maxLines) });
     } catch {
       /* skip */
@@ -2692,8 +2744,12 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
       const r = await localSync?.ensureSynced(workflowId, workflowName || workflowId);
       const dir = r?.dir ?? localSync?.dirFor(workflowId) ?? null;
       if (!dir) throw new Error('로컬 동기화 폴더 없음');
-      return dir;
+      // synced=false: 폴더는 있으나 하이드레이트가 제한시간 내 끝나지 않음 — 실행은 진행,
+      // 상태 이벤트에 '동기화 미완료' 안내(라우터가 detail 로 싣는다).
+      return { dir, synced: r?.synced === true };
     },
+    // 사이드카 서버 브릿지 TLS — 커넥터의 사설 인증서 허용 설정과 동일 정책.
+    tlsVerify: () => loadConfig().allowPrivateCertificate !== true,
     runtimeInstalled: async () => {
       // 건강한 런타임 후보(설치 폴더 → 내장 번들 → 레거시)가 있으면 로컬 실행. 없으면
       // 사다리를 한 번 돌려 본다(번들 복사/다운로드는 백그라운드로 이어진다).
@@ -2731,8 +2787,9 @@ function ensureCliInstalled(tool: 'codex' | 'claude'): Promise<boolean> {
   const p = (async () => {
     // 무소음 — 자동 경로는 UI 로 진행을 보내지 않는다(diag 만; 버튼 경로는 자체 표시).
     const emit = () => {};
-    // 서버 매니페스트가 있으면 **서버와 같은 버전**으로.
-    const m = localConverger?.status().manifest ?? null;
+    // 서버 매니페스트가 있으면 **서버와 같은 버전**으로 — 이번 세션에 못 받았어도 마지막
+    // 매니페스트(디스크 캐시)의 목표 버전을 쓴다(감사 #40).
+    const m = getLocalConverger().status().manifest ?? null;
     const version = (tool === 'codex' ? m?.codex?.target : m?.claude?.target) ?? undefined;
     const r =
       tool === 'codex'
@@ -2805,8 +2862,6 @@ function localExecStatus() {
 }
 ipcMain.handle(CHANNELS.localRuntimeOpenLog, async () => {
   // 앱 로그가 없으면 인스톨러 로그, 둘 다 없으면 설치 폴더를 연다.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { existsSync } = require('node:fs') as typeof import('node:fs');
   const candidates = [installLogPath(), join(app.getPath('userData'), 'install.log')];
   const target = candidates.find((p) => existsSync(p)) ?? resolveDataRoot(loadConfig());
   const err = await shell.openPath(target);
@@ -2823,13 +2878,17 @@ ipcMain.handle(CHANNELS.localRuntimeStatus, async () => {
   const es = e.status();
   if (es.phase === 'idle' || (es.phase !== 'checking' && es.candidates.length === 0)) {
     void e.ensure('status');
+  } else if (es.active) {
+    // 사다리가 멈춘 뒤 미검증으로 남은 후보(번들/레거시)를 백그라운드 스모크(스로틀·캐시) — 설정
+    // 화면의 "미검증" 이 "있음/손상" 으로 확정되게. 라우팅과 무관, 응답을 막지 않는다.
+    void e.verifyOtherCandidates().catch(() => undefined);
   }
   const st = localExecStatus();
   if (!st.installed) {
     // 원인 확정용 진단(무 UI) — 스토리지 탭 [진단 로그 복사]로 회수된다.
     try {
       const { diag } = await import('./diag-log');
-      const { readdirSync, existsSync } = await import('node:fs');
+      const { readdirSync } = await import('node:fs');
       const rp = process.resourcesPath ?? '(none)';
       const listing = existsSync(rp) ? readdirSync(rp).join(',') : '(missing)';
       diag(
@@ -3219,10 +3278,14 @@ if (!gotLock) {
         );
       })
       .then(async () => {
+        // ⚠ 순서: 매니페스트 수렴(로그인 상태면 서버 목표 버전으로 런타임·CLI) **먼저**, CLI
+        // 자동 설치 안전망은 그 뒤 — 그래야 CLI 가 latest 가 아니라 서버 목표 버전으로 깔린다
+        // (감사 #40). 미로그인이면 수렴은 no-op 이고, 안전망은 디스크에 남은 마지막
+        // 매니페스트의 목표 버전을 쓴다.
+        await convergeLocalRuntime('boot');
         const le = loadConfig().localExec ?? {};
         if (le.autoCodex !== false) await ensureCliInstalled('codex').catch(() => false);
         if (le.autoClaude !== false) await ensureCliInstalled('claude').catch(() => false);
-        convergeLocalRuntimeInBackground('boot');
       });
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {

@@ -14,14 +14,24 @@
  * 설치 단계(installLocalRuntime):
  *   1) 이식형 CPython(astral-sh/python-build-standalone, install_only)을 현재
  *      OS/arch 트리플로 다운로드·추출.
- *   2) 그 python 으로 xgen-agent-runtime(v3.7.0 wheel, host 포함) 설치.
+ *   2) 그 python 으로 xgen-agent-runtime(RUNTIME_WHEEL_VERSION wheel, host 포함) 설치.
  *   3) import 스모크(xgen_agent_runtime.host.sidecar) 로 검증.
  * 각 단계에서 onProgress 로 진행 상황을 알린다.
  *
  * 네트워크/전송은 주입 가능(테스트) — 순수 경로 계산은 부수효과 없이 단위 검증.
  */
 import { execFile } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -29,16 +39,26 @@ import { promisify } from 'node:util';
 
 const execFileP = promisify(execFile);
 
+/**
+ * 기본 핀 — 릴리스된 runtime(host 서브패키지 포함) 버전. scripts/bundle-python-sidecar.mjs 의
+ * RELEASED_RUNTIME_WHEEL 과 **같은 버전**이어야 한다(test/bundle-layout.test.ts 가 잠근다 —
+ * .mjs 는 TS 를 import 할 수 없어 상수를 공유하지 못한다).
+ */
+export const RUNTIME_WHEEL_VERSION = '3.8.0';
+/** GitHub Release 의 wheel URL(버전 → URL, 패턴 고정). */
+export function runtimeWheelUrl(version: string): string {
+  const v = version.replace(/^v/, '');
+  return `https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v${v}/xgen_agent_runtime-${v}-py3-none-any.whl`;
+}
 /** 기본 핀 — 릴리스된 runtime(host 서브패키지 포함) wheel. */
-export const DEFAULT_RUNTIME_WHEEL =
-  'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.7.0/xgen_agent_runtime-3.7.0-py3-none-any.whl';
+export const DEFAULT_RUNTIME_WHEEL = runtimeWheelUrl(RUNTIME_WHEEL_VERSION);
 const PBS_RELEASE = '20250808';
 const PBS_PYTHON = '3.12.11';
 
 export interface InstallDeps {
   /** 설치 루트 — 보통 <userData>/local-runtime (주입: app.getPath). */
   runtimeDir: string;
-  /** 런타임 pip 스펙(기본 v3.7.0 wheel URL). 로컬 경로/버전 핀도 가능. */
+  /** 런타임 pip 스펙(기본 RUNTIME_WHEEL_VERSION 의 wheel URL). 로컬 경로/버전 핀도 가능. */
   runtimeSpec?: string;
   /** 주입 fetch(사설 인증서 정책·테스트). 기본 전역 fetch. */
   fetch?: typeof fetch;
@@ -128,7 +148,6 @@ export function getStatusFast(deps: InstallDeps): RuntimeStatus {
 
 /** 이 런타임 트리의 site-packages 후보들(OS 별 레이아웃). */
 export function sitePackagesDirs(runtimeDir: string): string[] {
-  const { readdirSync } = require('node:fs') as typeof import('node:fs');
   if (process.platform === 'win32') return [join(runtimeDir, 'python', 'Lib', 'site-packages')];
   const lib = join(runtimeDir, 'python', 'lib');
   try {
@@ -140,18 +159,26 @@ export function sitePackagesDirs(runtimeDir: string): string[] {
   }
 }
 
-/** site-packages 의 xgen_agent_runtime dist-info 에서 버전 읽기(실행 없이). */
-export function readInstalledVersion(runtimeDir: string): string | undefined {
-  const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
-  // 번들 스탬프(RUNTIME_VERSION 첫 줄) 우선 — dist-info 가 정리된 트리에서도 버전을 안다.
+/** 번들 스탬프 파일 경로 — <runtimeDir>/python/RUNTIME_VERSION (형식: <runtime version>\n<python tag>). */
+export function runtimeVersionStampPath(runtimeDir: string): string {
+  return join(runtimeDir, 'python', 'RUNTIME_VERSION');
+}
+
+/** 번들 스탬프(RUNTIME_VERSION 첫 줄)의 버전 — 없거나 형식이 아니면 undefined. */
+export function readStampVersion(runtimeDir: string): string | undefined {
   try {
-    const stamp = readFileSync(join(runtimeDir, 'python', 'RUNTIME_VERSION'), 'utf-8')
+    const stamp = readFileSync(runtimeVersionStampPath(runtimeDir), 'utf-8')
       .split(/\r?\n/)[0]
       .trim();
     if (/^\d+\.\d+\.\d+/.test(stamp)) return stamp;
   } catch {
-    /* 스탬프 없음 — dist-info 로 */
+    /* 스탬프 없음 */
   }
+  return undefined;
+}
+
+/** site-packages 의 xgen_agent_runtime dist-info 에서 버전 읽기(실행 없이). 없으면 undefined. */
+export function readDistInfoVersion(runtimeDir: string): string | undefined {
   for (const sp of sitePackagesDirs(runtimeDir)) {
     try {
       const di = readdirSync(sp).find((d) => /^xgen_agent_runtime-.*\.dist-info$/.test(d));
@@ -166,6 +193,37 @@ export function readInstalledVersion(runtimeDir: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * 설치된 런타임 버전(실행 없이) — **dist-info 우선**, 없으면 번들 스탬프(RUNTIME_VERSION).
+ * 번들은 용량 절감으로 dist-info 를 지우므로 스탬프만 남지만, pip 로 wheel 을 올리면
+ * dist-info 가 새 버전으로 생긴다 — 그때 낡은 스탬프를 믿으면 수렴기가 매번 'upgrade' 를
+ * 다시 계획하고 UI 가 옛 버전을 보인다(감사 #16). 업그레이드 성공 시 스탬프도 새로 쓴다.
+ */
+export function readInstalledVersion(runtimeDir: string): string | undefined {
+  return readDistInfoVersion(runtimeDir) ?? readStampVersion(runtimeDir);
+}
+
+/**
+ * 번들 스탬프(RUNTIME_VERSION) 첫 줄을 새 버전으로 다시 쓴다(둘째 줄 python 태그는 보존).
+ * 파일이 없으면 만든다. 실패는 무시(스탬프는 보조 정보 — dist-info 가 진실).
+ */
+export function writeRuntimeVersionStamp(runtimeDir: string, version: string): boolean {
+  const path = runtimeVersionStampPath(runtimeDir);
+  try {
+    let rest: string[] = [];
+    try {
+      rest = readFileSync(path, 'utf-8').split(/\r?\n/).slice(1);
+    } catch {
+      /* 새로 만든다 */
+    }
+    const tail = rest.filter((l) => l.trim()).join('\n');
+    writeFileSync(path, `${version}\n${tail ? `${tail}\n` : ''}`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 설치 상태 조회 — python 존재 + runtime 버전 + 사이드카 import 여부. */
@@ -293,13 +351,18 @@ export async function upgradeRuntimeWheel(
       ['-m', 'pip', 'install', '--no-warn-script-location', '--upgrade', wheelUrl],
       {
         maxBuffer: 64 * 1024 * 1024,
+        windowsHide: true,
       },
     );
     onProgress({ phase: 'smoke', message: '업데이트 검증 중…' });
     await execFileP(py, ['-I', '-c', 'import xgen_agent_runtime.host.sidecar'], {
       windowsHide: true,
     });
-    const version = readInstalledVersion(deps.runtimeDir);
+    // 설치된 진짜 버전(dist-info)으로 번들 스탬프를 덮어쓴다 — 낡은 스탬프가 남아
+    // 수렴기가 'upgrade' 를 되풀이하고 UI 가 옛 버전을 보이던 문제(감사 #16).
+    const distVersion = readDistInfoVersion(deps.runtimeDir);
+    if (distVersion) writeRuntimeVersionStamp(deps.runtimeDir, distVersion);
+    const version = distVersion ?? readInstalledVersion(deps.runtimeDir);
     onProgress({ phase: 'done', message: `런타임 업데이트 완료 (${version ?? '?'})` });
     return { ok: true, version };
   } catch (e) {

@@ -159,3 +159,119 @@ test('longPath: Windows 에서만 \\\\?\\ 접두', () => {
     assert.equal(longPath('/a/b'), '/a/b');
   }
 });
+
+test('invalidate: wheel 교체 뒤(같은 python, mtime 불변) 캐시를 비워 새 버전을 스모크·표시한다 (감사 #17)', async () => {
+  const root = tmp();
+  try {
+    const install = join(root, 'local-runtime');
+    mkRuntime(install, '3.7.0');
+    const smoked: string[] = [];
+    const e = new LocalRuntimeEnsurer({
+      installDir: () => install,
+      bundleDir: () => null,
+      smoke: async (py) => (smoked.push(py), { ok: true }),
+      copyTree: async () => assert.fail('copy 금지'),
+      download: async () => assert.fail('download 금지'),
+    });
+    await e.ensure('test');
+    assert.equal(e.activePython()?.version, '3.7.0');
+    assert.equal(smoked.length, 1);
+    // pip 가 같은 트리에 3.8.0 을 올렸다(python 실행파일은 그대로 → mtime 캐시가 감지 못 함).
+    const sp =
+      process.platform === 'win32'
+        ? join(install, 'python', 'Lib', 'site-packages')
+        : join(install, 'python', 'lib', 'python3.12', 'site-packages');
+    rmSync(join(sp, 'xgen_agent_runtime-3.7.0.dist-info'), { recursive: true, force: true });
+    mkdirSync(join(sp, 'xgen_agent_runtime-3.8.0.dist-info'), { recursive: true });
+    writeFileSync(join(sp, 'xgen_agent_runtime-3.8.0.dist-info', 'METADATA'), 'Version: 3.8.0\n');
+    // 무효화 전: 캐시된 옛 버전(python 실행파일은 안 건드렸으니 mtime 캐시가 그대로).
+    await e.resolveActive();
+    assert.equal(e.activePython()?.version, '3.7.0');
+    assert.equal(smoked.length, 1);
+    e.invalidate();
+    // 즉시: 라우팅 경로는 그대로, 버전은 새로 읽힌다(스모크 전에도 UI 가 진짜 버전).
+    assert.equal(e.activePython()?.python, pythonExePath(install));
+    assert.equal(e.activePython()?.version, '3.8.0');
+    assert.equal(e.status().candidates[0]?.healthy, undefined);
+    // 다음 resolveActive 는 다시 스모크(새 런타임 검증) 후 active 를 새로 기록.
+    const a = await e.resolveActive();
+    assert.equal(smoked.length, 2);
+    assert.equal(a?.version, '3.8.0');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('설치 폴더가 건강하면 사다리는 번들을 스모크하지 않지만, 백그라운드 검증이 번들 상태를 확정한다(미검증→있음/손상)', async () => {
+  const root = tmp();
+  try {
+    const install = join(root, 'local-runtime');
+    const bundle = join(root, 'resources');
+    mkRuntime(install, '3.8.0');
+    mkRuntime(bundle, '3.8.0');
+    const smoked: string[] = [];
+    const e = new LocalRuntimeEnsurer({
+      installDir: () => install,
+      bundleDir: () => bundle,
+      smoke: async (py) => (smoked.push(py), py.startsWith(bundle) ? { ok: false, error: 'bundle broken' } : { ok: true }),
+      copyTree: async () => assert.fail('copy 금지'),
+      download: async () => assert.fail('download 금지'),
+    });
+    const st = await e.ensure('test');
+    assert.equal(st.active?.source, 'install');
+    // 사다리 직후(ensure 가 돌려준 스냅샷): 설치 폴더만 스모크, 번들은 **미검증**(undefined) —
+    // 손상(false)이 아니다. (백그라운드 검증은 ensure 완료 직후 자동으로 킥된다 — 스냅샷엔 안 보인다.)
+    const bun0 = st.candidates.find((c) => c.source === 'bundle');
+    assert.deepEqual([bun0?.exists, bun0?.healthy], [true, undefined]);
+    assert.equal(smoked[0], pythonExePath(install));
+    // 백그라운드 검증(자동 킥된 것과 같은 single-flight Promise) 이 끝나면 확정된다.
+    await e.verifyOtherCandidates({ force: true });
+    const bun1 = e.status().candidates.find((c) => c.source === 'bundle');
+    assert.deepEqual([bun1?.healthy, bun1?.error], [false, 'bundle broken']);
+    assert.equal(smoked.length, 2);
+    // active 는 그대로(라우팅 불변), 설치 폴더 healthy 유지
+    assert.equal(e.status().active?.source, 'install');
+    assert.equal(e.status().candidates.find((c) => c.source === 'install')?.healthy, true);
+    // 다시 불러도 캐시(mtime) — 스모크 재실행 없음, 스로틀도 걸린다
+    await e.verifyOtherCandidates({ force: true });
+    await e.verifyOtherCandidates();
+    assert.equal(smoked.length, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('verifyOtherCandidates: single-flight + 스로틀 — 연타해도 스모크는 한 번, 사다리 진행 중엔 건너뛴다', async () => {
+  const root = tmp();
+  try {
+    const install = join(root, 'local-runtime');
+    const bundle = join(root, 'resources');
+    mkRuntime(install, '3.8.0');
+    mkRuntime(bundle, '3.8.0');
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const smoked: string[] = [];
+    const e = new LocalRuntimeEnsurer({
+      installDir: () => install,
+      bundleDir: () => bundle,
+      smoke: async (py) => {
+        smoked.push(py);
+        if (py.startsWith(bundle)) await gate;
+        return { ok: true };
+      },
+    });
+    await e.ensure('test');
+    const p1 = e.verifyOtherCandidates({ force: true });
+    const p2 = e.verifyOtherCandidates({ force: true });
+    assert.equal(p1, p2, 'single-flight: 같은 Promise');
+    release();
+    await p1;
+    assert.equal(smoked.filter((p) => p.startsWith(bundle)).length, 1);
+    assert.equal(e.status().candidates.find((c) => c.source === 'bundle')?.healthy, true);
+    // 스로틀: force 없이 곧바로 다시 부르면 즉시 resolve(스모크 없음)
+    await e.verifyOtherCandidates();
+    assert.equal(smoked.length, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
