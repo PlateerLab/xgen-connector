@@ -2606,6 +2606,8 @@ function localRuntimeDir(): string {
  * 진행은 메인 창으로 push(localRuntimeProgress).
  */
 let localEnsurer: LocalRuntimeEnsurer | null = null;
+/** 부팅 배선 단계 실패(있으면) — 설정 화면에 그대로 드러낸다. */
+const localExecBootErrors: string[] = [];
 function getLocalEnsurer(): LocalRuntimeEnsurer {
   if (!localEnsurer) {
     localEnsurer = new LocalRuntimeEnsurer({
@@ -2782,6 +2784,7 @@ function localExecStatus() {
       summary: conv.summary,
     },
     ensure: getLocalEnsurer().status(),
+    bootErrors: [...localExecBootErrors],
     bundlePath: process.resourcesPath ? join(process.resourcesPath, 'python') : null,
     isPackaged: app.isPackaged,
     logs: readInstallLogs(),
@@ -2801,6 +2804,13 @@ ipcMain.handle(CHANNELS.localRuntimeSync, async () => {
   return localExecStatus();
 });
 ipcMain.handle(CHANNELS.localRuntimeStatus, async () => {
+  // 상태 조회가 곧 진실 동기화 — 부팅 사다리가 어떤 이유로든 안 돌았거나(idle) 후보가
+  // 비어 있으면 여기서 한 번 더 돌린다(백그라운드). 화면은 '검증 중'으로 보이고 곧 갱신된다.
+  const e = getLocalEnsurer();
+  const es = e.status();
+  if (es.phase === 'idle' || (es.phase !== 'checking' && es.candidates.length === 0)) {
+    void e.ensure('status');
+  }
   const st = localExecStatus();
   if (!st.installed) {
     // 원인 확정용 진단(무 UI) — 스토리지 탭 [진단 로그 복사]로 회수된다.
@@ -3168,16 +3178,39 @@ if (!gotLock) {
     const startHidden = process.argv.includes('--hidden') && trayOk;
     createWindow();
     if (startHidden) mainWindow?.removeAllListeners('ready-to-show');
-    settleDataRootOnBoot(); // 통합 루트(~/xgen-connector) 정착 — 아래 배선들이 새 기본을 읽는다.
-    wireWorkspaceManager();
-    wireLocalSync();
+    // 부팅 배선 — 한 단계가 던져도 다음 단계(특히 로컬 실행 런타임 보장)가 멈추지 않게,
+    // 각 단계를 격리하고 실패를 install.log + 상태(bootErrors)에 남긴다.
+    const bootStep = (name: string, fn: () => void) => {
+      try {
+        fn();
+      } catch (e) {
+        const msg = e instanceof Error ? (e.stack ?? e.message) : String(e);
+        localExecBootErrors.push(`${name}: ${msg.split('\n')[0]}`);
+        appendInstallLog(
+          `[app] boot step ${name} FAILED: ${msg.split('\n').slice(0, 3).join(' | ')}`,
+        );
+        console.error(`[boot] ${name} failed`, e);
+      }
+    };
+    bootStep('settleDataRoot', () => settleDataRootOnBoot()); // 통합 루트 정착 — 아래 배선들이 새 기본을 읽는다.
+    bootStep('wireWorkspaceManager', () => wireWorkspaceManager());
+    bootStep('wireLocalSync', () => wireLocalSync());
     // 부팅 자동 프로비저닝: 런타임 → CLI(체크된 것) 순차 백그라운드.
-    void ensureLocalRuntimeOnBoot().then(async () => {
-      const le = loadConfig().localExec ?? {};
-      if (le.autoCodex !== false) await ensureCliInstalled('codex').catch(() => false);
-      if (le.autoClaude !== false) await ensureCliInstalled('claude').catch(() => false);
-      convergeLocalRuntimeInBackground('boot');
-    });
+    void ensureLocalRuntimeOnBoot()
+      .catch((e) => {
+        localExecBootErrors.push(
+          `ensureLocalRuntime: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        appendInstallLog(
+          `[app] ensureLocalRuntimeOnBoot FAILED: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`,
+        );
+      })
+      .then(async () => {
+        const le = loadConfig().localExec ?? {};
+        if (le.autoCodex !== false) await ensureCliInstalled('codex').catch(() => false);
+        if (le.autoClaude !== false) await ensureCliInstalled('claude').catch(() => false);
+        convergeLocalRuntimeInBackground('boot');
+      });
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
       createQuickChat();

@@ -60,6 +60,8 @@ export interface LocalExecStatus {
     manifestAt?: number;
   } | null;
   converge: { running: boolean; lastRunAt?: number; lastError?: string; summary?: string };
+  /** 부팅 배선 단계 실패(있으면). */
+  bootErrors?: string[];
   /** 앱 내장 번들 경로(<resources>/python) — 진단 표시용. */
   bundlePath?: string | null;
   isPackaged?: boolean;

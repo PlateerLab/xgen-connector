@@ -686,8 +686,9 @@ export const Settings: React.FC<{
                               : ''
                           }`
                         : lrStatus.ensure?.phase === 'copying' ||
-                            lrStatus.ensure?.phase === 'downloading'
-                          ? `런타임 준비 중 — 준비될 때까지 대화는 서버 sandbox 에서 실행됩니다. (${lrStatus.ensure.message ?? ''})`
+                            lrStatus.ensure?.phase === 'downloading' ||
+                            lrStatus.ensure?.phase === 'checking'
+                          ? `런타임 ${lrStatus.ensure.phase === 'checking' ? '검증' : '준비'} 중 — 끝날 때까지 대화는 서버 sandbox 에서 실행됩니다. (${lrStatus.ensure.message ?? ''})`
                           : `서버 sandbox 에서 실행 — 이 PC 에 쓸 수 있는 런타임이 없습니다.${
                               lrStatus.ensure?.lastError ? ` ${lrStatus.ensure.lastError}` : ''
                             }`}
@@ -809,6 +810,13 @@ export const Settings: React.FC<{
                   </div>
                 </div>
               ))}
+              {lrStatus?.bootErrors && lrStatus.bootErrors.length > 0 && (
+                <div className="field-row">
+                  <span className="small" style={{ color: '#b45309' }}>
+                    부팅 오류: {lrStatus.bootErrors.join(' · ')}
+                  </span>
+                </div>
+              )}
               {(lrMsg || lrStatus?.converge?.lastError || lrStatus?.daemon?.lastError) && (
                 <div className="field-row">
                   <span className="small muted">
@@ -844,6 +852,20 @@ export const Settings: React.FC<{
                   ) : null}
                 </span>
                 <div className="row">
+                  <button
+                    className="secondary"
+                    title="상태 전체(JSON)를 클립보드에 복사 — 문의 시 붙여넣기"
+                    onClick={() => {
+                      try {
+                        void navigator.clipboard.writeText(JSON.stringify(lrStatus, null, 2));
+                        setLrMsg('진단 정보를 복사했습니다.');
+                      } catch {
+                        setLrMsg('복사 실패');
+                      }
+                    }}
+                  >
+                    진단 복사
+                  </button>
                   <button className="secondary" onClick={() => void xgen.localRuntime.openLog()}>
                     로그 열기
                   </button>

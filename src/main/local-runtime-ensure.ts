@@ -184,16 +184,20 @@ export class LocalRuntimeEnsurer {
 
   /** 건강한 첫 후보를 찾아 active 로 기록(스모크 포함, 복구 없음). */
   async resolveActive(): Promise<EnsureState['active']> {
-    const cands: RuntimeCandidate[] = [];
+    // 후보 목록은 **스모크 전에** 먼저 상태에 싣는다 — 콜드 스모크(수십 초)가 도는 동안에도
+    // 설정 화면이 "설치 폴더: 있음(검증 중)" 을 보여 줄 수 있게(빈 목록 = "없음" 오표시 방지).
+    const cands: RuntimeCandidate[] = this.candidates();
+    this.state.candidates = cands.map((c) => ({ ...c }));
     let active: EnsureState['active'];
-    for (const c of this.candidates()) {
+    for (let i = 0; i < cands.length; i++) {
+      const c = cands[i];
       const checked =
         c.exists && !active ? await this.check(c) : { ...c, healthy: c.exists ? c.healthy : false };
-      cands.push(checked);
+      cands[i] = checked;
+      this.state.candidates = cands.map((x) => ({ ...x }));
       if (!active && checked.healthy)
         active = { source: checked.source, python: checked.python, version: checked.version };
     }
-    this.state.candidates = cands;
     this.state.active = active;
     return active;
   }
