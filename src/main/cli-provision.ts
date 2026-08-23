@@ -165,7 +165,7 @@ export async function installCodexCli(
     } catch {
       /* 버전 조회 실패 — 태그 추정치 유지 */
     }
-    writeStamp(deps, 'codex', version);
+    if (/^\d+\.\d+\.\d+/.test(version)) writeStamp(deps, 'codex', version);
     onProgress({ tool: 'codex', phase: 'done', message: `codex 설치 완료 (v${version})` });
     return { ok: true, version };
   } catch (e) {
