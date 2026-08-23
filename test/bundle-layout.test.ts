@@ -26,8 +26,9 @@ test('NSIS 는 resources\\python 을 <dataRoot>\\local-runtime 으로 복사하�
   const nsh = readFileSync(join(__dirname, '..', 'build', 'installer.nsh'), 'utf-8');
   assert.match(
     nsh,
-    /CopyFiles \/SILENT "\$INSTDIR\\resources\\python" "\$XgenDataRoot\\local-runtime"/,
+    /Push "\$INSTDIR\\resources\\python"\s*\n\s*Push "\$XgenDataRoot\\local-runtime\\python"\s*\n\s*Call XgenCopyEntries/,
   );
+  assert.match(nsh, /SetDetailsView show/);
   assert.match(nsh, /install\.log/);
   assert.match(nsh, /smoke (OK|FAILED)/);
 });
