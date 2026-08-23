@@ -45,6 +45,15 @@ export interface LocalChatDeps {
   cliSettings?: () => Record<string, string>;
   /** CLI provider 턴 직전 바이너리 보장(없으면 자동 설치). false = 준비 실패. */
   ensureCli?: (tool: 'codex' | 'claude') => Promise<boolean>;
+  /**
+   * CLI 인증 프리플라이트 — 이 PC 로그인(격리 홈)이 있으면 settings 를 oauth 로 덮고 서버 중앙
+   * 자격증명을 뺀다. 반환 ok=false 면 로컬에서 시작할 인증이 없다 → 서버 폴백(cli_auth_missing).
+   */
+  cliAuth?: (
+    tool: 'codex' | 'claude',
+    settings: Record<string, string>,
+    apiKeys: Record<string, string>,
+  ) => Promise<{ ok: boolean; source: string; settings: Record<string, string> }>;
   /** 턴 종료 후 로컬 변경을 서버 인덱스로 밀어 넣는다(bounded). */
   flushSync?: (workflowId: string) => Promise<boolean>;
   /** 보고에 싣는 기기명. */
@@ -62,7 +71,9 @@ export type LocalFallbackReason =
   | 'runtime_missing'
   | 'context_unavailable'
   | 'workspace_unavailable'
-  | 'cli_missing';
+  | 'cli_missing'
+  | 'cli_auth_missing'
+  | 'local_start_failed';
 
 export interface LocalRouteResult {
   handled: boolean;
@@ -79,6 +90,9 @@ export function describeFallback(reason: LocalFallbackReason, detail?: string): 
     context_unavailable: '서버가 로컬 실행 컨텍스트를 주지 못해 서버 sandbox 에서 실행합니다',
     workspace_unavailable: '로컬 동기화 폴더를 확보하지 못해 서버 sandbox 에서 실행합니다',
     cli_missing: 'CLI 바이너리를 준비하지 못해 서버 sandbox 에서 실행합니다',
+    cli_auth_missing:
+      '이 PC 에 CLI 로그인이 없고 서버 설정에도 인증이 없어 서버 sandbox 에서 실행합니다 (설정 → 설치 에서 로그인)',
+    local_start_failed: '로컬 실행이 시작되지 못해 서버 sandbox 에서 실행합니다',
   };
   return detail ? `${base[reason]} (${detail})` : base[reason];
 }
@@ -146,20 +160,29 @@ export async function runLocalChatTurn(
     if (!ready) return fallback('cli_missing', cliTool);
   }
 
-  // 여기부터 로컬이 이 턴을 소유한다(handled=true). 상태 → 청크 → 끝.
-  emit({ kind: 'status', surface: 'connector_local', provider, workspaceDir });
-
   // CLI 바이너리 경로/격리 홈은 **이 PC 의 것**이 유일하게 유효하다 — 서버가 보낸
   // settings 위에 로컬 설치 경로를 덮어써 codex/claude_code 가 로컬 설치본을 쓴다.
   const localSettings = deps.cliSettings?.() ?? {};
-  const mergedContext = {
-    ...ctx.context,
-    settings: { ...(ctx.context?.settings ?? {}), ...localSettings },
-  };
+  let settings: Record<string, string> = { ...(ctx.context?.settings ?? {}), ...localSettings };
+  // CLI 인증 프리플라이트 — 이 PC 로그인 > 서버 설정. 둘 다 없으면 서버로(서버 자원 사용).
+  if (cliTool && deps.cliAuth) {
+    const auth = await deps
+      .cliAuth(cliTool, settings, ctx.context?.api_keys ?? {})
+      .catch(() => ({ ok: false, source: 'none', settings }));
+    settings = auth.settings;
+    if (!auth.ok) return fallback('cli_auth_missing', cliTool);
+    diag(`cli auth source=${auth.source} tool=${cliTool}`);
+  }
+
+  // 여기부터 로컬이 이 턴을 소유한다(handled=true) — 단, 시작 단계에서 죽으면(첫 출력 전
+  // 오류: 인증 만료·바이너리 실행 실패 등) 서버로 폴백한다(아직 내용을 보여 준 게 없다).
+  emit({ kind: 'status', surface: 'connector_local', provider, workspaceDir });
+  const mergedContext = { ...ctx.context, settings };
 
   const startedAt = Date.now();
   let agentText = '';
   let errorDetail = '';
+  let sawOutput = false; // 텍스트/도구 이벤트를 하나라도 보여 줬나(시작 실패 폴백 판정)
   const toolEvents: Record<string, unknown>[] = [];
   const result = await deps.runner.runTurn(
     {
@@ -178,10 +201,18 @@ export async function runLocalChatTurn(
     (se: SidecarEvent) => {
       switch (se.type) {
         case 'chunk':
+          // 실행기 시작 실패는 "[ERROR] geny agent could not start: …" 텍스트로 온다 — 시작 전이면
+          // 화면에 내보내지 않고 폴백 판정으로 보낸다.
+          if (!sawOutput && /^\s*\[ERROR\]/.test(se.text)) {
+            errorDetail = se.text.trim();
+            break;
+          }
+          sawOutput = true;
           agentText += se.text;
           emit({ kind: 'text', content: se.text });
           break;
         case 'tool': {
+          sawOutput = true;
           toolEvents.push(se.data);
           const ev = sidecarToolToChatEvent(se.data);
           if (ev) emit(ev);
@@ -192,7 +223,7 @@ export async function runLocalChatTurn(
           break;
         case 'error':
           errorDetail = se.message;
-          emit({ kind: 'error', detail: se.message });
+          if (sawOutput) emit({ kind: 'error', detail: se.message });
           break;
         default:
           break; // started/canvas_command/meta — 화면 표시 없음
@@ -200,6 +231,11 @@ export async function runLocalChatTurn(
     },
     { signal: deps.signal },
   );
+
+  // 시작 단계 실패(아무 내용도 보여 주기 전) → 서버 폴백. 인증 만료/키 없음/바이너리 실행 실패 등.
+  if (!sawOutput && (result.terminal === 'error' || errorDetail)) {
+    return fallback('local_start_failed', (errorDetail || '').slice(0, 200));
+  }
 
   // 3) 로컬 변경 → 서버 인덱스(bounded) → 결과 보고. 보고 실패해도 턴은 완료.
   try {

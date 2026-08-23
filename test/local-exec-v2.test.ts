@@ -185,10 +185,11 @@ test('폴백 사유는 숨기지 않는다 — runtime_missing/attachments/compo
   assert.match(describeFallback('cli_missing', 'codex'), /codex/);
 });
 
-test('사이드카 error → error 이벤트 + end, 보고 status=error (로컬이 소유)', async () => {
+test('사이드카 error(출력 후) → error 이벤트 + end, 보고 status=error (로컬이 소유); 출력 전 error 는 서버 폴백', async () => {
   const events: ChatEvent[] = [];
   const server = fakeServer();
   const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'chunk', text: '부분' });
     emit({ type: 'error', message: 'boom' });
     return 'error';
   });
@@ -196,9 +197,16 @@ test('사이드카 error → error 이벤트 + end, 보고 status=error (로컬�
   assert.equal(r.handled, true);
   assert.deepEqual(
     events.map((e) => e.kind),
-    ['status', 'error', 'end'],
+    ['status', 'text', 'error', 'end'],
   );
   assert.equal((server.reports[0] as { status: string }).status, 'error');
+  // 출력 전 오류(인증 만료·바이너리 실행 실패 등)는 로컬 시작 실패 → 서버 폴백
+  const runner2 = fakeRunner((_r, emit) => {
+    emit({ type: 'error', message: 'Not logged in' });
+    return 'error';
+  });
+  const r2 = await runLocalChatTurn(REQ, baseDeps({ server, runner: runner2 }), () => {});
+  assert.deepEqual([r2.handled, r2.reason], [false, 'local_start_failed']);
 });
 
 test('취소(cancelled) → error 없이 end, 보고 status=cancelled', async () => {
@@ -463,4 +471,71 @@ test('ensureCliConverged: 설치돼 있고 목표 없음/일치 → no-op(change
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('CLI 인증 프리플라이트: 로컬 로그인도 서버 인증도 없으면 cli_auth_missing 으로 서버 폴백(무 emit)', async () => {
+  const noEmit = (e: ChatEvent) => assert.fail(`emit 금지: ${e.kind}`);
+  const r = await runLocalChatTurn(
+    REQ,
+    baseDeps({ cliAuth: async (_tool, settings) => ({ ok: false, source: 'none', settings }) }),
+    noEmit,
+  );
+  assert.deepEqual([r.handled, r.reason], [false, 'cli_auth_missing']);
+});
+
+test('CLI 인증 프리플라이트가 settings 를 덮는다(이 PC 로그인 → oauth, 중앙 자격증명 제거)', async () => {
+  const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'chunk', text: 'ok' });
+    emit({ type: 'done', text: 'ok' });
+    return 'done';
+  });
+  await runLocalChatTurn(
+    REQ,
+    baseDeps({
+      runner,
+      cliAuth: async (_tool, settings) => ({
+        ok: true,
+        source: 'local_login',
+        settings: {
+          ...settings,
+          CODEX_AUTH_MODE: 'oauth',
+          CODEX_CREDENTIALS_JSON: undefined as never,
+        },
+      }),
+    }),
+    () => {},
+  );
+  assert.equal(runner.seen[0].context?.settings?.CODEX_AUTH_MODE, 'oauth');
+  assert.equal(runner.seen[0].context?.settings?.CODEX_BINARY_PATH, '/pc/codex');
+});
+
+test('로컬 시작 실패(첫 출력 전 [ERROR]/error) → local_start_failed 로 서버 폴백, 보고 없음', async () => {
+  const server = fakeServer();
+  const events: ChatEvent[] = [];
+  const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'started', surface: 'connector_local' });
+    emit({
+      type: 'chunk',
+      text: '\n[ERROR] geny agent could not start: Codex(api_key 모드): OPENAI_API_KEY 가 설정되어 있지 않습니다',
+    });
+    emit({ type: 'done', text: '' });
+    return 'done';
+  });
+  const r = await runLocalChatTurn(REQ, baseDeps({ server, runner }), (e) => events.push(e));
+  assert.equal(r.handled, false);
+  assert.equal(r.reason, 'local_start_failed');
+  assert.match(r.detail ?? '', /OPENAI_API_KEY/);
+  assert.deepEqual(
+    events.map((e) => e.kind),
+    ['status'],
+  ); // 텍스트는 보여 주지 않았다
+  assert.equal(server.reports.length, 0);
+  // 출력이 이미 나간 뒤의 오류는 로컬이 소유한다(기존 동작)
+  const runner2 = fakeRunner((_r, emit) => {
+    emit({ type: 'chunk', text: '부분' });
+    emit({ type: 'error', message: 'boom' });
+    return 'error';
+  });
+  const r2 = await runLocalChatTurn(REQ, baseDeps({ server, runner: runner2 }), () => {});
+  assert.equal(r2.handled, true);
 });
