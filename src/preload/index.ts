@@ -30,6 +30,38 @@ import type {
   BrowserState,
 } from '../core/browser';
 
+/** 로컬 실행 환경 상태(설정 화면) — 메인의 localRuntimeStatus 응답. */
+export interface LocalExecStatus {
+  enabled: boolean;
+  installed: boolean;
+  pythonPath: string;
+  version?: string;
+  sidecarOk?: boolean;
+  runtimeDir: string;
+  daemon: {
+    running: boolean;
+    pid?: number;
+    protocol?: number;
+    runtimeVersion?: string;
+    activeTurns: number;
+    lastError?: string;
+  };
+  cli: {
+    codex: { installed: boolean; path: string; version?: string };
+    claude: { installed: boolean; path: string; version?: string };
+  };
+  /** 서버가 알려준 목표 버전(없으면 서버 v1/미로그인). */
+  server: {
+    runtime?: string;
+    claude?: string | null;
+    codex?: string | null;
+    claudeEnabled?: boolean;
+    codexEnabled?: boolean;
+    manifestAt?: number;
+  } | null;
+  converge: { running: boolean; lastRunAt?: number; lastError?: string; summary?: string };
+}
+
 /** 가상 드라이브 상태 (main workspace-manager.WorkspaceStatus 미러). */
 export interface WorkspaceStatusLike {
   supported: boolean;
@@ -190,53 +222,24 @@ const api = {
   },
 
   /**
-   * 로컬 에이전트 실행 — 커넥터-세션 턴을 **사용자 PC** 에서 돌린다(무발산: 서버
-   * 웹과 같은 AgentTurnExecutor). 상태(에이전트/자격증명/메모리/이력)는 서버가
-   * 진실이고 main 이 받고 되돌린다. runTurn 으로 시작하고 onEvent 로 진행을 받는다.
-   */
-  localAgent: {
-    runTurn: (msg: {
-      workflowId: string;
-      interactionId: string;
-      text: string;
-    }): Promise<{ agentText: string; ok: boolean }> =>
-      ipcRenderer.invoke(CHANNELS.localAgentRun, msg),
-    onEvent: (
-      cb: (env: {
-        interactionId: string;
-        event: { type: 'chunk' | 'done' | 'error'; text?: string; message?: string };
-      }) => void,
-    ): (() => void) => {
-      const h = (_e: unknown, env: unknown) => cb(env as never);
-      ipcRenderer.on(CHANNELS.localAgentEvent, h);
-      return () => ipcRenderer.removeListener(CHANNELS.localAgentEvent, h);
-    },
-  },
-
-  /**
-   * 독립 로컬 실행 환경 — [설정 → 일반]의 버튼이 쓴다. 이식형 Python + 에이전트
-   * 런타임(사이드카 포함)을 userData 아래에 OS별로 설치한다. 설치되면 커넥터가
-   * 에이전트 턴을 사용자 PC 에서 로컬 스폰할 수 있다.
+   * 로컬 실행 환경 — 설치 폴더의 Python 런타임(사이드카) + Claude Code / Codex CLI.
+   * 커넥터에서 시작한 Agent-XGeny 턴은 자동으로 이 환경에서 돈다(chatStart). 여기는
+   * 상태 표시·설치·서버 버전 수렴([설정 → 일반]).
    */
   localRuntime: {
-    status: (): Promise<{
-      installed: boolean;
-      pythonPath: string;
-      version?: string;
-      sidecarOk?: boolean;
-      /** 'bundled' = 앱 내장, 'userData' = 설치 버튼 오버라이드, null = 없음. */
-      source?: 'userData' | 'bundled' | null;
-    }> => ipcRenderer.invoke(CHANNELS.localRuntimeStatus),
+    status: (): Promise<LocalExecStatus> => ipcRenderer.invoke(CHANNELS.localRuntimeStatus),
     install: (): Promise<{ ok: boolean; status?: unknown; error?: string }> =>
       ipcRenderer.invoke(CHANNELS.localRuntimeInstall),
+    /** 서버 매니페스트 기준으로 런타임/CLI 를 서버와 같은 버전으로 맞춘다. */
+    sync: (): Promise<LocalExecStatus> => ipcRenderer.invoke(CHANNELS.localRuntimeSync),
     onProgress: (
-      cb: (p: { phase: string; message: string; fraction?: number }) => void,
+      cb: (p: { phase: string; message: string; tool?: string; fraction?: number }) => void,
     ): (() => void) => {
       const h = (_e: unknown, p: unknown) => cb(p as never);
       ipcRenderer.on(CHANNELS.localRuntimeProgress, h);
       return () => ipcRenderer.removeListener(CHANNELS.localRuntimeProgress, h);
     },
-    /** CLI 바이너리(codex / Claude Code) — 공식 배포처에서 로컬 설치. */
+    /** CLI 바이너리(codex / Claude Code) — 공식 배포처에서 로컬 설치(서버 목표 버전). */
     cliStatus: (): Promise<{
       codex: { installed: boolean; path: string; version?: string };
       claude: { installed: boolean; path: string; version?: string };

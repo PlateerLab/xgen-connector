@@ -46,10 +46,7 @@ test('fetchLocalTurnContext: 인증 GET + server 브릿지를 커넥터가 채�
     'https://xgen.example/api/agentflow/geny-agent/wf1/local-turn-context?interaction_id=i1',
   );
   assert.equal(calls[0].init.method, 'GET');
-  assert.equal(
-    (calls[0].init.headers as Record<string, string>).Authorization,
-    'Bearer tok-123',
-  );
+  assert.equal((calls[0].init.headers as Record<string, string>).Authorization, 'Bearer tok-123');
   // 서버 응답은 agent/context 만 — server 는 커넥터가 자기 연결로 채운다.
   assert.equal(ctx.agent.provider, 'codex');
   assert.equal(ctx.context.api_keys?.openai, 'sk-acct');
@@ -63,10 +60,19 @@ test('reportTurnResult: 인증 POST + result body', async () => {
 
   assert.equal(calls[0].url, 'https://xgen.example/api/agentflow/geny-agent/wf1/report-turn');
   assert.equal(calls[0].init.method, 'POST');
+  // v2 body — 메타 기본값(status=ok, 빈 error/provider/model, null tool_events/usage)
   assert.deepEqual(JSON.parse(String(calls[0].init.body)), {
     interaction_id: 'i1',
     user_text: '안녕',
     agent_text: '반가워',
+    status: 'ok',
+    error: '',
+    tool_events: null,
+    usage: null,
+    provider: '',
+    model: '',
+    duration_ms: null,
+    device_name: '',
   });
 });
 

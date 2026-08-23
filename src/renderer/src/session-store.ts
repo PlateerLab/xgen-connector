@@ -34,6 +34,10 @@ export interface ChatMsg {
   error?: boolean;
   /** 이 메시지와 함께 보낸 화면 캡처 — 무엇을 찍었는지(창 이름). */
   screenshot?: { sourceName: string; width: number; height: number };
+  /** 이 턴의 실행 환경(커넥터 전용 status 이벤트) — 이 PC / 서버 sandbox. */
+  surface?: 'connector_local' | 'server_sandbox';
+  /** 서버 폴백 사유(있으면). */
+  surfaceNote?: string;
 }
 
 /** Public, immutable-per-change snapshot of one open session. */
@@ -160,7 +164,7 @@ export class SessionStore {
   }
 
   active(): SessionState | null {
-    return this._active ? this.map.get(this._active) ?? null : null;
+    return this._active ? (this.map.get(this._active) ?? null) : null;
   }
 
   get(key: string): SessionState | null {
@@ -252,7 +256,8 @@ export class SessionStore {
         const input = stripBrowserContext(
           typeof tn.input === 'string' ? tn.input : tn.input == null ? '' : String(tn.input),
         );
-        const output = typeof tn.output === 'string' ? tn.output : tn.output == null ? '' : String(tn.output);
+        const output =
+          typeof tn.output === 'string' ? tn.output : tn.output == null ? '' : String(tn.output);
         if (input) msgs.push({ role: 'user', text: input });
         if (output) msgs.push({ role: 'assistant', text: output });
       }
@@ -260,7 +265,13 @@ export class SessionStore {
       this.patch(key, (s) =>
         s.streaming || s.messages.length > 0
           ? { ...s, loadingHistory: false, historyLoaded: true }
-          : { ...s, messages: msgs, loadingHistory: false, historyLoaded: true, updatedAt: this.now() },
+          : {
+              ...s,
+              messages: msgs,
+              loadingHistory: false,
+              historyLoaded: true,
+              updatedAt: this.now(),
+            },
       );
     } catch {
       this.patch(key, (s) => ({ ...s, loadingHistory: false, historyLoaded: true }));
@@ -307,10 +318,20 @@ export class SessionStore {
       role: 'user',
       text,
       screenshot: shot
-        ? { sourceName: shot.sourceName ?? '화면', width: shot.width ?? 0, height: shot.height ?? 0 }
+        ? {
+            sourceName: shot.sourceName ?? '화면',
+            width: shot.width ?? 0,
+            height: shot.height ?? 0,
+          }
         : undefined,
     };
-    const asst: ChatMsg = { role: 'assistant', text: '', tools: [], citations: [], streaming: true };
+    const asst: ChatMsg = {
+      role: 'assistant',
+      text: '',
+      tools: [],
+      citations: [],
+      streaming: true,
+    };
     this.patch(key, (st) => ({
       ...st,
       messages: [...st.messages, userMsg, asst],
@@ -346,7 +367,10 @@ export class SessionStore {
       if (!last || last.role !== 'assistant') return s;
       const nl: ChatMsg = { ...last };
       if (ev.kind === 'text') nl.text = nl.text + ev.content;
-      else if (ev.kind === 'summary' && !nl.text) nl.text = ev.text;
+      else if (ev.kind === 'status') {
+        nl.surface = ev.surface;
+        nl.surfaceNote = ev.surface === 'server_sandbox' ? (ev.reason ?? ev.detail) : undefined;
+      } else if (ev.kind === 'summary' && !nl.text) nl.text = ev.text;
       else if (ev.kind === 'tool') {
         rt.tools = [...rt.tools, ev.event];
         nl.tools = rt.tools;

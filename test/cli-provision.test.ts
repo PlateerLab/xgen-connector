@@ -26,8 +26,14 @@ test('claudePlatformKey: manifest.json 의 플랫폼 키와 동일', () => {
 });
 
 test('cliBinaryPath: bin/ 아래, win 은 .exe', () => {
-  assert.equal(cliBinaryPath({ runtimeDir: '/rt', platform: 'linux' }, 'codex'), join('/rt', 'bin', 'codex'));
-  assert.equal(cliBinaryPath({ runtimeDir: '/rt', platform: 'win32' }, 'claude'), join('/rt', 'bin', 'claude.exe'));
+  assert.equal(
+    cliBinaryPath({ runtimeDir: '/rt', platform: 'linux' }, 'codex'),
+    join('/rt', 'bin', 'codex'),
+  );
+  assert.equal(
+    cliBinaryPath({ runtimeDir: '/rt', platform: 'win32' }, 'claude'),
+    join('/rt', 'bin', 'claude.exe'),
+  );
 });
 
 test('getCliStatus/cliSettings: 미설치 → installed=false, settings 비움', () => {
@@ -36,7 +42,12 @@ test('getCliStatus/cliSettings: 미설치 → installed=false, settings 비움',
     const s = getCliStatus({ runtimeDir: dir });
     assert.equal(s.codex.installed, false);
     assert.equal(s.claude.installed, false);
-    assert.deepEqual(cliSettings({ runtimeDir: dir }), {});
+    const s2 = cliSettings({ runtimeDir: dir });
+    // 바이너리 미설치 → 경로 settings 없음. 격리 홈(codex-home/claude-home)은 항상 준비된다.
+    assert.equal(s2.CODEX_BINARY_PATH, undefined);
+    assert.equal(s2.CLAUDE_CODE_BINARY_PATH, undefined);
+    assert.equal(s2.XGEN_LOCAL_CODEX_HOME, join(dir, 'codex-home'));
+    assert.equal(s2.XGEN_LOCAL_CLAUDE_CONFIG_DIR, join(dir, 'claude-home'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

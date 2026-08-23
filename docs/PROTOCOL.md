@@ -74,3 +74,16 @@ The connector flattens all of this into the `ChatEvent` union (see
 ## History
 - `GET /api/chat/io-logs?workflow_id=&interaction_id=&workflow_name=` → ordered turns.
 - `GET /api/interaction/list` → past conversations (`execution_meta_list`).
+
+## Local execution (connector-side agent turns)
+
+See `docs/LOCAL_EXECUTION.md`. Endpoints used in addition to the chat stream:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/agentflow/geny-agent/local-runtime/manifest` | server runtime/CLI target versions |
+| GET | `/api/agentflow/geny-agent/{workflowId}/local-turn-context` | agent config + account credentials + admin settings |
+| POST | `/api/agentflow/geny-agent/{workflowId}/report-turn` | record a locally executed turn (text, tool events, usage, status) |
+| POST | `/api/agentflow/geny-memory/{workflowId}/rpc` | memory RPC used by the sidecar (shared vault) |
+
+Chat body extras: `client_surface: "connector"` (always), `execution_target: "sandbox"` (only when a turn could not run locally).

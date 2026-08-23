@@ -34,7 +34,7 @@ test('pythonArchiveUrl: python-build-standalone install_only URL', () => {
 });
 
 test('DEFAULT_RUNTIME_WHEEL: 릴리스된 runtime(host 포함) wheel 을 가리킨다', () => {
-  assert.match(DEFAULT_RUNTIME_WHEEL, /xgen-agent-runtime\/releases\/download\/v3\.6\.0\//);
+  assert.match(DEFAULT_RUNTIME_WHEEL, /xgen-agent-runtime\/releases\/download\/v3\.7\.0\//);
   assert.match(DEFAULT_RUNTIME_WHEEL, /\.whl$/);
 });
 

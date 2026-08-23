@@ -14,7 +14,7 @@
  * 설치 단계(installLocalRuntime):
  *   1) 이식형 CPython(astral-sh/python-build-standalone, install_only)을 현재
  *      OS/arch 트리플로 다운로드·추출.
- *   2) 그 python 으로 xgen-agent-runtime(v3.6.0 wheel, host 포함) 설치.
+ *   2) 그 python 으로 xgen-agent-runtime(v3.7.0 wheel, host 포함) 설치.
  *   3) import 스모크(xgen_agent_runtime.host.sidecar) 로 검증.
  * 각 단계에서 onProgress 로 진행 상황을 알린다.
  *
@@ -31,14 +31,14 @@ const execFileP = promisify(execFile);
 
 /** 기본 핀 — 릴리스된 runtime(host 서브패키지 포함) wheel. */
 export const DEFAULT_RUNTIME_WHEEL =
-  'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.6.0/xgen_agent_runtime-3.6.0-py3-none-any.whl';
+  'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.7.0/xgen_agent_runtime-3.7.0-py3-none-any.whl';
 const PBS_RELEASE = '20250808';
 const PBS_PYTHON = '3.12.11';
 
 export interface InstallDeps {
   /** 설치 루트 — 보통 <userData>/local-runtime (주입: app.getPath). */
   runtimeDir: string;
-  /** 런타임 pip 스펙(기본 v3.6.0 wheel URL). 로컬 경로/버전 핀도 가능. */
+  /** 런타임 pip 스펙(기본 v3.7.0 wheel URL). 로컬 경로/버전 핀도 가능. */
   runtimeSpec?: string;
   /** 주입 fetch(사설 인증서 정책·테스트). 기본 전역 fetch. */
   fetch?: typeof fetch;
@@ -94,26 +94,36 @@ export function pythonArchiveUrl(triple: string): string {
 export function getStatusFast(deps: InstallDeps): RuntimeStatus {
   const py = pythonExePath(deps.runtimeDir);
   if (!existsSync(py)) return { installed: false, pythonPath: py };
-  return { installed: true, pythonPath: py, version: readInstalledVersion(deps.runtimeDir), sidecarOk: true };
+  // 사이드카 모듈 파일이 실제로 있는지(반쪽 복사/손상 트리 판별) — python 실행 없이.
+  const sidecarOk = sitePackagesDirs(deps.runtimeDir).some((sp) =>
+    existsSync(join(sp, 'xgen_agent_runtime', 'host', 'sidecar.py')),
+  );
+  return {
+    installed: sidecarOk,
+    pythonPath: py,
+    version: readInstalledVersion(deps.runtimeDir),
+    sidecarOk,
+  };
+}
+
+/** 이 런타임 트리의 site-packages 후보들(OS 별 레이아웃). */
+export function sitePackagesDirs(runtimeDir: string): string[] {
+  const { readdirSync } = require('node:fs') as typeof import('node:fs');
+  if (process.platform === 'win32') return [join(runtimeDir, 'python', 'Lib', 'site-packages')];
+  const lib = join(runtimeDir, 'python', 'lib');
+  try {
+    return readdirSync(lib)
+      .filter((d) => d.startsWith('python3'))
+      .map((d) => join(lib, d, 'site-packages'));
+  } catch {
+    return [];
+  }
 }
 
 /** site-packages 의 xgen_agent_runtime dist-info 에서 버전 읽기(실행 없이). */
 export function readInstalledVersion(runtimeDir: string): string | undefined {
   const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
-  const roots =
-    process.platform === 'win32'
-      ? [join(runtimeDir, 'python', 'Lib', 'site-packages')]
-      : (() => {
-          const lib = join(runtimeDir, 'python', 'lib');
-          try {
-            return readdirSync(lib)
-              .filter((d) => d.startsWith('python3'))
-              .map((d) => join(lib, d, 'site-packages'));
-          } catch {
-            return [];
-          }
-        })();
-  for (const sp of roots) {
+  for (const sp of sitePackagesDirs(runtimeDir)) {
     try {
       const di = readdirSync(sp).find((d) => /^xgen_agent_runtime-.*\.dist-info$/.test(d));
       if (!di) continue;
@@ -156,7 +166,10 @@ export async function getStatus(deps: InstallDeps): Promise<RuntimeStatus> {
 async function download(url: string, dest: string, fetchImpl: typeof fetch): Promise<void> {
   const res = await fetchImpl(url, { redirect: 'follow' });
   if (!res.ok || !res.body) throw new Error(`다운로드 실패 ${res.status}: ${url}`);
-  await pipeline(Readable.fromWeb(res.body as import('stream/web').ReadableStream), createWriteStream(dest));
+  await pipeline(
+    Readable.fromWeb(res.body as import('stream/web').ReadableStream),
+    createWriteStream(dest),
+  );
 }
 
 /**
@@ -175,10 +188,10 @@ export async function installLocalRuntime(
   mkdirSync(deps.runtimeDir, { recursive: true });
   const tmp = mkdtempSync(join(deps.runtimeDir, '.tmp-'));
   const tarball = join(tmp, 'python.tar.gz');
+  // ⚠ 비파괴: 새 트리를 임시 위치에 **완성한 뒤** 기존 트리와 바꾼다. 다운로드/
+  // pip 가 중간에 실패해도 지금 동작하는 런타임은 그대로 남는다(예전엔 먼저
+  // 지워서 네트워크 한 번 끊기면 런타임이 사라졌다).
   try {
-    // 기존 트리 제거(재설치 = 깨끗이).
-    rmSync(pyRoot, { recursive: true, force: true });
-
     const triple = resolveTriple(deps.triple);
     onProgress({ phase: 'download', message: `이식형 Python 다운로드 (${triple})…` });
     await download(pythonArchiveUrl(triple), tarball, fetchImpl);
@@ -188,9 +201,11 @@ export async function installLocalRuntime(
     await execFileP('tar', ['-xzf', tarball, '-C', tmp]);
     const extracted = join(tmp, 'python');
     if (!existsSync(extracted)) throw new Error('추출 결과에 python/ 없음');
-    renameSync(extracted, pyRoot);
+    const stagedRoot = join(tmp, 'staged');
+    mkdirSync(stagedRoot, { recursive: true });
+    renameSync(extracted, join(stagedRoot, 'python'));
 
-    const py = pythonExePath(deps.runtimeDir);
+    const py = pythonExePath(stagedRoot);
     if (!existsSync(py)) throw new Error(`python 실행파일 없음: ${py}`);
 
     onProgress({ phase: 'pip', message: '에이전트 런타임 설치 중(수 분 소요)…' });
@@ -201,16 +216,58 @@ export async function installLocalRuntime(
     onProgress({ phase: 'smoke', message: '설치 검증 중…' });
     await execFileP(py, ['-c', 'import xgen_agent_runtime.host.sidecar']);
 
+    // 완성된 트리로 교체 — 기존 트리는 .old 로 밀어 두고 성공 후 삭제.
+    const old = join(deps.runtimeDir, '.python.old');
+    rmSync(old, { recursive: true, force: true });
+    if (existsSync(pyRoot)) renameSync(pyRoot, old);
+    renameSync(join(stagedRoot, 'python'), pyRoot);
+    rmSync(old, { recursive: true, force: true });
+
     const status = await getStatus(deps);
     onProgress({ phase: 'done', message: `설치 완료 (runtime ${status.version ?? '?'})` });
     return { ok: true, status };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     onProgress({ phase: 'error', message: `설치 실패: ${error}` });
-    // 실패한 반쪽 트리는 지운다(다음 상태조회가 '미설치'로 보이게).
-    rmSync(pyRoot, { recursive: true, force: true });
+    // 기존 트리는 건드리지 않았다 — 실패해도 이전 런타임은 그대로 동작한다.
     return { ok: false, error };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * 런타임 wheel 만 교체(Python 은 그대로) — 서버 매니페스트의 wheel_url 로 수렴할 때.
+ * `pip install --upgrade <wheel>` + import 스모크. 실패해도 기존 설치본은 남는다
+ * (pip 는 실패 시 이전 배포를 유지한다).
+ */
+export async function upgradeRuntimeWheel(
+  deps: InstallDeps,
+  wheelUrl: string,
+  onProgress: (p: InstallProgress) => void,
+): Promise<{ ok: boolean; version?: string; error?: string }> {
+  const py = pythonExePath(deps.runtimeDir);
+  if (!existsSync(py)) return { ok: false, error: '로컬 런타임(Python)이 설치되어 있지 않습니다' };
+  try {
+    onProgress({
+      phase: 'pip',
+      message: `에이전트 런타임 업데이트 중 (${wheelUrl.split('/').pop()})…`,
+    });
+    await execFileP(
+      py,
+      ['-m', 'pip', 'install', '--no-warn-script-location', '--upgrade', wheelUrl],
+      {
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+    onProgress({ phase: 'smoke', message: '업데이트 검증 중…' });
+    await execFileP(py, ['-c', 'import xgen_agent_runtime.host.sidecar']);
+    const version = readInstalledVersion(deps.runtimeDir);
+    onProgress({ phase: 'done', message: `런타임 업데이트 완료 (${version ?? '?'})` });
+    return { ok: true, version };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    onProgress({ phase: 'error', message: `런타임 업데이트 실패: ${error}` });
+    return { ok: false, error };
   }
 }

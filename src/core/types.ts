@@ -118,6 +118,16 @@ export type ChatEvent =
   | { kind: 'quota'; level: 'warning' | 'exceeded'; data: Record<string, unknown> }
   | { kind: 'summary'; text: string; data: Record<string, unknown> }
   | { kind: 'error'; detail: string }
+  // 실행 환경 안내(커넥터 전용) — 이 턴이 어디서 도는지. connector_local = 이 PC 의
+  // 사이드카, server_sandbox = 서버 sandbox(로컬 불가 사유 reason 포함).
+  | {
+      kind: 'status';
+      surface: 'connector_local' | 'server_sandbox';
+      provider?: string;
+      workspaceDir?: string;
+      reason?: string;
+      detail?: string;
+    }
   | { kind: 'end' };
 
 export interface ChatRequest {
@@ -128,6 +138,9 @@ export interface ChatRequest {
   interactionId: string;
   selectedCollections?: string[];
   selectedFiles?: (string | Record<string, unknown>)[];
+  /** 서버에 보내는 실행 환경 지시 — 커넥터가 로컬 실행 불가로 폴백할 때 'sandbox'
+   *  (서버는 커넥터 로컬 워크스페이스 프로브를 건너뛰고 서버 sandbox 에서 돌린다). */
+  executionTarget?: 'sandbox';
   includeLogs?: boolean;
   includeNodeStatus?: boolean;
   includeToolEvents?: boolean;
