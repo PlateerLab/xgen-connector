@@ -10,6 +10,8 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+// Windows 체크아웃(CRLF)에서도 \n 정규식이 맞도록 줄끝을 정규화해 읽는다 (v1.65 Windows CI 교훈).
+const readSrc = (f: string): string => readFileSync(f, 'utf-8').replace(/\r\n/g, '\n');
 
 const MAIN = join(__dirname, '..', 'src', 'main');
 
@@ -42,7 +44,7 @@ test('src/main/**: 로컬 모듈(./ ../) 런타임 require 금지 — 정적 imp
   assert.ok(files.length > 10, '메인 소스가 보인다');
   const violations: string[] = [];
   for (const f of files) {
-    for (const line of findLocalRequires(readFileSync(f, 'utf-8')))
+    for (const line of findLocalRequires(readSrc(f)))
       violations.push(`${f.replace(MAIN, 'src/main')}:${line}`);
   }
   assert.deepEqual(
@@ -56,15 +58,20 @@ test('가드 자체: 주석 속 문구는 통과, 실제 호출은 잡힌다(따
   assert.deepEqual(findLocalRequires("// require('./x') 금지\nconst a = 1;"), []);
   assert.deepEqual(findLocalRequires("/* const y = require('./y') */\nconst b = 2;"), []);
   assert.deepEqual(
-    findLocalRequires("const { A } = require('./a');\nconst B = require(\"../b\") as X;\nrequire('node:fs');"),
+    findLocalRequires(
+      "const { A } = require('./a');\nconst B = require(\"../b\") as X;\nrequire('node:fs');",
+    ),
     [1, 2],
   );
 });
 
 test('index.ts 의 WorkspaceBridge / pythonExePath 는 정적 import 다(부팅 오류 원인 고정)', () => {
-  const src = readFileSync(join(MAIN, 'index.ts'), 'utf-8');
+  const src = readSrc(join(MAIN, 'index.ts'));
   assert.match(src, /^import \{ WorkspaceBridge \} from '\.\/workspace-bridge-tools';/m);
-  assert.match(src, /pythonExePath as localRuntimePythonExePath,\n\} from '\.\/local-runtime-install'/);
-  const sidecar = readFileSync(join(MAIN, 'local-agent-sidecar.ts'), 'utf-8');
+  assert.match(
+    src,
+    /pythonExePath as localRuntimePythonExePath,\n\} from '\.\/local-runtime-install'/,
+  );
+  const sidecar = readSrc(join(MAIN, 'local-agent-sidecar.ts'));
   assert.match(sidecar, /^import \{ pythonExePath \} from '\.\/local-runtime-install';/m);
 });
