@@ -85,6 +85,50 @@ export function pythonArchiveUrl(triple: string): string {
   return `https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/${name}`;
 }
 
+/**
+ * 빠른 상태 — **파일 존재 기반**(python 실행 없음). UI/라우팅 판정용.
+ * 실행 스모크(getStatus)는 사용자 머신의 보안 정책/환경에 따라 실패해
+ * "내장돼 있는데 준비 중"으로 오표시될 수 있다(실기) — 존재가 진실이고,
+ * 실제 실행 문제는 턴 시점 error 로 드러난다. 버전은 dist-info 파일에서.
+ */
+export function getStatusFast(deps: InstallDeps): RuntimeStatus {
+  const py = pythonExePath(deps.runtimeDir);
+  if (!existsSync(py)) return { installed: false, pythonPath: py };
+  return { installed: true, pythonPath: py, version: readInstalledVersion(deps.runtimeDir), sidecarOk: true };
+}
+
+/** site-packages 의 xgen_agent_runtime dist-info 에서 버전 읽기(실행 없이). */
+export function readInstalledVersion(runtimeDir: string): string | undefined {
+  const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
+  const roots =
+    process.platform === 'win32'
+      ? [join(runtimeDir, 'python', 'Lib', 'site-packages')]
+      : (() => {
+          const lib = join(runtimeDir, 'python', 'lib');
+          try {
+            return readdirSync(lib)
+              .filter((d) => d.startsWith('python3'))
+              .map((d) => join(lib, d, 'site-packages'));
+          } catch {
+            return [];
+          }
+        })();
+  for (const sp of roots) {
+    try {
+      const di = readdirSync(sp).find((d) => /^xgen_agent_runtime-.*\.dist-info$/.test(d));
+      if (!di) continue;
+      const meta = readFileSync(join(sp, di, 'METADATA'), 'utf-8');
+      const m = /^Version:\s*(\S+)/m.exec(meta);
+      if (m) return m[1];
+      const vm = /^xgen_agent_runtime-([^-]+)\.dist-info$/.exec(di);
+      if (vm) return vm[1];
+    } catch {
+      /* 다음 루트 */
+    }
+  }
+  return undefined;
+}
+
 /** 설치 상태 조회 — python 존재 + runtime 버전 + 사이드카 import 여부. */
 export async function getStatus(deps: InstallDeps): Promise<RuntimeStatus> {
   const py = pythonExePath(deps.runtimeDir);
