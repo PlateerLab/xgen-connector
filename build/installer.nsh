@@ -8,23 +8,27 @@
 ; 으로 남기면, 앱 첫 부팅(data-root.consumeInstallOptions)이 한 번 삼켜 config 에
 ; 반영하고 체크된 것들을 자동 설치한다(인스톨러는 다운로드하지 않는다 — 오프라인
 ; 설치를 깨지 않기 위해; 실제 설치는 앱의 부팅 프로비저닝이 수행).
-Var XgenDataRoot
-Var XgenDlg
-Var XgenDirBox
-Var XgenDirBtn
-Var XgenChkRuntime
-Var XgenChkCodex
-Var XgenChkClaude
-Var XgenRuntimeState
-Var XgenCodexState
-Var XgenClaudeState
-
 ; 페이지·함수 정의 전체를 이 매크로 안에 둔다 — electron-builder 는 이 파일을
 ; 스크립트 최상단(MUI2/LogicLib 로드 전)에 !include 하므로, 밖에 두면
 ; MUI_HEADER_TEXT/${If}/NSD_* 가 미정의다. 이 매크로는 페이지 나열 시점
 ; (MUI2 로드 후)에 삽입되므로 안전하다. NSIS 는 Function 정의를 페이지 나열
 ; 위치에 두는 것을 허용한다.
 !macro customPageAfterChangeDir
+  ; Var 는 여기(설치자 패스에서만 삽입되는 매크로) 안에 선언한다 —
+  ; 전역에 두면 uninstaller 컴파일 패스(훅 미삽입)에서 미사용 경고(6001)가
+  ; warning-as-error 로 빌드를 죽인다(실기). customInstall 은 페이지 이후에
+  ; 삽입되므로 이 선언을 그대로 쓴다.
+  Var XgenDataRoot
+  Var XgenDlg
+  Var XgenDirBox
+  Var XgenDirBtn
+  Var XgenChkRuntime
+  Var XgenChkCodex
+  Var XgenChkClaude
+  Var XgenRuntimeState
+  Var XgenCodexState
+  Var XgenClaudeState
+
   !include nsDialogs.nsh
   !include LogicLib.nsh
 
