@@ -105,6 +105,10 @@ win:
     - nsis
   artifactName: XGEN-Connector-Setup-${version}.${ext}
 nsis:
+  # 통합 데이터 폴더 선택 페이지(build/installer.nsh)를 보이려면 assisted 설치가
+  # 필요하다 — one-click 은 커스텀 페이지를 건너뛴다.
+  oneClick: false
+  allowToChangeInstallationDirectory: true
   # NSIS auto-selects installer UI language by OS locale among these.
   installerLanguages:
     - en_US
