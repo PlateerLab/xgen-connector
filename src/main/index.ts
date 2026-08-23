@@ -1959,6 +1959,15 @@ ipcMain.handle(CHANNELS.pickFolder, async () => {
     : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : (r.filePaths[0] ?? null);
 });
+ipcMain.handle(CHANNELS.appOpenFolder, async (_e, p: unknown) => {
+  const dir = typeof p === 'string' && p.trim() ? p : resolveDataRoot(loadConfig());
+  try {
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(dir, { recursive: true });
+  } catch { /* 열기에서 드러남 */ }
+  const err = await shell.openPath(dir);
+  return { ok: !err, error: err || undefined };
+});
 ipcMain.handle(CHANNELS.autostartGet, () => loadConfig().autoLaunch === true);
 ipcMain.handle(CHANNELS.autostartSet, (_e, enabled: boolean) => {
   // 실효 결과를 저장·반환 — 리눅스 AppImage 임시 마운트 등 등록이 거부되면

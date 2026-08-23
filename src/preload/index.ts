@@ -466,6 +466,9 @@ const api = {
     },
     /** 네이티브 폴더 선택 다이얼로그 — 절대 경로 또는 null(취소). */
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.pickFolder),
+    /** 설치 폴더(생략 시) 또는 지정 폴더를 파일 관리자로 연다. */
+    openFolder: (path?: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.appOpenFolder, path),
     getAutostart: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.autostartGet),
     setAutostart: (enabled: boolean): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.autostartSet, enabled),
