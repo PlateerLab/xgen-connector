@@ -723,7 +723,9 @@ export const Chat: React.FC<{
                         : `서버 sandbox 에서 실행${m.surfaceNote ? ` — ${m.surfaceNote}` : ''}`
                     }
                   >
-                    {m.surface === 'connector_local' ? '이 PC에서 실행' : '서버에서 실행'}
+                    {m.surface === 'connector_local'
+                      ? '이 PC에서 실행'
+                      : `서버에서 실행${m.surfaceNote ? ` — ${m.surfaceNote}` : ''}`}
                   </div>
                 )}
                 {m.tools && m.tools.length > 0 && (
