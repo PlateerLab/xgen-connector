@@ -35,7 +35,16 @@
  *       filter: ['**\/*']
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createWriteStream } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
@@ -56,7 +65,7 @@ const PBS_PYTHON = process.env.PBS_PYTHON || '3.12.11';
 // 저장소만 체크아웃돼 로컬 경로가 없다).
 // ⚠ src/main/local-runtime-install.ts 의 RUNTIME_WHEEL_VERSION 과 같은 버전이어야 한다
 //   (test/bundle-layout.test.ts 가 잠근다 — .mjs 는 TS 상수를 import 하지 못한다).
-const RELEASED_RUNTIME_VERSION = '3.8.0';
+const RELEASED_RUNTIME_VERSION = '3.8.1';
 const RELEASED_RUNTIME_WHEEL = `https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v${RELEASED_RUNTIME_VERSION}/xgen_agent_runtime-${RELEASED_RUNTIME_VERSION}-py3-none-any.whl`;
 const localRuntimePath = join(WORKSPACE, 'xgen-agent-runtime');
 const RUNTIME_SPEC =
@@ -94,9 +103,7 @@ async function download(url, dest) {
 }
 
 function pythonExe(root) {
-  return process.platform === 'win32'
-    ? join(root, 'python.exe')
-    : join(root, 'bin', 'python3');
+  return process.platform === 'win32' ? join(root, 'python.exe') : join(root, 'bin', 'python3');
 }
 
 function cleanTree(root) {
@@ -182,7 +189,12 @@ async function main() {
 
     // 런타임 버전 스탬프 — 인스톨러가 "이미 같은 버전이 설치돼 있으면 재복사 생략" 을 판정하는 데 쓴다
     // (dist-info 를 NSIS 가 읽기 어렵다). 형식: <runtime version>\n<python tag>
-    const rtVer = execFileSync(py, ['-c', 'import importlib.metadata as m; print(m.version("xgen-agent-runtime"))']).toString().trim();
+    const rtVer = execFileSync(py, [
+      '-c',
+      'import importlib.metadata as m; print(m.version("xgen-agent-runtime"))',
+    ])
+      .toString()
+      .trim();
     writeFileSync(join(PY_DIR, 'RUNTIME_VERSION'), `${rtVer}\n${PBS_PYTHON}+${PBS_RELEASE}\n`);
     log(`스탬프: RUNTIME_VERSION = ${rtVer} (python ${PBS_PYTHON}+${PBS_RELEASE})`);
 
