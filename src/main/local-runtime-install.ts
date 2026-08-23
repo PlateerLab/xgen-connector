@@ -143,6 +143,15 @@ export function sitePackagesDirs(runtimeDir: string): string[] {
 /** site-packages 의 xgen_agent_runtime dist-info 에서 버전 읽기(실행 없이). */
 export function readInstalledVersion(runtimeDir: string): string | undefined {
   const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
+  // 번들 스탬프(RUNTIME_VERSION 첫 줄) 우선 — dist-info 가 정리된 트리에서도 버전을 안다.
+  try {
+    const stamp = readFileSync(join(runtimeDir, 'python', 'RUNTIME_VERSION'), 'utf-8')
+      .split(/\r?\n/)[0]
+      .trim();
+    if (/^\d+\.\d+\.\d+/.test(stamp)) return stamp;
+  } catch {
+    /* 스탬프 없음 — dist-info 로 */
+  }
   for (const sp of sitePackagesDirs(runtimeDir)) {
     try {
       const di = readdirSync(sp).find((d) => /^xgen_agent_runtime-.*\.dist-info$/.test(d));

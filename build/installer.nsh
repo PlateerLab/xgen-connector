@@ -337,15 +337,49 @@
     ${Else}
       !insertmacro XgenLog "bundle MISSING: $INSTDIR\resources\python\python.exe (앱 첫 실행 때 복구/다운로드)"
     ${EndIf}
-    DetailPrint "런타임 복사: $INSTDIR\resources\python → $XgenDataRoot\local-runtime\python"
-    !insertmacro XgenLog "copy start → $XgenDataRoot\local-runtime\python"
-    CreateDirectory "$XgenDataRoot\local-runtime"
-    RMDir /r "$XgenDataRoot\local-runtime\python"
-    Push "$INSTDIR\resources\python"
-    Push "$XgenDataRoot\local-runtime\python"
-    Call XgenCopyEntries
-    DetailPrint "런타임 복사 완료"
-    !insertmacro XgenLog "copy done → $XgenDataRoot\local-runtime\python"
+    ; ── 재사용 판정: 설치 폴더에 **같은 버전**의 런타임이 이미 있고 실행되면 다시 복사하지 않는다
+    ;    (업데이트 때 1GB 삭제/복사로 시간을 낭비하지 않는다). 버전 스탬프 RUNTIME_VERSION(번들 스크립트) 비교.
+    StrCpy $5 ""
+    StrCpy $6 ""
+    ${If} ${FileExists} "$INSTDIR\resources\python\RUNTIME_VERSION"
+      FileOpen $0 "$INSTDIR\resources\python\RUNTIME_VERSION" r
+      ${If} $0 != ""
+        FileRead $0 $5
+        FileClose $0
+      ${EndIf}
+    ${EndIf}
+    ${If} ${FileExists} "$XgenDataRoot\local-runtime\python\RUNTIME_VERSION"
+      FileOpen $0 "$XgenDataRoot\local-runtime\python\RUNTIME_VERSION" r
+      ${If} $0 != ""
+        FileRead $0 $6
+        FileClose $0
+      ${EndIf}
+    ${EndIf}
+    StrCpy $7 0
+    ${If} $5 != ""
+    ${AndIf} $5 == $6
+    ${AndIf} ${FileExists} "$XgenDataRoot\local-runtime\python\python.exe"
+      nsExec::ExecToStack '"$XgenDataRoot\local-runtime\python\python.exe" -I -c "import xgen_agent_runtime.host.sidecar"'
+      Pop $0
+      Pop $1
+      ${If} $0 == 0
+        StrCpy $7 1
+      ${EndIf}
+    ${EndIf}
+    ${If} $7 == 1
+      DetailPrint "로컬 실행 런타임 재사용 — 이미 같은 버전이 설치되어 있습니다 ($5)"
+      !insertmacro XgenLog "runtime reuse (same version $5, smoke OK) — copy skipped"
+    ${Else}
+      DetailPrint "런타임 복사: $INSTDIR\resources\python → $XgenDataRoot\local-runtime\python"
+      !insertmacro XgenLog "copy start → $XgenDataRoot\local-runtime\python (bundle=$5 installed=$6)"
+      CreateDirectory "$XgenDataRoot\local-runtime"
+      RMDir /r "$XgenDataRoot\local-runtime\python"
+      Push "$INSTDIR\resources\python"
+      Push "$XgenDataRoot\local-runtime\python"
+      Call XgenCopyEntries
+      DetailPrint "런타임 복사 완료"
+      !insertmacro XgenLog "copy done → $XgenDataRoot\local-runtime\python"
+    ${EndIf}
     ${If} ${FileExists} "$XgenDataRoot\local-runtime\python\python.exe"
       !insertmacro XgenLog "copied python.exe present"
     ${Else}

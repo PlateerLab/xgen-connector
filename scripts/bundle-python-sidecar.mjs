@@ -35,7 +35,7 @@
  *       filter: ['**\/*']
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, readdirSync, renameSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createWriteStream } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
@@ -177,6 +177,12 @@ async function main() {
     // 3) 정리.
     log('정리(__pycache__/tests)…');
     cleanTree(PY_DIR);
+
+    // 런타임 버전 스탬프 — 인스톨러가 "이미 같은 버전이 설치돼 있으면 재복사 생략" 을 판정하는 데 쓴다
+    // (dist-info 를 NSIS 가 읽기 어렵다). 형식: <runtime version>\n<python tag>
+    const rtVer = execFileSync(py, ['-c', 'import importlib.metadata as m; print(m.version("xgen-agent-runtime"))']).toString().trim();
+    writeFileSync(join(PY_DIR, 'RUNTIME_VERSION'), `${rtVer}\n${PBS_PYTHON}+${PBS_RELEASE}\n`);
+    log(`스탬프: RUNTIME_VERSION = ${rtVer} (python ${PBS_PYTHON}+${PBS_RELEASE})`);
 
     // 스모크: sidecar 모듈이 import 되나.
     execFileSync(py, ['-c', 'import xgen_agent_runtime.host.sidecar; print("sidecar OK")'], {

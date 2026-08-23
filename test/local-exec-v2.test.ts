@@ -15,6 +15,7 @@ import {
   describeFallback,
   runLocalChatTurn,
   type LocalChatDeps,
+  serverCliAuth,
 } from '../src/main/local-chat-route';
 import { planConverge } from '../src/main/local-runtime-converge';
 import { codexAssetUrl, ensureCliConverged } from '../src/main/cli-provision';
@@ -32,7 +33,11 @@ const REQ: ChatRequest = {
 };
 const CTX = {
   agent: { provider: 'codex', model: 'gpt-5.3-codex' },
-  context: { api_keys: { openai: 'sk' }, settings: { CODEX_AUTH_MODE: 'oauth' } },
+  // 서버 일원화 인증: codex oauth 모드 + 중앙 자격증명(서버가 준다) — 프리플라이트 통과
+  context: {
+    api_keys: { openai: 'sk' },
+    settings: { CODEX_AUTH_MODE: 'oauth', CODEX_CREDENTIALS_JSON: '{"tokens":{}}' },
+  },
   server: { url: 'https://s', token: 't' },
   protocol: 2,
 };
@@ -538,4 +543,41 @@ test('로컬 시작 실패(첫 출력 전 [ERROR]/error) → local_start_failed 
   });
   const r2 = await runLocalChatTurn(REQ, baseDeps({ server, runner: runner2 }), () => {});
   assert.equal(r2.handled, true);
+});
+
+test('serverCliAuth: 서버가 준 인증만 — api_key 키 / setup_token 토큰 / oauth 중앙 자격증명, 없으면 none(서버 실행)', () => {
+  assert.equal(
+    serverCliAuth('codex', { CODEX_AUTH_MODE: 'api_key' }, { openai: 'sk' }).source,
+    'server_api_key',
+  );
+  assert.equal(serverCliAuth('codex', { CODEX_AUTH_MODE: 'api_key' }, {}).ok, false);
+  assert.equal(
+    serverCliAuth('codex', { CODEX_AUTH_MODE: 'oauth', CODEX_CREDENTIALS_JSON: '{}' }, {}).source,
+    'server_credentials',
+  );
+  assert.equal(serverCliAuth('codex', { CODEX_AUTH_MODE: 'oauth' }, {}).ok, false);
+  assert.equal(
+    serverCliAuth(
+      'claude',
+      { CLAUDE_CODE_AUTH_MODE: 'setup_token', CLAUDE_CODE_OAUTH_TOKEN: 't' },
+      {},
+    ).source,
+    'server_token',
+  );
+  assert.equal(serverCliAuth('claude', { CLAUDE_CODE_AUTH_MODE: 'oauth' }, {}).ok, false); // 파드 로컬 로그인은 PC 로 못 온다
+  assert.equal(serverCliAuth('claude', {}, { anthropic: 'k' }).source, 'server_api_key');
+});
+
+test('서버 인증이 없는 CLI provider 는 기본 프리플라이트만으로 cli_auth_missing → 서버 실행(무 emit)', async () => {
+  const noEmit = (e: ChatEvent) => assert.fail(`emit 금지: ${e.kind}`);
+  const server = fakeServer({
+    fetchLocalTurnContext: async () => ({
+      agent: { provider: 'claude_code', model: 'sonnet' },
+      context: { api_keys: {}, settings: { CLAUDE_CODE_AUTH_MODE: 'oauth' } },
+      server: { url: 'https://s', token: 't' },
+      protocol: 2,
+    }),
+  });
+  const r = await runLocalChatTurn(REQ, baseDeps({ server, cliSettings: () => ({}) }), noEmit);
+  assert.deepEqual([r.handled, r.reason], [false, 'cli_auth_missing']);
 });

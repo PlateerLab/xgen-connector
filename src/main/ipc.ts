@@ -180,13 +180,6 @@ export const CHANNELS = {
   // CLI 바이너리(codex / Claude Code) 프로비저닝 — 공식 배포처에서 로컬 설치.
   localCliStatus: 'local-cli:status',
   localCliInstall: 'local-cli:install', // arg: 'codex' | 'claude'
-  // CLI 로그인(이 PC 격리 홈) — 상태/시작/입력/취소/로그아웃 + 진행 이벤트 push
-  localCliAuthStatus: 'local-cli-auth:status', // arg: tool → CliAuthStatus
-  localCliAuthLogin: 'local-cli-auth:login', // arg: tool → {ok, jobId}
-  localCliAuthInput: 'local-cli-auth:input', // arg: jobId, text
-  localCliAuthCancel: 'local-cli-auth:cancel', // arg: jobId
-  localCliAuthLogout: 'local-cli-auth:logout', // arg: tool
-  localCliAuthEvent: 'local-cli-auth:event', // main→renderer {jobId, event}
   /** 설치 폴더 등 로컬 폴더를 OS 파일 관리자로 연다. */
   appOpenFolder: 'app:openFolder',
 } as const;

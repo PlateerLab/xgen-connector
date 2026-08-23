@@ -53,16 +53,23 @@
 - 설정 → 스토리지 → [진단 로그 복사] 의 `local-exec` 항목: 폴백 사유, 사이드카 기동/종료, 수렴 계획.
 - 채팅 메시지 상단 배지: **이 PC에서 실행** / **서버에서 실행(사유)**.
 
-## CLI 인증 (이 PC 로그인) — `local-cli-auth.ts`
+## CLI 인증 — 서버 일원화 (개별 PC 로그인 없음)
 
-XGEN 관리자 LLM 탭과 같은 로그인 흐름을 커넥터 안에서 제공한다. 자격증명은 설치 폴더의 격리 홈에만 남는다.
+커넥터는 Claude Code / Codex 인증을 **서버(관리자 LLM 설정)가 준 것만** 쓴다 — turn context 의 settings/api_keys:
 
-| 도구 | 로그인 | 상태 | 로그아웃 |
+| 도구 | 서버 인증 모드 | 커넥터 전달 | 없으면 |
 |---|---|---|---|
-| Claude Code | `claude auth login --claudeai` (파이프) → URL 열기 → 브라우저가 준 코드 입력(stdin) | `claude auth status` (JSON) | `claude auth logout` |
-| Codex | `codex login --device-auth` (파이프) → URL 열기 + 일회용 코드 표시 → CLI 폴링 완료 | `codex login status` | `codex logout` |
+| Claude Code | api_key | `api_keys.anthropic` | 서버에서 실행 |
+| Claude Code | setup_token | `CLAUDE_CODE_OAUTH_TOKEN`(중앙 장수명 토큰) → 사이드카가 env 로 주입 | 서버에서 실행 |
+| Claude Code | oauth(파드 로컬) | 전달 불가 | 서버에서 실행 |
+| Codex | api_key | `api_keys.openai` | 서버에서 실행 |
+| Codex | oauth | `CODEX_CREDENTIALS_JSON`(중앙 ChatGPT 자격증명) → 사이드카가 격리 `codex-home/auth.json` 에 물질화 | 서버에서 실행 |
 
-로컬 턴 settings 우선순위: **이 PC 로그인(oauth) > 서버 설정(API 키 / 중앙 자격증명)**. 로그인이 있으면
-`CODEX_AUTH_MODE`/`CLAUDE_CODE_AUTH_MODE=oauth` 로 덮고 서버 중앙 자격증명은 제거한다(격리 홈을 덮어쓰지 않게).
-둘 다 없으면 로컬에서 시작하지 않고 **서버로 폴백**(`cli_auth_missing`). 로컬 실행이 첫 출력 전에 죽으면
-(인증 만료·바이너리 실행 실패·키 없음 등 "[ERROR] … could not start") 역시 서버로 폴백(`local_start_failed`).
+프리플라이트(`serverCliAuth`)가 없음을 판정하면 로컬에서 시작하지 않고 `cli_auth_missing` 으로 서버 sandbox 에서
+실행한다. 로컬 실행이 첫 출력 전에 죽으면(인증 만료 등) `local_start_failed` 로 역시 서버 폴백. 중앙 자격증명은
+매 턴 서버 값으로 다시 물질화되므로 PC 에서 갱신된 토큰은 버려진다(서버가 진실).
+
+## 설치 시 런타임 재사용
+
+인스톨러는 `resources\python\RUNTIME_VERSION`(번들 스탬프)과 `<설치폴더>\local-runtime\python\RUNTIME_VERSION` 이
+같고 import 스모크가 통과하면 **복사를 생략**한다(업데이트 때 1GB 삭제/복사 없음). 다르면 항목별 복사.
