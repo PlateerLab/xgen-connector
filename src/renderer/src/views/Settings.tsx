@@ -7,6 +7,7 @@ import {
 } from '../../../core/browser';
 import type { ConnectorConfig } from '../../../main/config';
 import { HotkeyCapture } from './HotkeyCapture';
+import { SettingsSection } from './SettingsSection';
 import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
@@ -370,7 +371,7 @@ export const Settings: React.FC<{
       <div className="settings-panel">
         {/* ─── 연결 ─── */}
         {tab === 'connection' && (
-          <>
+          <SettingsSection title="서버">
             <label className="field">
               <span>서버 주소</span>
               <div className="row">
@@ -430,229 +431,396 @@ export const Settings: React.FC<{
             <p className="settings-hint">
               사설 인증서·SSO 를 바꾼 뒤에는 위 <b>저장</b> 버튼을 눌러 적용하세요.
             </p>
-          </>
+          </SettingsSection>
         )}
 
-        {/* ─── 일반 ─── */}
+        {/* ─── 일반 — [일반][업데이트][설치] 세 분류(공통 SettingsSection) ─── */}
         {tab === 'general' && (
           <>
-            <div className="field-row">
-              <span>테마</span>
-              <div className="seg">
-                {(['system', 'light', 'dark'] as const).map((t) => (
-                  <button
-                    key={t}
-                    className={theme === t ? 'active' : ''}
-                    onClick={() => {
-                      setTheme(t);
-                      void apply({ theme: t });
-                    }}
-                  >
-                    {t === 'system' ? '시스템' : t === 'light' ? '라이트' : '다크'}
-                  </button>
-                ))}
+            <SettingsSection title="일반">
+              <div className="field-row">
+                <span>테마</span>
+                <div className="seg">
+                  {(['system', 'light', 'dark'] as const).map((t) => (
+                    <button
+                      key={t}
+                      className={theme === t ? 'active' : ''}
+                      onClick={() => {
+                        setTheme(t);
+                        void apply({ theme: t });
+                      }}
+                    >
+                      {t === 'system' ? '시스템' : t === 'light' ? '라이트' : '다크'}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            <div className="field-row">
-              <span>빠른 채팅 (단축키)</span>
-              <div className="row">
-                {quickChat && (
-                  <HotkeyCapture value={hotkey} onCapture={(a) => void changeHotkey(a)} />
-                )}
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={quickChat}
-                    onChange={(e) => {
-                      setQuickChat(e.target.checked);
-                      void xgen.quickChat.setEnabled(e.target.checked);
-                      void onChanged();
-                    }}
-                  />
-                  <span className="track" />
-                </label>
+              <div className="field-row">
+                <span>빠른 채팅 (단축키)</span>
+                <div className="row">
+                  {quickChat && (
+                    <HotkeyCapture value={hotkey} onCapture={(a) => void changeHotkey(a)} />
+                  )}
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={quickChat}
+                      onChange={(e) => {
+                        setQuickChat(e.target.checked);
+                        void xgen.quickChat.setEnabled(e.target.checked);
+                        void onChanged();
+                      }}
+                    />
+                    <span className="track" />
+                  </label>
+                </div>
               </div>
-            </div>
 
-            <div className="field-row">
-              <span>
-                로그인 시 시작
-                {autostartRefused && (
-                  <span className="small notice-warn" style={{ marginLeft: 8 }}>
-                    등록 불가 — AppImage 를 고정 경로에 두고 다시 시도하세요
-                  </span>
-                )}
-              </span>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={autostart}
-                  onChange={(e) => {
-                    const wanted = e.target.checked;
-                    void xgen.appctl.setAutostart(wanted).then((effective) => {
-                      setAutostart(effective);
-                      setAutostartRefused(wanted && !effective);
-                    });
-                  }}
-                />
-                <span className="track" />
-              </label>
-            </div>
-
-            {isLinux && (
               <div className="field-row">
                 <span>
-                  오버레이 클릭 통과 (Linux)
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    켜면 오버레이가 마우스에 완전히 투명해집니다 (상호작용 불가)
-                  </span>
+                  로그인 시 시작
+                  {autostartRefused && (
+                    <span className="small notice-warn" style={{ marginLeft: 8 }}>
+                      등록 불가 — AppImage 를 고정 경로에 두고 다시 시도하세요
+                    </span>
+                  )}
                 </span>
                 <label className="switch">
                   <input
                     type="checkbox"
-                    checked={linuxClickThrough}
+                    checked={autostart}
                     onChange={(e) => {
-                      setLinuxClickThrough(e.target.checked);
-                      void apply({ linuxClickThrough: e.target.checked });
+                      const wanted = e.target.checked;
+                      void xgen.appctl.setAutostart(wanted).then((effective) => {
+                        setAutostart(effective);
+                        setAutostartRefused(wanted && !effective);
+                      });
                     }}
                   />
                   <span className="track" />
                 </label>
               </div>
-            )}
 
-            <div className="field-row">
-              <span>창 위치 초기화</span>
-              <button
-                className="secondary"
-                onClick={() => {
-                  xgen.appctl.resetPositions();
-                  setResetDone(true);
-                  setTimeout(() => setResetDone(false), 1500);
-                }}
-              >
-                {resetDone ? '완료' : '초기화'}
-              </button>
-            </div>
+              {isLinux && (
+                <div className="field-row">
+                  <span>
+                    오버레이 클릭 통과 (Linux)
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      켜면 오버레이가 마우스에 완전히 투명해집니다 (상호작용 불가)
+                    </span>
+                  </span>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={linuxClickThrough}
+                      onChange={(e) => {
+                        setLinuxClickThrough(e.target.checked);
+                        void apply({ linuxClickThrough: e.target.checked });
+                      }}
+                    />
+                    <span className="track" />
+                  </label>
+                </div>
+              )}
+
+              <div className="field-row">
+                <span>창 위치 초기화</span>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    xgen.appctl.resetPositions();
+                    setResetDone(true);
+                    setTimeout(() => setResetDone(false), 1500);
+                  }}
+                >
+                  {resetDone ? '완료' : '초기화'}
+                </button>
+              </div>
+              <div className="field-row">
+                <span>
+                  저장된 설정 초기화
+                  {confirmSettingsReset && (
+                    <span className="small notice-warn">
+                      서버, SSO, 업데이트, MCP, 워크스페이스 설정과 저장된 로그인 정보가 모두
+                      삭제됩니다. 앱은 설치본의 기본 설정으로 다시 시작됩니다.
+                    </span>
+                  )}
+                </span>
+                <div className="row">
+                  {confirmSettingsReset && (
+                    <button className="secondary" onClick={() => setConfirmSettingsReset(false)}>
+                      취소
+                    </button>
+                  )}
+                  <button
+                    className={confirmSettingsReset ? 'danger' : 'secondary'}
+                    onClick={() => {
+                      if (!confirmSettingsReset) {
+                        setConfirmSettingsReset(true);
+                        return;
+                      }
+                      xgen.appctl.resetSettings();
+                    }}
+                  >
+                    {confirmSettingsReset ? '초기화 및 재시작' : '초기화'}
+                  </button>
+                </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection title="업데이트">
+              <div className="field-row">
+                <span>
+                  업데이트 서버
+                  {updateServer === 'xgen' && (
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      설정된 XGEN 서버의 다운로드 센터
+                    </span>
+                  )}
+                </span>
+                <div className="seg">
+                  {(['github', 'xgen'] as const).map((source) => (
+                    <button
+                      key={source}
+                      className={updateServer === source ? 'active' : ''}
+                      onClick={() => {
+                        setUpdateServer(source);
+                        void apply({ updateServer: source });
+                      }}
+                    >
+                      {source === 'github' ? 'GitHub' : 'XGEN'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field-row">
+                <span>자동 업데이트</span>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={autoUpdate}
+                    onChange={(e) => {
+                      setAutoUpdate(e.target.checked);
+                      void xgen.updater.setEnabled(e.target.checked);
+                    }}
+                  />
+                  <span className="track" />
+                </label>
+              </div>
+              <div className="field-row">
+                <span>
+                  업데이트
+                  {version && (
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      v{version}
+                    </span>
+                  )}
+                </span>
+                <div className="row">
+                  {updateMsg && <span className="small muted">{updateMsg}</span>}
+                  <button
+                    className="secondary"
+                    disabled={checking}
+                    onClick={() => {
+                      setChecking(true);
+                      setUpdateMsg(null);
+                      void xgen.updater.check();
+                      setTimeout(() => setChecking(false), 25000);
+                    }}
+                  >
+                    {checking ? '확인 중…' : '업데이트 확인'}
+                  </button>
+                </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection title="설치">
+              <div className="field-row">
+                <span>
+                  설치 폴더
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {installRoot}
+                  </span>
+                </span>
+                <div className="row">
+                  <button className="secondary" onClick={() => void xgen.appctl.openFolder()}>
+                    열기
+                  </button>
+                </div>
+              </div>
+              <div className="field-row">
+                <span>
+                  에이전트 로컬 실행 런타임
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {lrStatus?.installed
+                      ? `내장됨 (런타임 ${lrStatus.version ?? '?'})`
+                      : (lrMsg ?? '자동 설치 중…')}
+                  </span>
+                </span>
+                {/* 내장이 기본 — 설치 버튼 없음. 없으면 부팅이 자동 설치한다. */}
+              </div>
+              {/* CLI provider 바이너리 — 서버가 CLI 를 갖추듯 커넥터도 갖춘다. */}
+              {(
+                [
+                  [
+                    'codex',
+                    'Codex CLI',
+                    'OpenAI Codex provider 의 로컬 실행 바이너리 (공식 릴리스)',
+                  ],
+                  [
+                    'claude',
+                    'Claude Code CLI',
+                    'Claude Code provider 의 로컬 실행 바이너리 (공식 배포)',
+                  ],
+                ] as const
+              ).map(([tool, label, desc]) => (
+                <div className="field-row" key={tool}>
+                  <span>
+                    {label}
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      {cliStatus?.[tool]?.installed
+                        ? `설치됨${cliStatus[tool].version ? ` (v${cliStatus[tool].version})` : ''}`
+                        : desc}
+                    </span>
+                  </span>
+                  <div className="row">
+                    <button
+                      className="secondary"
+                      disabled={cliBusy !== null}
+                      onClick={() => void installCli(tool)}
+                    >
+                      {cliBusy === tool
+                        ? '설치 중…'
+                        : cliStatus?.[tool]?.installed
+                          ? '업데이트'
+                          : '설치'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </SettingsSection>
           </>
         )}
 
         {/* ─── 아바타·자막 ─── */}
         {tab === 'avatar' && (
           <>
-            <div className="field-row">
-              <span>아바타 오버레이 (플로팅)</span>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={overlay}
-                  onChange={(e) => {
-                    setOverlay(e.target.checked);
-                    void xgen.overlay.setEnabled(e.target.checked);
-                    void onChanged();
-                  }}
-                />
-                <span className="track" />
-              </label>
-            </div>
-
-            <div className="field-row">
-              <span>말풍선 자막</span>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={subtitles}
-                  onChange={(e) => {
-                    setSubtitles(e.target.checked);
-                    void apply({ subtitles: e.target.checked });
-                  }}
-                />
-                <span className="track" />
-              </label>
-            </div>
-
-            <div className="field-row">
-              <span>
-                자막 출력 속도
-                <span className="small muted" style={{ marginLeft: 8 }}>
-                  {charMs >= 80 ? '느림' : charMs <= 30 ? '빠름' : '보통'}
-                </span>
-              </span>
-              <div className="seg">
-                {(
-                  [
-                    ['느림', 90],
-                    ['보통', 50],
-                    ['빠름', 25],
-                  ] as const
-                ).map(([label, ms]) => (
-                  <button
-                    key={ms}
-                    className={charMs === ms ? 'active' : ''}
-                    onClick={() => {
-                      setCharMs(ms);
-                      void apply({ subtitleCharMs: ms });
+            <SettingsSection title="아바타">
+              <div className="field-row">
+                <span>아바타 오버레이 (플로팅)</span>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={overlay}
+                    onChange={(e) => {
+                      setOverlay(e.target.checked);
+                      void xgen.overlay.setEnabled(e.target.checked);
+                      void onChanged();
                     }}
-                  >
-                    {label}
-                  </button>
-                ))}
+                  />
+                  <span className="track" />
+                </label>
               </div>
-            </div>
 
-            <div className="field-row">
-              <span>
-                자막 창 크기
-                <span className="small muted" style={{ marginLeft: 8 }}>
-                  {subtitleSize === 'sm' ? '3줄' : subtitleSize === 'md' ? '4~5줄' : '6~7줄'}
-                </span>
-              </span>
-              <div className="seg">
-                {(
-                  [
-                    ['작음', 'sm'],
-                    ['중간', 'md'],
-                    ['큼', 'lg'],
-                  ] as const
-                ).map(([label, sz]) => (
-                  <button
-                    key={sz}
-                    className={subtitleSize === sz ? 'active' : ''}
-                    onClick={() => {
-                      setSubtitleSize(sz);
-                      void apply({ subtitleSize: sz });
+              <div className="field-row">
+                <span>말풍선 자막</span>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={subtitles}
+                    onChange={(e) => {
+                      setSubtitles(e.target.checked);
+                      void apply({ subtitles: e.target.checked });
                     }}
-                  >
-                    {label}
-                  </button>
-                ))}
+                  />
+                  <span className="track" />
+                </label>
               </div>
-            </div>
 
-            {/* 음성 — 아바타가 말하고 듣는 통로라 아바타 탭에 둔다. */}
-            <div className="tool-card">
-              <div className="tool-card-main">
-                <span className="tool-card-icon">
-                  <SpeakerIcon size={18} />
+              <div className="field-row">
+                <span>
+                  자막 출력 속도
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {charMs >= 80 ? '느림' : charMs <= 30 ? '빠름' : '보통'}
+                  </span>
                 </span>
-                <div className="tool-card-text">
-                  <div className="tool-card-title">음성 (STT/TTS)</div>
-                  <div className="tool-card-desc">
-                    마이크 음성 입력과 답변 음성 출력. 입·출력 장치와 음성 프로필을 관리합니다.
-                  </div>
+                <div className="seg">
+                  {(
+                    [
+                      ['느림', 90],
+                      ['보통', 50],
+                      ['빠름', 25],
+                    ] as const
+                  ).map(([label, ms]) => (
+                    <button
+                      key={ms}
+                      className={charMs === ms ? 'active' : ''}
+                      onClick={() => {
+                        setCharMs(ms);
+                        void apply({ subtitleCharMs: ms });
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-                <button className="secondary" onClick={() => setShowVoice(true)}>
-                  관리
-                </button>
               </div>
-            </div>
+
+              <div className="field-row">
+                <span>
+                  자막 창 크기
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {subtitleSize === 'sm' ? '3줄' : subtitleSize === 'md' ? '4~5줄' : '6~7줄'}
+                  </span>
+                </span>
+                <div className="seg">
+                  {(
+                    [
+                      ['작음', 'sm'],
+                      ['중간', 'md'],
+                      ['큼', 'lg'],
+                    ] as const
+                  ).map(([label, sz]) => (
+                    <button
+                      key={sz}
+                      className={subtitleSize === sz ? 'active' : ''}
+                      onClick={() => {
+                        setSubtitleSize(sz);
+                        void apply({ subtitleSize: sz });
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </SettingsSection>
+            <SettingsSection plain title="음성">
+              {/* 음성 — 아바타가 말하고 듣는 통로라 아바타 탭에 둔다. */}
+              <div className="tool-card">
+                <div className="tool-card-main">
+                  <span className="tool-card-icon">
+                    <SpeakerIcon size={18} />
+                  </span>
+                  <div className="tool-card-text">
+                    <div className="tool-card-title">음성 (STT/TTS)</div>
+                    <div className="tool-card-desc">
+                      마이크 음성 입력과 답변 음성 출력. 입·출력 장치와 음성 프로필을 관리합니다.
+                    </div>
+                  </div>
+                  <button className="secondary" onClick={() => setShowVoice(true)}>
+                    관리
+                  </button>
+                </div>
+              </div>
+            </SettingsSection>
           </>
         )}
 
         {/* ─── 브라우저 ─── */}
         {tab === 'browser' && (
-          <>
+          <SettingsSection plain title="브라우저">
             <div className="tool-card">
               <div className="tool-card-main">
                 <span className="tool-card-icon">
@@ -751,13 +919,13 @@ export const Settings: React.FC<{
                 </div>
               )}
             </div>
-          </>
+          </SettingsSection>
         )}
 
         {/* ─── 로컬 도구 ─── */}
         {/* ─── PC 컨트롤 (셸·파일 — 에이전트가 이 PC 를 다룬다) ─── */}
         {tab === 'pc' && (
-          <>
+          <SettingsSection plain title="PC 컨트롤">
             <div className="tool-card">
               <div className="tool-card-main">
                 <span className="tool-card-icon">
@@ -931,192 +1099,24 @@ export const Settings: React.FC<{
                 </div>
               )}
             </div>
-          </>
+          </SettingsSection>
         )}
 
         {/* ─── MCP — 내 PC 에서 호스팅하는 MCP 서버 관리 (임베드) ─── */}
-        {tab === 'mcp' && <McpSettings embedded onClose={() => undefined} />}
+        {tab === 'mcp' && (
+          <SettingsSection plain title="MCP 서버">
+            <McpSettings embedded onClose={() => undefined} />
+          </SettingsSection>
+        )}
 
         {/* ─── 스토리지 ─── */}
         {/* 예전에는 카드 + [관리] 버튼을 한 번 더 눌러야 전체 설정이 떴다.
               스토리지 탭이 곧 워크스페이스 동기화 화면이므로 본문을 그대로
               임베드해 한 단계 클릭을 없앤다. */}
-        {tab === 'storage' && <SyncSettings embedded />}
-
-        {/* ─── 업데이트 — 일반 탭의 한 섹션 (따로 탭일 만큼 크지 않다) ─── */}
-        {tab === 'general' && (
-          <>
-            <div className="settings-section-title">업데이트</div>
-            <div className="field-row">
-              <span>
-                업데이트 서버
-                {updateServer === 'xgen' && (
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    설정된 XGEN 서버의 다운로드 센터
-                  </span>
-                )}
-              </span>
-              <div className="seg">
-                {(['github', 'xgen'] as const).map((source) => (
-                  <button
-                    key={source}
-                    className={updateServer === source ? 'active' : ''}
-                    onClick={() => {
-                      setUpdateServer(source);
-                      void apply({ updateServer: source });
-                    }}
-                  >
-                    {source === 'github' ? 'GitHub' : 'XGEN'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="field-row">
-              <span>자동 업데이트</span>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={autoUpdate}
-                  onChange={(e) => {
-                    setAutoUpdate(e.target.checked);
-                    void xgen.updater.setEnabled(e.target.checked);
-                  }}
-                />
-                <span className="track" />
-              </label>
-            </div>
-
-            <div className="field-row">
-              <span>
-                업데이트
-                {version && (
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    v{version}
-                  </span>
-                )}
-              </span>
-              <div className="row">
-                {updateMsg && <span className="small muted">{updateMsg}</span>}
-                <button
-                  className="secondary"
-                  disabled={checking}
-                  onClick={() => {
-                    setChecking(true);
-                    setUpdateMsg(null);
-                    void xgen.updater.check();
-                    setTimeout(() => setChecking(false), 25000);
-                  }}
-                >
-                  {checking ? '확인 중…' : '업데이트 확인'}
-                </button>
-              </div>
-            </div>
-
-            <div className="field-row">
-              <span>
-                저장된 설정 초기화
-                {confirmSettingsReset && (
-                  <span className="small notice-warn">
-                    서버, SSO, 업데이트, MCP, 워크스페이스 설정과 저장된 로그인 정보가 모두
-                    삭제됩니다. 앱은 설치본의 기본 설정으로 다시 시작됩니다.
-                  </span>
-                )}
-              </span>
-              <div className="row">
-                {confirmSettingsReset && (
-                  <button className="secondary" onClick={() => setConfirmSettingsReset(false)}>
-                    취소
-                  </button>
-                )}
-                <button
-                  className={confirmSettingsReset ? 'danger' : 'secondary'}
-                  onClick={() => {
-                    if (!confirmSettingsReset) {
-                      setConfirmSettingsReset(true);
-                      return;
-                    }
-                    xgen.appctl.resetSettings();
-                  }}
-                >
-                  {confirmSettingsReset ? '초기화 및 재시작' : '초기화'}
-                </button>
-              </div>
-            </div>
-
-            {/* ─── 로컬 실행 환경 — 커넥터가 에이전트를 이 PC 에서 로컬로 돌리게 ─── */}
-            <div className="settings-section-title">로컬 실행 환경</div>
-            <div className="field-row">
-              <span>
-                설치 폴더
-                <span className="small muted" style={{ marginLeft: 8 }}>
-                  {installRoot}
-                </span>
-              </span>
-              <div className="row">
-                <button
-                  className="secondary"
-                  onClick={() => void xgen.appctl.openFolder()}
-                >
-                  열기
-                </button>
-                <button
-                  className="secondary"
-                  onClick={async () => {
-                    const p = await xgen.appctl.pickFolder();
-                    if (!p) return;
-                    await apply({ dataRoot: p });
-                    setLrMsg('설치 폴더 변경 — 새 위치는 다음 자동 설치/동기화부터 적용됩니다(기존 파일은 이동하지 않음).');
-                  }}
-                >
-                  변경
-                </button>
-              </div>
-            </div>
-            <div className="field-row">
-              <span>
-                에이전트 로컬 실행 런타임
-                <span className="small muted" style={{ marginLeft: 8 }}>
-                  {lrStatus?.installed
-                    ? `내장됨 (런타임 ${lrStatus.version ?? '?'})`
-                    : lrMsg ?? '자동 설치 중…'}
-                </span>
-              </span>
-              {/* 내장이 기본 — 설치 버튼 없음. 없으면 부팅이 자동 설치한다. */}
-            </div>
-
-            {/* CLI provider 바이너리 — 서버가 CLI 를 갖추듯 커넥터도 갖춘다. */}
-            {(
-              [
-                ['codex', 'Codex CLI', 'OpenAI Codex provider 의 로컬 실행 바이너리 (공식 릴리스)'],
-                ['claude', 'Claude Code CLI', 'Claude Code provider 의 로컬 실행 바이너리 (공식 배포)'],
-              ] as const
-            ).map(([tool, label, desc]) => (
-              <div className="field-row" key={tool}>
-                <span>
-                  {label}
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    {cliStatus?.[tool]?.installed
-                      ? `설치됨${cliStatus[tool].version ? ` (v${cliStatus[tool].version})` : ''}`
-                      : desc}
-                  </span>
-                </span>
-                <div className="row">
-                  <button
-                    className="secondary"
-                    disabled={cliBusy !== null}
-                    onClick={() => void installCli(tool)}
-                  >
-                    {cliBusy === tool
-                      ? '설치 중…'
-                      : cliStatus?.[tool]?.installed
-                        ? '업데이트'
-                        : '설치'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </>
+        {tab === 'storage' && (
+          <SettingsSection plain title="스토리지">
+            <SyncSettings embedded />
+          </SettingsSection>
         )}
       </div>
     </>

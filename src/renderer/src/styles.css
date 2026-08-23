@@ -2745,7 +2745,31 @@ button {
   border-bottom: 1px solid var(--border);
 }
 
-/* 설정 안 섹션 구분 제목 — 탭을 합칠 때 문단 경계를 만든다. */
+/* ── 설정 분류 그룹(공통) — SettingsSection 컴포넌트가 렌더. 제목 + 묶인
+   카드(body). 모든 설정 탭이 이 단위로 항목을 묶는다 — 결이 여기서만 정의된다. */
+.settings-group {
+  margin-top: 24px;
+}
+.settings-group:first-child {
+  margin-top: 2px;
+}
+.settings-group-title {
+  margin: 0 0 8px 2px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.settings-group-body {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  padding: 2px 16px;
+}
+/* body 안 field-row 는 기존 구분선(border-top, 첫 행 제외)을 그대로 쓴다. */
+
+/* (구) 섹션 구분 제목 — SettingsSection 으로 대체됨. */
 .settings-section-title {
   margin-top: 18px;
   padding-top: 14px;
