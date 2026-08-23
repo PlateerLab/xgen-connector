@@ -1,6 +1,6 @@
 // 통합 데이터 루트 — 해석/정착/인스톨러 옵션 1회 소비를 검증한다.
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -12,6 +12,7 @@ import {
   runtimeDirOf,
   settleDataRoot,
   workspaceDirOf,
+  writeCliInstallScripts,
 } from '../src/main/data-root';
 import type { ConnectorConfig } from '../src/main/config';
 
@@ -75,5 +76,32 @@ test('consumeInstallOptions: 1회 소비(파일 삭제) + 패치 매핑, 없으�
     assert.equal(existsSync(join(ud, INSTALL_OPTIONS_FILE)), false);
   } finally {
     rmSync(ud, { recursive: true, force: true });
+  }
+});
+
+test('writeCliInstallScripts: OS 별 스크립트를 루트에 배치(공식 소스·설치 폴더 하위 목적지)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'scripts-'));
+  try {
+    const posix = writeCliInstallScripts(root, 'linux');
+    assert.deepEqual(
+      posix.map((p) => p.split(/[\\/]/).pop()),
+      ['install-codex.sh', 'install-claude-code.sh'],
+    );
+    const codexSh = readFileSync(join(root, 'install-codex.sh'), 'utf-8');
+    assert.match(codexSh, /github\.com\/openai\/codex\/releases\/latest\/download/);
+    assert.match(codexSh, /local-runtime\/bin/);
+    const claudeSh = readFileSync(join(root, 'install-claude-code.sh'), 'utf-8');
+    assert.match(claudeSh, /downloads\.claude\.ai\/claude-code-releases/);
+
+    const win = writeCliInstallScripts(root, 'win32');
+    assert.deepEqual(
+      win.map((p) => p.split(/[\\/]/).pop()),
+      ['install-codex.cmd', 'install-claude-code.cmd'],
+    );
+    const codexCmd = readFileSync(join(root, 'install-codex.cmd'), 'utf-8');
+    assert.match(codexCmd, /pc-windows-msvc\.exe\.zip/);
+    assert.match(codexCmd, /local-runtime\\bin/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
