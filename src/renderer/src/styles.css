@@ -4730,19 +4730,3 @@ button {
   border-color: rgba(185, 28, 28, 0.35);
   background: rgba(185, 28, 28, 0.08);
 }
-
-/* 설치 탭 — 세부 구성/버전/로그 접힘(기본 닫힘, 평소엔 실행 환경 한 줄이면 충분). */
-.xgen-install-details {
-  margin-top: 4px;
-  border-top: 1px solid var(--border, rgba(128, 128, 128, 0.2));
-  padding-top: 6px;
-}
-.xgen-install-details > summary {
-  cursor: pointer;
-  padding: 4px 0;
-  list-style: revert;
-  user-select: none;
-}
-.xgen-install-details[open] > summary {
-  margin-bottom: 4px;
-}

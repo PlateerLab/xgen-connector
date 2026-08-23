@@ -13,6 +13,7 @@ import {
   describeCliAuthRow,
   describeCliRow,
   describeConverge,
+  describeInstallStatus,
   describeRuntimeCandidates,
   type CandidateLike,
 } from '../src/renderer/src/local-exec-text';
@@ -36,12 +37,12 @@ const bun = (over: Partial<CandidateLike> = {}): CandidateLike => ({
 
 test('후보 문구: 미검증(healthy undefined)은 손상이 아니다 — 설치 폴더 사용 중이면 그 이유를 말한다', () => {
   const ctx = { activeSource: 'install' as const, phase: 'ready' as const };
-  assert.equal(
-    describeCandidate(bun(), ctx),
-    '앱 내장: 있음 (3.8.0, 미검증 — 설치 폴더 사용 중)',
-  );
+  assert.equal(describeCandidate(bun(), ctx), '앱 내장: 있음 (3.8.0, 미검증 — 설치 폴더 사용 중)');
   // 실제 스모크 실패만 손상
-  assert.equal(describeCandidate(bun({ healthy: false, error: 'ImportError: x' }), ctx), '앱 내장: 손상 — ImportError: x');
+  assert.equal(
+    describeCandidate(bun({ healthy: false, error: 'ImportError: x' }), ctx),
+    '앱 내장: 손상 — ImportError: x',
+  );
   assert.equal(describeCandidate(bun({ healthy: true }), ctx), '앱 내장: 있음 (3.8.0)');
   assert.equal(describeCandidate(inst({ healthy: true }), ctx), '설치 폴더: 설치됨 (3.8.0)');
   assert.equal(
@@ -53,8 +54,14 @@ test('후보 문구: 미검증(healthy undefined)은 손상이 아니다 — 설
     describeCandidate(inst(), { phase: 'checking' }),
     '설치 폴더: 있음 (3.8.0, 검증 중)',
   );
-  assert.equal(describeCandidate(inst({ exists: false, version: undefined }), ctx), '설치 폴더: 없음');
-  assert.equal(describeCandidate(undefined, ctx, { kind: 'bundle', note: 'X\\python' }), '앱 내장: 없음 (X\\python)');
+  assert.equal(
+    describeCandidate(inst({ exists: false, version: undefined }), ctx),
+    '설치 폴더: 없음',
+  );
+  assert.equal(
+    describeCandidate(undefined, ctx, { kind: 'bundle', note: 'X\\python' }),
+    '앱 내장: 없음 (X\\python)',
+  );
 });
 
 test('런타임 행: 설치 폴더 정상 + 번들 미검증 + 서버 동일(버전 표기) — 손상 문구가 없다', () => {
@@ -79,10 +86,16 @@ test('수렴 요약: 런타임 X→X 는 "서버와 동일 (X)", 업그레이드
     '런타임 서버와 동일 (3.7.0)',
   );
   assert.equal(
-    describeConverge({ running: false, summary: '런타임 3.7.0→3.8.0 · codex v0.150.0 · claude v2.1.0' }),
+    describeConverge({
+      running: false,
+      summary: '런타임 3.7.0→3.8.0 · codex v0.150.0 · claude v2.1.0',
+    }),
     '런타임 3.7.0 → 3.8.0 업그레이드 · Codex CLI v0.150.0 설치 · Claude Code CLI v2.1.0 설치',
   );
-  assert.equal(describeConverge({ running: false, summary: '서버와 동일' }, { runtime: '3.8.0' }), '서버와 동일 (3.8.0)');
+  assert.equal(
+    describeConverge({ running: false, summary: '서버와 동일' }, { runtime: '3.8.0' }),
+    '서버와 동일 (3.8.0)',
+  );
   assert.equal(describeConverge({ running: true }), '맞추는 중…');
   assert.equal(describeConverge({ running: false, lastError: 'net' }), '실패: net');
   assert.equal(describeConverge({ running: false }), '아직 실행 안 됨 (로그인 후 자동 실행)');
@@ -115,22 +128,86 @@ test('CLI 인증: 없음은 "서버에 인증 없음 → … 서버에서 실행
   });
   assert.doesNotMatch(row, /\(없음\)|null|undefined/);
   assert.match(row, /Claude Code: 서버 인증 사용\(중앙 장수명 토큰\)/);
-  assert.equal(describeCliAuthRow(null), '서버 연결 후 표시됩니다 (인증은 서버 관리자 LLM 설정을 그대로 사용)');
+  assert.equal(
+    describeCliAuthRow(null),
+    '서버 연결 후 표시됩니다 (인증은 서버 관리자 LLM 설정을 그대로 사용)',
+  );
 });
 
 test('CLI 버튼/행: "재설치(최신)" 대신 "서버 버전으로 재설치"; 버전 차이면 서버 버전으로', () => {
   assert.equal(cliInstallButtonLabel({ busy: true, installed: true }), '설치 중…');
   assert.equal(cliInstallButtonLabel({ busy: false, installed: false }), '설치');
   assert.equal(
-    cliInstallButtonLabel({ busy: false, installed: true, serverVersion: '0.2', installedVersion: '0.2' }),
+    cliInstallButtonLabel({
+      busy: false,
+      installed: true,
+      serverVersion: '0.2',
+      installedVersion: '0.2',
+    }),
     '서버 버전으로 재설치',
   );
   assert.equal(
-    cliInstallButtonLabel({ busy: false, installed: true, serverVersion: '0.3', installedVersion: '0.2' }),
+    cliInstallButtonLabel({
+      busy: false,
+      installed: true,
+      serverVersion: '0.3',
+      installedVersion: '0.2',
+    }),
     '서버 버전(v0.3)으로',
   );
   assert.equal(cliInstallButtonLabel({ busy: false, installed: true }), '재설치');
-  assert.equal(describeCliRow('codex', 'desc', { installed: true, version: '0.2' }, { codex: '0.2' }), '설치됨 (v0.2) · 서버와 동일');
-  assert.equal(describeCliRow('codex', 'desc', { installed: false }, { codex: '0.2' }), 'desc · 서버 v0.2');
+  assert.equal(
+    describeCliRow('codex', 'desc', { installed: true, version: '0.2' }, { codex: '0.2' }),
+    '설치됨 (v0.2) · 서버와 동일',
+  );
+  assert.equal(
+    describeCliRow('codex', 'desc', { installed: false }, { codex: '0.2' }),
+    'desc · 서버 v0.2',
+  );
   assert.match(BOOT_ERROR_HINT, /진단 복사/);
+});
+
+test('설치 상태: 런타임 버전 + 서버 정합성 (다운그레이드는 맞추기 필요 아님)', () => {
+  // 서버와 동일
+  const same = describeInstallStatus({
+    ensure: {
+      phase: 'ready',
+      active: { source: 'install', python: 'p', version: '3.8.2' },
+      candidates: [],
+    },
+    server: { runtime: '3.8.2' },
+  });
+  assert.equal(same.text, '런타임 3.8.2 · 서버와 동일');
+  assert.equal(same.needsSync, false);
+  // 서버가 더 높음 → 맞추기 필요
+  const higher = describeInstallStatus({
+    ensure: {
+      phase: 'ready',
+      active: { source: 'install', python: 'p', version: '3.8.2' },
+      candidates: [],
+    },
+    server: { runtime: '3.9.0' },
+  });
+  assert.match(higher.text, /서버 목표 3\.9\.0 \(맞추기 필요\)/);
+  assert.equal(higher.needsSync, true);
+  // 설치본이 서버보다 높음 → 맞추기 불필요(다운그레이드 금지)
+  const newer = describeInstallStatus({
+    ensure: {
+      phase: 'ready',
+      active: { source: 'install', python: 'p', version: '3.8.2' },
+      candidates: [],
+    },
+    server: { runtime: '3.8.0' },
+  });
+  assert.equal(newer.needsSync, false);
+  // 미설치
+  assert.match(
+    describeInstallStatus({ ensure: { phase: 'idle', candidates: [] } }).text,
+    /런타임 미설치/,
+  );
+  // 준비 중
+  assert.match(
+    describeInstallStatus({ ensure: { phase: 'copying', candidates: [] } }).text,
+    /준비 중/,
+  );
 });

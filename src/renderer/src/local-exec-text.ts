@@ -111,13 +111,72 @@ export function describeRuntimeCandidates(st: {
   if (st.server?.runtime) {
     const current = ensure?.active?.version ?? st.version;
     parts.push(
-      st.server.runtime === current ? `서버와 동일 (${st.server.runtime})` : `서버 ${st.server.runtime}`,
+      st.server.runtime === current
+        ? `서버와 동일 (${st.server.runtime})`
+        : `서버 ${st.server.runtime}`,
     );
   }
   return parts.join(' · ');
 }
 
-const CLI_LABEL: Record<'codex' | 'claude', string> = { codex: 'Codex CLI', claude: 'Claude Code CLI' };
+/**
+ * 설치 상태 한 줄 — 지금 이 PC 에서 쓰는 런타임 버전 + 서버와의 정합성.
+ * 준비/복사/다운로드 중이면 그 상태를, 없으면 '미설치'. 설치 탭 상단의 핵심 한 줄.
+ */
+export function describeInstallStatus(st: {
+  ensure?: EnsureLike | null;
+  server?: ServerLike | null;
+  version?: string;
+}): { text: string; needsSync: boolean; ok: boolean } {
+  const ensure = st.ensure ?? undefined;
+  const phase = ensure?.phase;
+  if (phase === 'copying' || phase === 'downloading' || phase === 'checking') {
+    return {
+      text: phase === 'checking' ? '런타임 검증 중…' : '런타임 준비 중…',
+      needsSync: false,
+      ok: false,
+    };
+  }
+  const active = ensure?.active;
+  const current = active?.version ?? st.version;
+  if (!active || !current) {
+    return {
+      text: `런타임 미설치${ensure?.lastError ? ` — ${ensure.lastError}` : ''}`,
+      needsSync: false,
+      ok: false,
+    };
+  }
+  const target = st.server?.runtime;
+  if (!target) return { text: `런타임 ${current} · 서버 버전 미확인`, needsSync: false, ok: true };
+  if (target === current)
+    return { text: `런타임 ${current} · 서버와 동일`, needsSync: false, ok: true };
+  // 서버가 더 높은 버전을 요구할 때만 '맞추기 필요'(런타임은 다운그레이드하지 않는다).
+  const cmp = ((): number => {
+    const a = current.split('.').map((x) => parseInt(x, 10));
+    const b = target.split('.').map((x) => parseInt(x, 10));
+    for (let i = 0; i < 3; i++) {
+      if (Number.isNaN(a[i]) || Number.isNaN(b[i])) return 0;
+      if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+    }
+    return 0;
+  })();
+  if (cmp >= 0)
+    return {
+      text: `런타임 ${current} · 서버(${target})보다 최신 또는 동일`,
+      needsSync: false,
+      ok: true,
+    };
+  return {
+    text: `런타임 ${current} · 서버 목표 ${target} (맞추기 필요)`,
+    needsSync: true,
+    ok: true,
+  };
+}
+
+const CLI_LABEL: Record<'codex' | 'claude', string> = {
+  codex: 'Codex CLI',
+  claude: 'Claude Code CLI',
+};
 
 /**
  * 서버 버전 맞추기(수렴) 결과 한 줄. 수렴기의 summary("런타임 3.7.0→3.8.0 · codex v0.1")를 사람이 읽는
@@ -137,12 +196,16 @@ export function describeConverge(
     .filter(Boolean)
     .map((n) => {
       let m = /^런타임 (\S+)→(\S+)$/.exec(n);
-      if (m) return m[1] === m[2] ? `런타임 서버와 동일 (${m[2]})` : `런타임 ${m[1]} → ${m[2]} 업그레이드`;
+      if (m)
+        return m[1] === m[2]
+          ? `런타임 서버와 동일 (${m[2]})`
+          : `런타임 ${m[1]} → ${m[2]} 업그레이드`;
       m = /^(codex|claude) v(.+)$/.exec(n);
       if (m) return `${CLI_LABEL[m[1] as 'codex' | 'claude']} v${m[2]} 설치`;
       m = /^(codex|claude) 설치 실패: (.*)$/.exec(n);
       if (m) return `${CLI_LABEL[m[1] as 'codex' | 'claude']} 설치 실패: ${m[2]}`;
-      if (n === '서버와 동일') return server?.runtime ? `서버와 동일 (${server.runtime})` : '서버와 동일';
+      if (n === '서버와 동일')
+        return server?.runtime ? `서버와 동일 (${server.runtime})` : '서버와 동일';
       if (n === '서버 매니페스트 없음') return '서버가 버전 정보를 주지 않음 (현재 설치본 유지)';
       return n;
     });
@@ -195,9 +258,10 @@ export function describeCliAuth(
 /** CLI 행 전체(서버 미연결 안내 포함). */
 export function describeCliAuthRow(server: ServerLike | null | undefined): string {
   if (!server) return '서버 연결 후 표시됩니다 (인증은 서버 관리자 LLM 설정을 그대로 사용)';
-  return [describeCliAuth('Claude Code', server.claudeAuth), describeCliAuth('Codex', server.codexAuth)].join(
-    ' · ',
-  );
+  return [
+    describeCliAuth('Claude Code', server.claudeAuth),
+    describeCliAuth('Codex', server.codexAuth),
+  ].join(' · ');
 }
 
 /** CLI 설치/재설치 버튼 문구 — 설치는 항상 서버 매니페스트 목표 버전(없으면 최신). */
@@ -209,7 +273,8 @@ export function cliInstallButtonLabel(o: {
 }): string {
   if (o.busy) return '설치 중…';
   if (!o.installed) return '설치';
-  if (o.serverVersion && o.serverVersion !== o.installedVersion) return `서버 버전(v${o.serverVersion})으로`;
+  if (o.serverVersion && o.serverVersion !== o.installedVersion)
+    return `서버 버전(v${o.serverVersion})으로`;
   return o.serverVersion ? '서버 버전으로 재설치' : '재설치';
 }
 
