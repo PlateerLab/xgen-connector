@@ -111,6 +111,72 @@
     Pop $1
     Exch $0
   FunctionEnd
+
+  ; ── 런타임 트리 복사(항목별 로그) ────────────────────────────────────────
+  ; CopyFiles 한 방(1GB+, 수십 초 무소음) 대신 **항목 단위**로 복사하며 매 항목을 설치 화면
+  ; 상세 로그와 install.log 에 찍는다 — 사용자가 "설치가 진행 중인지, 어디서 막혔는지"를
+  ; 화면에서 바로 본다. Lib 와 site-packages 는 한 단계 더 들어가 패키지 단위로 찍는다.
+  ;   입력: 스택 top = dst, 그 아래 = src   (Push src ; Push dst ; Call XgenCopyEntries)
+  Function XgenCopyEntries
+    Exch $1            ; dst
+    Exch
+    Exch $0            ; src
+    Push $2
+    Push $3
+    Push $4
+    CreateDirectory "$1"
+    FindFirst $2 $3 "$0\*.*"
+    xce_loop:
+      StrCmp $3 "" xce_done
+      StrCmp $3 "." xce_next
+      StrCmp $3 ".." xce_next
+      IfFileExists "$0\$3\*.*" xce_dir xce_file
+    xce_dir:
+      StrCpy $4 0
+      StrCmp $3 "Lib" xce_deep
+      StrCmp $3 "site-packages" xce_deep
+      DetailPrint "복사: $3\"
+      ClearErrors
+      CopyFiles /SILENT "$0\$3" "$1"
+      ${If} ${Errors}
+        DetailPrint "  ! 복사 오류: $3"
+        !insertmacro XgenLog "copy ERROR dir $0\$3"
+      ${EndIf}
+      Goto xce_next
+    xce_deep:
+      DetailPrint "복사: $3\ (항목별)"
+      Push $0
+      Push $1
+      Push $2
+      Push $3
+      Push "$0\$3"
+      Push "$1\$3"
+      Call XgenCopyEntries
+      Pop $3
+      Pop $2
+      Pop $1
+      Pop $0
+      Goto xce_next
+    xce_file:
+      DetailPrint "복사: $3"
+      ClearErrors
+      CopyFiles /SILENT "$0\$3" "$1\$3"
+      ${If} ${Errors}
+        DetailPrint "  ! 복사 오류: $3"
+        !insertmacro XgenLog "copy ERROR file $0\$3"
+      ${EndIf}
+    xce_next:
+      FindNext $2 $3
+      Goto xce_loop
+    xce_done:
+    FindClose $2
+    Pop $4
+    Pop $3
+    Pop $2
+    Pop $0
+    Pop $1
+  FunctionEnd
+  
 !macroend
 ;
 ; Windows 내장 WebDAV 클라이언트(WebClient)는 기본 **50MB 파일 상한**이 있다
@@ -135,6 +201,11 @@
 !macroend
 
 !macro customInstall
+  ; 설치 화면에 상세 로그를 **보이게** 한다(템플릿은 nevershow+DetailsPrint none — 여기서부터 켠다).
+  SetDetailsPrint both
+  SetDetailsView show
+  DetailPrint "XGEN Connector ${VERSION} — 앱 파일 설치 완료. 로컬 실행 환경을 구성합니다."
+  DetailPrint "설치 로그: $APPDATA\XGEN-Connector\install.log"
   !insertmacro XgenLog "==== XGEN Connector ${VERSION} install start ===="
   !insertmacro XgenLog "INSTDIR=$INSTDIR"
   DetailPrint "WebDAV 파일 크기 상한을 조정하는 중..."
@@ -206,16 +277,15 @@
     ${Else}
       !insertmacro XgenLog "bundle MISSING: $INSTDIR\resources\python\python.exe (앱 첫 실행 때 복구/다운로드)"
     ${EndIf}
+    DetailPrint "런타임 복사: $INSTDIR\resources\python → $XgenDataRoot\local-runtime\python"
+    !insertmacro XgenLog "copy start → $XgenDataRoot\local-runtime\python"
     CreateDirectory "$XgenDataRoot\local-runtime"
     RMDir /r "$XgenDataRoot\local-runtime\python"
-    ClearErrors
-    CopyFiles /SILENT "$INSTDIR\resources\python" "$XgenDataRoot\local-runtime"
-    ${If} ${Errors}
-      DetailPrint "런타임 복사 중 오류 — 앱 첫 실행 시 자동 복구됩니다."
-      !insertmacro XgenLog "copy ERROR (CopyFiles set error flag)"
-    ${Else}
-      !insertmacro XgenLog "copy done → $XgenDataRoot\local-runtime\python"
-    ${EndIf}
+    Push "$INSTDIR\resources\python"
+    Push "$XgenDataRoot\local-runtime\python"
+    Call XgenCopyEntries
+    DetailPrint "런타임 복사 완료"
+    !insertmacro XgenLog "copy done → $XgenDataRoot\local-runtime\python"
     ${If} ${FileExists} "$XgenDataRoot\local-runtime\python\python.exe"
       !insertmacro XgenLog "copied python.exe present"
     ${Else}
@@ -227,6 +297,7 @@
     Pop $0
     Pop $1
     ${If} $0 == 0
+      DetailPrint "런타임 검증 OK (import xgen_agent_runtime.host.sidecar)"
       !insertmacro XgenLog "smoke OK"
     ${Else}
       DetailPrint "런타임 검증 실패(코드 $0) — 앱 첫 실행 시 자동 복구됩니다."
@@ -235,6 +306,8 @@
   ${Else}
     !insertmacro XgenLog "runtime install skipped (unchecked)"
   ${EndIf}
+  DetailPrint "Codex / Claude Code CLI 는 앱 첫 실행 시 자동 설치·서버 버전 수렴됩니다(설정 → 설치 에서 확인)."
+  DetailPrint "설치 완료."
   !insertmacro XgenLog "==== install end ===="
 !macroend
 
