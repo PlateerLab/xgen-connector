@@ -255,9 +255,14 @@ export const Settings: React.FC<{
     setShellCwd(p);
     commitShell({ cwd: p });
   };
+  // 설치 폴더(통합 루트) 파생 기본 — PC 컨트롤/스토리지의 기본은 이 하위다.
+  const installRoot = (config.dataRoot ?? '').trim() || '~/xgen-connector';
+  const sep = installRoot.includes('\\') ? '\\' : '/';
+  const defaultShellCwd = `${installRoot}${sep}workspace`;
   const clearShellCwd = () => {
-    setShellCwd('');
-    commitShell({ cwd: '' });
+    // "기본값" = 설치 폴더\workspace — 홈이 아니라 통합 루트 하위다.
+    setShellCwd(defaultShellCwd);
+    commitShell({ cwd: defaultShellCwd });
   };
 
   /** 허용 폴더 — [+]로 하나씩 추가, 행의 ✕로 제거. */
@@ -789,7 +794,7 @@ export const Settings: React.FC<{
                         className={`picker-path ${shellCwd ? '' : 'muted'}`}
                         title={shellCwd || undefined}
                       >
-                        {shellCwd || '홈 디렉터리 (기본값)'}
+                        {shellCwd || `${defaultShellCwd} (기본값)`}
                       </span>
                       <button className="secondary" onClick={() => void pickShellCwd()}>
                         폴더 선택…
@@ -1044,9 +1049,9 @@ export const Settings: React.FC<{
             <div className="settings-section-title">로컬 실행 환경</div>
             <div className="field-row">
               <span>
-                데이터 폴더
+                설치 폴더
                 <span className="small muted" style={{ marginLeft: 8 }}>
-                  {config.dataRoot || '~/xgen-connector'} — workspace/ · cloud/ · local-runtime/ 이 이 아래에 모입니다
+                  {installRoot} — PC 컨트롤·스토리지·로컬 실행이 전부 이 아래(workspace/ · cloud/ · local-runtime/)에 설치됩니다
                 </span>
               </span>
               <div className="row">
@@ -1056,7 +1061,7 @@ export const Settings: React.FC<{
                     const p = await xgen.appctl.pickFolder();
                     if (!p) return;
                     await apply({ dataRoot: p });
-                    setLrMsg('데이터 폴더 변경 — 새 위치는 다음 자동 설치/동기화부터 적용됩니다(기존 파일은 이동하지 않음).');
+                    setLrMsg('설치 폴더 변경 — 새 위치는 다음 자동 설치/동기화부터 적용됩니다(기존 파일은 이동하지 않음).');
                   }}
                 >
                   변경

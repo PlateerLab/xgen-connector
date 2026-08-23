@@ -160,7 +160,8 @@ function getUpdater(): AppUpdater | null {
       // Silent + isForceRunAfter=true swaps the files and relaunches without any
       // dialog. (quitAndInstall also calls app.quit() itself.)
       try {
-        autoUpdater.quitAndInstall(true, true);
+        // assisted 인스톨러 UI(설치/데이터 폴더 페이지)가 보이게 — isSilent=false.
+        autoUpdater.quitAndInstall(false, true);
       } catch (e) {
         log('quitAndInstall', e);
       }

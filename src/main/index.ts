@@ -67,7 +67,7 @@ import { makeWorkspaceApi } from './workspace-api';
 import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-transport';
 import { LocalSyncManager } from './local-sync-manager';
 import { registerLocalAgentIpc } from './local-agent-ipc';
-import { getStatus as localRuntimeGetStatus, installLocalRuntime } from './local-runtime-install';
+import { getStatusFast as localRuntimeGetStatusFast, installLocalRuntime } from './local-runtime-install';
 import {
   cliSettings as localCliSettings,
   getCliStatus as localCliGetStatus,
@@ -2589,13 +2589,12 @@ function ensureCliInstalled(tool: 'codex' | 'claude'): Promise<boolean> {
   return p;
 }
 ipcMain.handle(CHANNELS.localRuntimeStatus, async () => {
-  // userData 설치본(업데이트/복구 오버라이드) → 앱 내장 번들(<resources>/python)
-  // 순으로 본다. 내장 트리는 runtimeDir=resourcesPath 로 같은 레이아웃
-  // (python/bin/python3)이라 getStatus 를 그대로 쓴다.
-  const user = await localRuntimeGetStatus({ runtimeDir: localRuntimeDir() });
+  // **파일 존재 기반**(getStatusFast) — 실행 스모크는 실기에서 보안정책 등으로
+  // 실패해 "내장인데 준비 중" 오표시를 냈다. userData 오버라이드 → 앱 내장 순.
+  const user = localRuntimeGetStatusFast({ runtimeDir: localRuntimeDir() });
   if (user.installed) return { ...user, source: 'userData' as const };
   if (app.isPackaged && process.resourcesPath) {
-    const bundled = await localRuntimeGetStatus({ runtimeDir: process.resourcesPath });
+    const bundled = localRuntimeGetStatusFast({ runtimeDir: process.resourcesPath });
     if (bundled.installed) return { ...bundled, source: 'bundled' as const };
   }
   return { ...user, source: null };
