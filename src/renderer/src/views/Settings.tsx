@@ -10,7 +10,6 @@ import { HotkeyCapture } from './HotkeyCapture';
 import { SettingsSection } from './SettingsSection';
 import {
   BOOT_ERROR_HINT,
-  SOURCE_LABEL,
   cliInstallButtonLabel,
   describeCliAuthRow,
   describeCliRow,
@@ -670,51 +669,23 @@ export const Settings: React.FC<{
             </SettingsSection>
 
             <SettingsSection title="설치">
-              {/* 상태 전용 섹션(토글 없음) — 어떻게 구성돼 있고 어떻게 실행되는지 순서대로 보여 준다:
-                  설치 폴더 → 실행 환경 → 런타임 → Codex CLI → Claude Code CLI → CLI 인증 →
-                  서버 버전 맞추기 결과 → (부팅 오류) → 설치 로그. 문구는 local-exec-text.ts(테스트됨). */}
-              <div className="field-row">
-                <span>
-                  설치 폴더
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    {installRoot}
-                  </span>
-                </span>
-                <div className="row">
-                  <button className="secondary" onClick={() => void xgen.appctl.openFolder()}>
-                    열기
-                  </button>
-                </div>
-              </div>
-              <div className="field-row">
-                <span>
+              {/* 상태 전용(토글 없음). 맨 위엔 **가장 중요한 한 줄**(실행 환경)만,
+                  세부 구성·버전·로그는 아래 "구성 상세 · 진단" 접힘 안으로. */}
+              <div className="field-row" style={{ alignItems: 'flex-start' }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
                   Agent-XGeny 실행 환경
-                  <span className="small muted" style={{ marginLeft: 8 }}>
+                  <span className="small muted" style={{ display: 'block', marginTop: 4 }}>
                     {lrStatus == null
                       ? '상태 확인 중…'
                       : lrStatus.ensure?.active
-                        ? `이 PC 에서 실행 — 커넥터에서 시작한 대화는 이 PC 의 런타임(${
-                            SOURCE_LABEL[lrStatus.ensure.active.source]
-                          }, ${lrStatus.ensure.active.version ?? '?'})에서 돌고, 기억·파일·이력은 서버와 공유됩니다.${
-                            lrStatus.daemon?.running
-                              ? ` 실행기 대기 중(pid ${lrStatus.daemon.pid ?? '?'}).`
-                              : ''
+                        ? `이 PC 에서 실행 — 런타임 ${lrStatus.ensure.active.version ?? '?'}. 기억·파일·이력은 서버와 공유됩니다.${
+                            lrStatus.daemon?.running ? ' 실행 대기 중.' : ''
                           }`
                         : lrStatus.ensure?.phase === 'copying' ||
                             lrStatus.ensure?.phase === 'downloading' ||
                             lrStatus.ensure?.phase === 'checking'
-                          ? `런타임 ${lrStatus.ensure.phase === 'checking' ? '검증' : '준비'} 중 — 끝날 때까지 대화는 서버 sandbox 에서 실행됩니다. (${lrStatus.ensure.message ?? ''})`
-                          : `서버 sandbox 에서 실행 — 이 PC 에 쓸 수 있는 런타임이 없습니다.${
-                              lrStatus.ensure?.lastError ? ` ${lrStatus.ensure.lastError}` : ''
-                            }`}
-                  </span>
-                </span>
-              </div>
-              <div className="field-row">
-                <span>
-                  로컬 실행 런타임
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    {lrStatus ? describeRuntimeCandidates(lrStatus) : '—'}
+                          ? `런타임 ${lrStatus.ensure.phase === 'checking' ? '검증' : '준비'} 중 — 끝날 때까지 서버에서 실행됩니다.`
+                          : '서버에서 실행 — 이 PC 에 쓸 수 있는 런타임이 없습니다.'}
                   </span>
                 </span>
                 <div className="row">
@@ -740,80 +711,19 @@ export const Settings: React.FC<{
                     className="secondary"
                     disabled={lrSyncing}
                     onClick={() => void syncWithServer()}
-                    title="서버가 알려주는 런타임/CLI 목표 버전으로 맞춥니다 (서버가 버전 정보를 제공하지 않으면 현재 설치본 유지)"
+                    title="서버가 알려주는 런타임/CLI 목표 버전으로 맞춥니다"
                   >
                     {lrSyncing ? '맞추는 중…' : '서버 버전으로 맞추기'}
                   </button>
                 </div>
               </div>
-              {/* CLI provider 바이너리 — 서버가 CLI 를 갖추듯 커넥터도 갖춘다(설치는 서버 매니페스트 목표 버전). */}
-              {(
-                [
-                  [
-                    'codex',
-                    'Codex CLI',
-                    'OpenAI Codex provider 의 로컬 실행 바이너리 (공식 릴리스)',
-                  ],
-                  [
-                    'claude',
-                    'Claude Code CLI',
-                    'Claude Code provider 의 로컬 실행 바이너리 (공식 배포)',
-                  ],
-                ] as const
-              ).map(([tool, label, desc]) => (
-                <div className="field-row" key={tool}>
-                  <span>
-                    {label}
-                    <span className="small muted" style={{ marginLeft: 8 }}>
-                      {describeCliRow(tool, desc, cliStatus?.[tool], lrStatus?.server)}
-                    </span>
-                  </span>
-                  <div className="row">
-                    <button
-                      className="secondary"
-                      disabled={cliBusy !== null}
-                      onClick={() => void installCli(tool)}
-                      title="공식 배포처에서 서버 매니페스트 목표 버전을 설치합니다 (서버 정보가 없으면 최신)"
-                    >
-                      {cliInstallButtonLabel({
-                        busy: cliBusy === tool,
-                        installed: !!cliStatus?.[tool]?.installed,
-                        serverVersion: lrStatus?.server?.[tool] ?? null,
-                        installedVersion: cliStatus?.[tool]?.version,
-                      })}
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {/* CLI 인증 — 서버 일원화: 서버(관리자 LLM 설정)가 준 인증만 쓴다. 없으면 그 CLI 턴은 서버에서 실행. */}
-              <div className="field-row">
-                <span>
-                  CLI 인증
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    {describeCliAuthRow(lrStatus?.server)}
-                  </span>
-                </span>
-              </div>
-              {/* 서버 버전 맞추기 결과 — 수렴기의 마지막 실행(로그인 직후 자동 + 버튼). */}
-              <div className="field-row">
-                <span>
-                  서버 버전 맞추기 결과
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    {lrStatus
-                      ? `${describeConverge(lrStatus.converge, lrStatus.server)}${
-                          lrStatus.converge?.lastRunAt && !lrStatus.converge.running
-                            ? ` (${new Date(lrStatus.converge.lastRunAt).toLocaleString()})`
-                            : ''
-                        }`
-                      : '—'}
-                  </span>
-                </span>
-              </div>
+
               {(lrMsg || lrStatus?.daemon?.lastError) && (
                 <div className="field-row">
                   <span className="small muted">{lrMsg ?? lrStatus?.daemon?.lastError}</span>
                 </div>
               )}
+
               {lrStatus?.bootErrors && lrStatus.bootErrors.length > 0 && (
                 <div className="field-row" style={{ alignItems: 'flex-start' }}>
                   <span style={{ flex: 1, minWidth: 0 }}>
@@ -831,64 +741,155 @@ export const Settings: React.FC<{
                   </span>
                 </div>
               )}
-              {/* 설치 로그 — 인스톨러(NSIS)와 앱(자가치유)이 남긴 단계/원인. 실패 원인을 여기서 바로 본다. */}
-              <div className="field-row" style={{ alignItems: 'flex-start' }}>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  설치 로그
-                  {lrStatus?.logs?.length ? (
-                    <ul className="small muted" style={{ margin: '4px 0 0 16px' }}>
-                      {lrStatus.logs.map((l) => (
-                        <li key={l.path} style={{ wordBreak: 'break-all' }}>
-                          {l.path}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <span className="small muted" style={{ marginLeft: 8 }}>
-                      아직 로그 없음 (설치/복구를 실행하면 생성됩니다)
+
+              {/* ── 세부 구성·버전·로그는 접힘 안(기본 닫힘) — 평소엔 위 한 줄이면 충분하다 ── */}
+              <details className="xgen-install-details">
+                <summary className="small muted">구성 상세 · 진단</summary>
+
+                <div className="field-row">
+                  <span>
+                    설치 폴더
+                    <span className="small muted" style={{ marginLeft: 8, wordBreak: 'break-all' }}>
+                      {installRoot}
                     </span>
-                  )}
-                  {lrStatus?.logs?.length ? (
-                    <pre
-                      className="small"
-                      style={{
-                        marginTop: 6,
-                        maxHeight: 180,
-                        overflow: 'auto',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-all',
-                        fontSize: 11,
-                        lineHeight: 1.4,
-                        opacity: 0.85,
+                  </span>
+                  <div className="row">
+                    <button className="secondary" onClick={() => void xgen.appctl.openFolder()}>
+                      열기
+                    </button>
+                  </div>
+                </div>
+
+                <div className="field-row">
+                  <span>
+                    로컬 실행 런타임
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      {lrStatus ? describeRuntimeCandidates(lrStatus) : '—'}
+                    </span>
+                  </span>
+                </div>
+
+                {(
+                  [
+                    [
+                      'codex',
+                      'Codex CLI',
+                      'OpenAI Codex provider 의 로컬 실행 바이너리 (공식 릴리스)',
+                    ],
+                    [
+                      'claude',
+                      'Claude Code CLI',
+                      'Claude Code provider 의 로컬 실행 바이너리 (공식 배포)',
+                    ],
+                  ] as const
+                ).map(([tool, label, desc]) => (
+                  <div className="field-row" key={tool}>
+                    <span>
+                      {label}
+                      <span className="small muted" style={{ marginLeft: 8 }}>
+                        {describeCliRow(tool, desc, cliStatus?.[tool], lrStatus?.server)}
+                      </span>
+                    </span>
+                    <div className="row">
+                      <button
+                        className="secondary"
+                        disabled={cliBusy !== null}
+                        onClick={() => void installCli(tool)}
+                        title="공식 배포처에서 서버 매니페스트 목표 버전을 설치합니다 (서버 정보가 없으면 최신)"
+                      >
+                        {cliInstallButtonLabel({
+                          busy: cliBusy === tool,
+                          installed: !!cliStatus?.[tool]?.installed,
+                          serverVersion: lrStatus?.server?.[tool] ?? null,
+                          installedVersion: cliStatus?.[tool]?.version,
+                        })}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="field-row">
+                  <span>
+                    CLI 인증
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      {describeCliAuthRow(lrStatus?.server)}
+                    </span>
+                  </span>
+                </div>
+
+                <div className="field-row">
+                  <span>
+                    서버 버전 맞추기 결과
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      {lrStatus
+                        ? `${describeConverge(lrStatus.converge, lrStatus.server)}${
+                            lrStatus.converge?.lastRunAt && !lrStatus.converge.running
+                              ? ` (${new Date(lrStatus.converge.lastRunAt).toLocaleString()})`
+                              : ''
+                          }`
+                        : '—'}
+                    </span>
+                  </span>
+                </div>
+
+                <div className="field-row" style={{ alignItems: 'flex-start' }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    설치 로그
+                    {lrStatus?.logs?.length ? (
+                      <ul className="small muted" style={{ margin: '4px 0 0 16px' }}>
+                        {lrStatus.logs.map((l) => (
+                          <li key={l.path} style={{ wordBreak: 'break-all' }}>
+                            {l.path}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span className="small muted" style={{ marginLeft: 8 }}>
+                        아직 로그 없음 (설치/복구를 실행하면 생성됩니다)
+                      </span>
+                    )}
+                    {lrStatus?.logs?.length ? (
+                      <pre
+                        className="small"
+                        style={{
+                          marginTop: 6,
+                          maxHeight: 180,
+                          overflow: 'auto',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-all',
+                          fontSize: 11,
+                          lineHeight: 1.4,
+                          opacity: 0.85,
+                        }}
+                      >
+                        {lrStatus.logs.map((l) => l.lines.slice(-25).join('\n')).join('\n')}
+                      </pre>
+                    ) : null}
+                  </span>
+                  <div className="row">
+                    <button
+                      className="secondary"
+                      title="상태 전체(JSON)를 클립보드에 복사 — 문의 시 붙여넣기"
+                      onClick={() => {
+                        try {
+                          void navigator.clipboard.writeText(JSON.stringify(lrStatus, null, 2));
+                          setLrMsg('진단 정보를 복사했습니다.');
+                        } catch {
+                          setLrMsg('복사 실패');
+                        }
                       }}
                     >
-                      {lrStatus.logs.map((l) => l.lines.slice(-25).join('\n')).join('\n')}
-                    </pre>
-                  ) : null}
-                </span>
-                <div className="row">
-                  <button
-                    className="secondary"
-                    title="상태 전체(JSON)를 클립보드에 복사 — 문의 시 붙여넣기"
-                    onClick={() => {
-                      try {
-                        void navigator.clipboard.writeText(JSON.stringify(lrStatus, null, 2));
-                        setLrMsg('진단 정보를 복사했습니다.');
-                      } catch {
-                        setLrMsg('복사 실패');
-                      }
-                    }}
-                  >
-                    진단 복사
-                  </button>
-                  <button className="secondary" onClick={() => void xgen.localRuntime.openLog()}>
-                    로그 열기
-                  </button>
-                  <button className="secondary" onClick={() => refreshLocalExec()}>
-                    새로고침
-                  </button>
+                      진단 복사
+                    </button>
+                    <button className="secondary" onClick={() => void xgen.localRuntime.openLog()}>
+                      로그 열기
+                    </button>
+                    <button className="secondary" onClick={() => refreshLocalExec()}>
+                      새로고침
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </details>
             </SettingsSection>
           </>
         )}

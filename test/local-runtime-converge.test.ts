@@ -2,12 +2,21 @@
 // 네트워크/실제 pip 없이: 서버 클라이언트 주입 + 가짜 python(sh) 으로 pip 흉내.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RuntimeManifest, ServerClient } from '../src/main/local-agent-server-client';
 import {
   LocalRuntimeConverger,
+  planConverge,
   loadManifestCache,
   manifestCachePath,
   restartSidecarWhenIdle,
@@ -47,7 +56,10 @@ function mkRuntime(root: string, version: string): string {
   mkdirSync(join(sp, 'xgen_agent_runtime', 'host'), { recursive: true });
   writeFileSync(join(sp, 'xgen_agent_runtime', 'host', 'sidecar.py'), '');
   mkdirSync(join(sp, `xgen_agent_runtime-${version}.dist-info`), { recursive: true });
-  writeFileSync(join(sp, `xgen_agent_runtime-${version}.dist-info`, 'METADATA'), `Version: ${version}\n`);
+  writeFileSync(
+    join(sp, `xgen_agent_runtime-${version}.dist-info`, 'METADATA'),
+    `Version: ${version}\n`,
+  );
   return sp;
 }
 
@@ -223,13 +235,22 @@ exit 0
       assert.equal(st.lastError, undefined);
       assert.match(st.summary ?? '', /런타임 3\.7\.0→3\.8\.0/);
       assert.deepEqual(upgraded, [{ from: '3.7.0', to: '3.8.0' }]);
-      assert.match(readFileSync(join(dir, 'pip.log'), 'utf-8'), /--upgrade https:\/\/example\/xgen_agent_runtime-3\.8\.0\.whl/);
+      assert.match(
+        readFileSync(join(dir, 'pip.log'), 'utf-8'),
+        /--upgrade https:\/\/example\/xgen_agent_runtime-3\.8\.0\.whl/,
+      );
       // 스탬프가 새 버전으로 — 다음 수렴은 'upgrade' 를 다시 계획하지 않는다.
-      assert.equal(readFileSync(runtimeVersionStampPath(dir), 'utf-8'), '3.8.0\n3.12.11+20250808\n');
+      assert.equal(
+        readFileSync(runtimeVersionStampPath(dir), 'utf-8'),
+        '3.8.0\n3.12.11+20250808\n',
+      );
       const again = await c.converge();
       assert.equal(again.summary, '서버와 동일');
       assert.equal(upgraded.length, 1);
-      assert.equal(readFileSync(join(dir, 'pip.log'), 'utf-8').split('\n').filter(Boolean).length, 1);
+      assert.equal(
+        readFileSync(join(dir, 'pip.log'), 'utf-8').split('\n').filter(Boolean).length,
+        1,
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -254,4 +275,31 @@ test('converge: 런타임 업그레이드 실패면 훅을 부르지 않고 last
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('planConverge: 런타임은 다운그레이드하지 않는다 (서버가 더 낮은 버전을 광고해도 유지)', () => {
+  const local = {
+    runtimeInstalled: true,
+    runtimeVersion: '3.8.1',
+    codex: { installed: true, version: '0.149.0' },
+    claude: { installed: true, version: '2.1.231' },
+  };
+  // 서버 매니페스트가 3.8.0 (더 낮음) → upgrade 금지(none)
+  const lower = planConverge(
+    { protocol: 2, runtime: { version: '3.8.0', wheel_url: 'w' } } as never,
+    local,
+  );
+  assert.equal(lower.runtime.action, 'none');
+  // 서버가 3.8.2 (더 높음) → upgrade
+  const higher = planConverge(
+    { protocol: 2, runtime: { version: '3.8.2', wheel_url: 'w' } } as never,
+    local,
+  );
+  assert.equal(higher.runtime.action, 'upgrade');
+  // 같으면 none
+  const same = planConverge(
+    { protocol: 2, runtime: { version: '3.8.1', wheel_url: 'w' } } as never,
+    local,
+  );
+  assert.equal(same.runtime.action, 'none');
 });

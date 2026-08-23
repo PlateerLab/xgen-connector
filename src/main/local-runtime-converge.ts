@@ -37,9 +37,7 @@ export function manifestCachePath(runtimeDir: string): string {
 }
 
 /** 영속 매니페스트 읽기 — 없거나 깨졌으면 null. */
-export function loadManifestCache(
-  file: string,
-): { manifest: RuntimeManifest; at: number } | null {
+export function loadManifestCache(file: string): { manifest: RuntimeManifest; at: number } | null {
   try {
     if (!existsSync(file)) return null;
     const raw = JSON.parse(readFileSync(file, 'utf-8')) as {
@@ -174,10 +172,25 @@ export function planConverge(
   flags?: { autoRuntime?: boolean; autoCodex?: boolean; autoClaude?: boolean },
 ): ConvergePlan {
   const want = (v?: string | null) => (v ?? '').trim().replace(/^v/, '') || undefined;
+  // semver 비교(숫자 3자리, 부족분 0). a>b → 1, a<b → -1, 같으면 0. 파싱 실패는 0(비교 보류).
+  const cmpSemver = (a?: string, b?: string): number => {
+    const pa = (a ?? '').split('.').map((x) => parseInt(x, 10));
+    const pb = (b ?? '').split('.').map((x) => parseInt(x, 10));
+    for (let i = 0; i < 3; i++) {
+      const na = pa[i],
+        nb = pb[i];
+      if (Number.isNaN(na) || Number.isNaN(nb)) return 0;
+      if (na !== nb) return na > nb ? 1 : -1;
+    }
+    return 0;
+  };
   const rtTarget = want(manifest?.runtime?.version);
+  // 런타임은 **다운그레이드하지 않는다**. 서버 매니페스트가 더 낮은 버전을 광고해도
+  // (예: 서버 파드가 아직 이전 버전) 이미 설치된 더 높은 런타임을 끌어내리면 그 버전에서
+  // 고친 버그(예: 3.8.1 memory_wire)가 되살아난다 — target 이 설치본보다 **높을 때만** 올린다.
   const runtimeAction: ConvergePlan['runtime']['action'] = !local.runtimeInstalled
     ? 'skip-missing-python'
-    : flags?.autoRuntime === false || !rtTarget || rtTarget === local.runtimeVersion
+    : flags?.autoRuntime === false || !rtTarget || cmpSemver(rtTarget, local.runtimeVersion) <= 0
       ? 'none'
       : 'upgrade';
   const cli = (
