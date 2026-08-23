@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import {
   cloudDirOf,
@@ -19,7 +19,8 @@ const HOME = '/home/tester';
 
 test('resolveDataRoot: 기본 ~/xgen-connector, 명시값 존중', () => {
   assert.equal(resolveDataRoot({}, HOME), join(HOME, 'xgen-connector'));
-  assert.equal(resolveDataRoot({ dataRoot: '/custom/place' }, HOME), '/custom/place');
+  // resolve() 는 윈도우에서 드라이브를 붙인다 — 기대값도 같은 규칙으로.
+  assert.equal(resolveDataRoot({ dataRoot: '/custom/place' }, HOME), resolve('/custom/place'));
 });
 
 test('settleDataRoot: 트리 생성 + 미설정 기본 채움, 명시 설정은 안 덮음', () => {
