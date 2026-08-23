@@ -13,7 +13,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
-const INDEX = readFileSync(join(__dirname, '..', 'src', 'main', 'index.ts'), 'utf-8');
+const INDEX = readFileSync(join(__dirname, '..', 'src', 'main', 'index.ts'), 'utf-8').replace(
+  /\r\n/g,
+  '\n',
+); // CRLF 체크아웃 대비
 function at(from: number, needle: string): number {
   return INDEX.indexOf(needle, from);
 }
@@ -26,7 +29,10 @@ test('부팅: ensureLocalRuntimeOnBoot → convergeLocalRuntime(boot) → ensure
   const claude = at(boot, "ensureCliInstalled('claude')");
   assert.ok(converge > 0, '부팅 블록에 수렴 호출');
   assert.ok(codex > 0 && claude > 0, '부팅 블록에 CLI 자동 설치');
-  assert.ok(converge < codex && converge < claude, '수렴이 CLI 자동 설치보다 먼저여야 목표 버전으로 깔린다');
+  assert.ok(
+    converge < codex && converge < claude,
+    '수렴이 CLI 자동 설치보다 먼저여야 목표 버전으로 깔린다',
+  );
   // 예전 꼬리(설치 뒤 수렴)는 없어야 한다.
   const tailConverge = at(claude, "convergeLocalRuntimeInBackground('boot')");
   assert.equal(tailConverge, -1);
