@@ -175,6 +175,17 @@
     FileWrite $0 '{"dataRoot":"$4","autoRuntime":$1,"autoCodex":$2,"autoClaude":$3}'
     FileClose $0
   ${EndIf}
+
+  ; ── 로컬 실행 런타임을 **설치 시점에** 설치 폴더로 복사 ────────────────
+  ; 번들(resources\python)은 이 설치본 안에 이미 있다 — 앱이 뜬 뒤 내려받는
+  ; 것이 아니라 인스톨러가 지금 깐다(오프라인, 결정적). 앱은 뜨는 순간
+  ; <설치폴더>\local-runtime\python 을 발견한다("설치 중" 상태가 존재하지 않는다).
+  ${If} $XgenRuntimeState == 1
+    DetailPrint "로컬 실행 런타임을 설치하는 중... (수십 초 소요)"
+    CreateDirectory "$XgenDataRoot\local-runtime"
+    RMDir /r "$XgenDataRoot\local-runtime\python"
+    CopyFiles /SILENT "$INSTDIR\resources\python" "$XgenDataRoot\local-runtime"
+  ${EndIf}
 !macroend
 
 !macro customUnInstall
