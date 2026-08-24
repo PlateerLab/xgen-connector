@@ -4,7 +4,7 @@
  * backend auto-injects their tools into your agents' next turns.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { xgen } from '../bridge';
+import { xgen, copyText } from '../bridge';
 import type { McpServerConfig } from '../../../main/config';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
 import { Selector } from './Selector';
@@ -63,13 +63,11 @@ const HintLine: React.FC<{ text: string }> = ({ text }) => {
       <button
         className="link"
         onClick={() => {
-          void navigator.clipboard
-            .writeText(cmd)
-            .then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            })
-            .catch(() => undefined);
+          void copyText(cmd).then((ok) => {
+            if (!ok) return;
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          });
         }}
       >
         {copied ? '복사됨' : '복사'}
@@ -228,7 +226,14 @@ const ExposedToolsPanel: React.FC<{
 }> = ({ status, logs }) => {
   const [openTool, setOpenTool] = useState<string | null>(null);
   const [showCalls, setShowCalls] = useState(false);
-  const servers = status?.servers ?? [];
+  // 내부 도구(`_` 접두 — 서버가 LLM 노출에서 제외하는 실행 브리지 라우트, 예:
+  // _Exec/_WorkspaceInfo)는 "에이전트에 노출된 도구" 목록에 넣지 않는다. 모델이 부를 수
+  // 없는 내부 배관이라 사용자에게 불필요·혼란만 준다 (자동 관리되는 로컬/서버 실행 환경의 내부).
+  const isExposed = (name: string): boolean => !String(name || '').startsWith('_');
+  const servers = (status?.servers ?? []).map((s) => ({
+    ...s,
+    tools: (s.tools ?? []).filter((t) => isExposed(t.name)),
+  }));
   const total = servers.reduce((n, s) => n + (s.connected ? s.tools.length : 0), 0);
   const recentCalls = logs
     .filter((l) => l.kind === 'result')
@@ -250,47 +255,49 @@ const ExposedToolsPanel: React.FC<{
           노출된 도구가 없습니다. 로컬 도구를 켜거나 MCP 서버를 추가하세요.
         </div>
       ) : (
-        servers.map((s) => (
-          <div key={s.name} className="mcp-exposed-group">
-            <div className="mcp-exposed-server small muted">
-              {s.name === 'local' ? '내 PC · 로컬 도구' : s.name}
-              {!s.connected && (
-                <span className="mcp-dot off" style={{ marginLeft: 6 }} title="연결 안 됨" />
-              )}
-              <span style={{ marginLeft: 6 }}>· {s.tools.length}</span>
-            </div>
-            <ul className="mcp-exposed-tools">
-              {s.tools.map((t) => {
-                const key = `${s.name}/${t.name}`;
-                const open = openTool === key;
-                return (
-                  <li key={key} className="mcp-exposed-tool">
-                    <button
-                      className="mcp-exposed-tool-btn"
-                      onClick={() => setOpenTool(open ? null : key)}
-                      aria-expanded={open}
-                    >
-                      <span className="mcp-exposed-tool-name">{t.name}</span>
-                      {t.description && (
-                        <span className="small muted mcp-exposed-tool-desc">
-                          {firstLine(t.description)}
-                        </span>
+        servers
+          .filter((s) => s.tools.length > 0 || !s.connected)
+          .map((s) => (
+            <div key={s.name} className="mcp-exposed-group">
+              <div className="mcp-exposed-server small muted">
+                {s.name === 'local' ? '내 PC · 로컬 도구' : s.name}
+                {!s.connected && (
+                  <span className="mcp-dot off" style={{ marginLeft: 6 }} title="연결 안 됨" />
+                )}
+                <span style={{ marginLeft: 6 }}>· {s.tools.length}</span>
+              </div>
+              <ul className="mcp-exposed-tools">
+                {s.tools.map((t) => {
+                  const key = `${s.name}/${t.name}`;
+                  const open = openTool === key;
+                  return (
+                    <li key={key} className="mcp-exposed-tool">
+                      <button
+                        className="mcp-exposed-tool-btn"
+                        onClick={() => setOpenTool(open ? null : key)}
+                        aria-expanded={open}
+                      >
+                        <span className="mcp-exposed-tool-name">{t.name}</span>
+                        {t.description && (
+                          <span className="small muted mcp-exposed-tool-desc">
+                            {firstLine(t.description)}
+                          </span>
+                        )}
+                      </button>
+                      {open && (
+                        <pre className="mcp-exposed-schema">
+                          {(t.description ? String(t.description).trim() + '\n\n' : '') +
+                            (t.inputSchema
+                              ? JSON.stringify(t.inputSchema, null, 2)
+                              : '(입력 스키마 없음)')}
+                        </pre>
                       )}
-                    </button>
-                    {open && (
-                      <pre className="mcp-exposed-schema">
-                        {(t.description ? String(t.description).trim() + '\n\n' : '') +
-                          (t.inputSchema
-                            ? JSON.stringify(t.inputSchema, null, 2)
-                            : '(입력 스키마 없음)')}
-                      </pre>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))
       )}
       <button
         className="link small"
@@ -494,12 +501,10 @@ export const McpSettings: React.FC<{ onClose: () => void; embedded?: boolean }> 
       headers: redact(s.headers),
       enabled: s.enabled,
     }));
-    try {
-      await navigator.clipboard.writeText(toMcpConfigJson(payload));
+    const ok = await copyText(toMcpConfigJson(payload));
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* 클립보드 권한 없음 — 조용히 무시 */
     }
   };
 

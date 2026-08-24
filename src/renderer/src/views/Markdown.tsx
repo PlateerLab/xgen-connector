@@ -8,6 +8,7 @@
  * (light/dark), unlike the web's hardcoded light styles.
  */
 import React, { useState } from 'react';
+import { copyText } from '../bridge';
 import {
   inlineMarkdownHtml,
   normalizeTableSeparators,
@@ -16,13 +17,25 @@ import {
   ungluMarkdownMarkers,
 } from '../markdown-core';
 
-const HEAD_CLASS: Record<number, string> = { 1: 'md-h1', 2: 'md-h2', 3: 'md-h3', 4: 'md-h4', 5: 'md-h5', 6: 'md-h6' };
+const HEAD_CLASS: Record<number, string> = {
+  1: 'md-h1',
+  2: 'md-h2',
+  3: 'md-h3',
+  4: 'md-h4',
+  5: 'md-h5',
+  6: 'md-h6',
+};
 
 const isTableLine = (s: string): boolean => s.trim().includes('|');
 const isTableSep = (s: string): boolean =>
   /^\s*\|?(\s*:?-+:?\s*\|)+(\s*:?-+:?\s*\|?)\s*$/.test(s.trim());
 const parseRow = (s: string): string[] =>
-  s.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+  s
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/(?<!\\)\|$/, '')
+    .split(/(?<!\\)\|/)
+    .map((c) => c.trim().replace(/\\\|/g, '|'));
 
 /** Turn a text segment (no code fences) into block React nodes. */
 function parseBlocks(text: string, startKey: string): React.ReactNode[] {
@@ -71,7 +84,11 @@ function parseBlocks(text: string, startKey: string): React.ReactNode[] {
             <thead>
               <tr>
                 {headers.map((h, idx) => (
-                  <th key={idx} style={{ textAlign: aligns[idx] || 'left' }} dangerouslySetInnerHTML={inline(h)} />
+                  <th
+                    key={idx}
+                    style={{ textAlign: aligns[idx] || 'left' }}
+                    dangerouslySetInnerHTML={inline(h)}
+                  />
                 ))}
               </tr>
             </thead>
@@ -81,7 +98,11 @@ function parseBlocks(text: string, startKey: string): React.ReactNode[] {
                 return (
                   <tr key={ri}>
                     {cells.map((c, ci) => (
-                      <td key={ci} style={{ textAlign: aligns[ci] || 'left' }} dangerouslySetInnerHTML={inline(c)} />
+                      <td
+                        key={ci}
+                        style={{ textAlign: aligns[ci] || 'left' }}
+                        dangerouslySetInnerHTML={inline(c)}
+                      />
                     ))}
                   </tr>
                 );
@@ -103,14 +124,22 @@ function parseBlocks(text: string, startKey: string): React.ReactNode[] {
     // heading
     const hm = line.match(/^(#{1,6})\s+(.+)$/);
     if (hm) {
-      out.push(<div className={`md-h ${HEAD_CLASS[hm[1].length]}`} key={key} dangerouslySetInnerHTML={inline(hm[2])} />);
+      out.push(
+        <div
+          className={`md-h ${HEAD_CLASS[hm[1].length]}`}
+          key={key}
+          dangerouslySetInnerHTML={inline(hm[2])}
+        />,
+      );
       continue;
     }
 
     // blockquote
     const bq = line.match(/^>\s*(.+)$/);
     if (bq) {
-      out.push(<blockquote className="md-quote" key={key} dangerouslySetInnerHTML={inline(bq[1])} />);
+      out.push(
+        <blockquote className="md-quote" key={key} dangerouslySetInnerHTML={inline(bq[1])} />,
+      );
       continue;
     }
 
@@ -151,11 +180,8 @@ function parseBlocks(text: string, startKey: string): React.ReactNode[] {
 const CodeBlock: React.FC<{ language: string; code: string }> = ({ language, code }) => {
   const [copied, setCopied] = useState(false);
   const copy = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(code);
-    } catch {
-      /* clipboard unavailable */
-    }
+    const ok = await copyText(code);
+    if (!ok) return; // 복사 실패 시 "복사됨" 으로 바꾸지 않는다
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -192,5 +218,8 @@ export const Markdown: React.FC<{ text: string; className?: string }> = ({ text,
 
 /** Inline-only markdown for the avatar subtitle (compact, streaming-prefix safe). */
 export const SubtitleMarkdown: React.FC<{ text: string }> = ({ text }) => (
-  <span className="md-inline" dangerouslySetInnerHTML={{ __html: inlineMarkdownHtml(text || '') }} />
+  <span
+    className="md-inline"
+    dangerouslySetInnerHTML={{ __html: inlineMarkdownHtml(text || '') }}
+  />
 );

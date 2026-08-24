@@ -12,6 +12,7 @@
  * 순간 이 기능이 없는 것과 같아진다.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { copyText } from '../bridge';
 import type { ToolEvent } from '../../../core/types';
 import { CloseIcon, CopyIcon, DocIcon } from '../brand/icons';
 
@@ -91,15 +92,15 @@ export const ToolLogModal: React.FC<Props> = ({ events, onClose }) => {
   }, [onClose]);
 
   const copy = useCallback(async (value: string, key: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
+    const ok = await copyText(value);
+    if (ok) {
       setCopied(key);
       setCopyError('');
       setTimeout(() => setCopied(''), 1600);
-    } catch (e) {
+    } else {
       // 클립보드가 막힌 환경 — 조용히 넘기면 사용자는 복사됐다고 믿고
       // 엉뚱한 것을 붙여넣는다.
-      setCopyError(e instanceof Error ? e.message : '클립보드를 쓸 수 없습니다');
+      setCopyError('클립보드를 쓸 수 없습니다');
     }
   }, []);
 

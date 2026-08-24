@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { xgen } from '../bridge';
+import { xgen, copyText } from '../bridge';
 import {
   BROWSER_SEARCH_PROVIDERS,
   normalizeBrowserUrl,
@@ -1311,12 +1311,9 @@ const InstallLogModal: React.FC<{
             className="secondary"
             title="상태 전체(JSON)를 클립보드에 복사 — 문의 시 붙여넣기"
             onClick={() => {
-              try {
-                void navigator.clipboard.writeText(JSON.stringify(status, null, 2));
-                setMsg('진단 정보를 복사했습니다.');
-              } catch {
-                setMsg('복사 실패');
-              }
+              void copyText(JSON.stringify(status, null, 2)).then((ok) =>
+                setMsg(ok ? '진단 정보를 복사했습니다.' : '복사 실패'),
+              );
             }}
           >
             진단 복사

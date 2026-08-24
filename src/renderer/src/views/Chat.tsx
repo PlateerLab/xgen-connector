@@ -13,7 +13,7 @@
  * store drives the single execute-stream endpoint.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { xgen } from '../bridge';
+import { xgen, copyText } from '../bridge';
 import { sessionStore } from '../session';
 import { CONTEXT_LIMIT_CHOICES, teamsContextStore, useContextChip } from '../teams-context';
 import { ShareToTeamsModal } from './ShareToTeams';
@@ -829,9 +829,11 @@ export const Chat: React.FC<{
                   <div className="msg-actions">
                     <button
                       onClick={() => {
-                        void xgen.clipboard.write(m.text);
-                        setCopiedAt(i);
-                        window.setTimeout(() => setCopiedAt((at) => (at === i ? -1 : at)), 1200);
+                        void copyText(m.text).then((ok) => {
+                          if (!ok) return;
+                          setCopiedAt(i);
+                          window.setTimeout(() => setCopiedAt((at) => (at === i ? -1 : at)), 1200);
+                        });
                       }}
                       title="답변 복사"
                     >

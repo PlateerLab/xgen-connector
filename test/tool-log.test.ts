@@ -63,9 +63,7 @@ test('짧게 줄인 이름 때문에 원본을 잃지 않는다', () => {
 });
 
 test('실패는 실패로 적힌다', () => {
-  const out = formatToolLog([
-    { eventType: 'tool_error', toolName: 'Bash', error: '터짐' },
-  ]);
+  const out = formatToolLog([{ eventType: 'tool_error', toolName: 'Bash', error: '터짐' }]);
   assert.match(out, /— 실패/);
   assert.match(out, /### 오류/);
   assert.match(out, /터짐/);
@@ -106,7 +104,10 @@ test('복사가 1급이다', () => {
   // 스크롤해서 드래그하게 만들면 이 기능이 없는 것과 같다.
   assert.match(MODAL, /전체 복사/);
   assert.match(MODAL, /이 항목 복사/);
-  assert.match(MODAL, /navigator\.clipboard\.writeText/);
+  // 복사는 main 프로세스 clipboard(copyText)를 쓴다 — 렌더러 navigator.clipboard 는
+  // Electron 에서 "Write permission denied" 로 조용히 실패한다.
+  assert.match(MODAL, /copyText\(/);
+  assert.doesNotMatch(MODAL, /navigator\.clipboard\.writeText/);
 });
 
 test('복사 실패를 성공이라 하지 않는다', () => {
