@@ -64,6 +64,10 @@ export interface LocalChatDeps {
   ensureCli?: (tool: 'codex' | 'claude') => Promise<boolean>;
   /** 서버 브릿지 TLS 검증 여부(config.allowPrivateCertificate 의 반대). 기본 true(검증). */
   tlsVerify?: () => boolean;
+  /** 로컬 실행에서 에이전트가 쓸 **외부 MCP 서버 설정**(resolved: 시크릿·oauth 토큰 주입 완료).
+   *  cfg.mcp 가 켜져 있고 enabled 서버가 있을 때만 반환. 사이드카가 런타임 MCP 매니저로 직접
+   *  스폰/연결한다(context.connector_mcp_servers). 서버 실행 경로의 reverse-WS 프록시와 별개. */
+  connectorMcpServers?: () => Promise<unknown[]>;
   /** 테스트 주입: CLI 인증 프리플라이트 대체(기본 serverCliAuth — 서버 설정만 본다). */
   cliAuth?: (
     tool: 'codex' | 'claude',
@@ -277,7 +281,13 @@ export async function runLocalChatTurn(
     workspaceDir,
     ...(workspaceSynced ? {} : { detail: WORKSPACE_UNSYNCED_DETAIL }),
   });
-  const mergedContext = { ...ctx.context, settings };
+  // 외부 MCP 서버(로컬 실행용) — resolved 설정을 context 에 실어 사이드카가 직접 연결한다.
+  const connectorMcpServers = (await deps.connectorMcpServers?.().catch(() => [])) ?? [];
+  const mergedContext = {
+    ...ctx.context,
+    settings,
+    ...(connectorMcpServers.length ? { connector_mcp_servers: connectorMcpServers } : {}),
+  };
   // 서버 브릿지 TLS 정책 — 커넥터의 사설 인증서 허용 설정을 사이드카에도 동일 적용.
   const tlsVerify = deps.tlsVerify ? deps.tlsVerify() !== false : true;
   const serverBridge = ctx.server

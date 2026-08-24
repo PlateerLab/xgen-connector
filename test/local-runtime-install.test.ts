@@ -62,13 +62,13 @@ test('pythonArchiveUrl: python-build-standalone install_only URL', () => {
   assert.match(url, /-x86_64-unknown-linux-gnu-install_only\.tar\.gz$/);
 });
 
-test('DEFAULT_RUNTIME_WHEEL: 릴리스된 runtime(host 포함) wheel v3.8.3 을 가리킨다', () => {
-  assert.equal(RUNTIME_WHEEL_VERSION, '3.8.3');
+test('DEFAULT_RUNTIME_WHEEL: 릴리스된 runtime(host 포함) wheel v3.8.4 을 가리킨다', () => {
+  assert.equal(RUNTIME_WHEEL_VERSION, '3.8.4');
   assert.equal(
     DEFAULT_RUNTIME_WHEEL,
-    'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.8.3/xgen_agent_runtime-3.8.3-py3-none-any.whl',
+    'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.8.4/xgen_agent_runtime-3.8.4-py3-none-any.whl',
   );
-  assert.match(DEFAULT_RUNTIME_WHEEL, /xgen-agent-runtime\/releases\/download\/v3\.8\.3\//);
+  assert.match(DEFAULT_RUNTIME_WHEEL, /xgen-agent-runtime\/releases\/download\/v3\.8\.4\//);
   assert.match(DEFAULT_RUNTIME_WHEEL, /\.whl$/);
   // URL 패턴은 버전만 바뀐다(3.7.0 과 동일 패턴).
   assert.equal(
@@ -87,9 +87,9 @@ test('readInstalledVersion: dist-info 우선, 없으면 RUNTIME_VERSION 스탬�
     assert.equal(readDistInfoVersion(dir), undefined);
     assert.equal(readInstalledVersion(dir), '3.7.0');
     // pip 로 wheel 을 올리면 dist-info 가 새 버전으로 생긴다 → 낡은 스탬프보다 dist-info.
-    mkRuntime(dir, '3.8.3');
-    assert.equal(readDistInfoVersion(dir), '3.8.3');
-    assert.equal(readInstalledVersion(dir), '3.8.3');
+    mkRuntime(dir, '3.8.4');
+    assert.equal(readDistInfoVersion(dir), '3.8.4');
+    assert.equal(readInstalledVersion(dir), '3.8.4');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -100,12 +100,12 @@ test('writeRuntimeVersionStamp: 첫 줄만 바꾸고 python 태그 줄은 보존
   try {
     mkRuntime(dir);
     writeFileSync(runtimeVersionStampPath(dir), '3.7.0\n3.12.11+20250808\n');
-    assert.equal(writeRuntimeVersionStamp(dir, '3.8.3'), true);
-    assert.equal(readFileSync(runtimeVersionStampPath(dir), 'utf-8'), '3.8.3\n3.12.11+20250808\n');
+    assert.equal(writeRuntimeVersionStamp(dir, '3.8.4'), true);
+    assert.equal(readFileSync(runtimeVersionStampPath(dir), 'utf-8'), '3.8.4\n3.12.11+20250808\n');
     rmSync(runtimeVersionStampPath(dir));
-    assert.equal(writeRuntimeVersionStamp(dir, '3.8.3'), true);
-    assert.equal(readFileSync(runtimeVersionStampPath(dir), 'utf-8'), '3.8.3\n');
-    assert.equal(readStampVersion(dir), '3.8.3');
+    assert.equal(writeRuntimeVersionStamp(dir, '3.8.4'), true);
+    assert.equal(readFileSync(runtimeVersionStampPath(dir), 'utf-8'), '3.8.4\n');
+    assert.equal(readStampVersion(dir), '3.8.4');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -119,15 +119,15 @@ test(
     try {
       const sp = mkRuntime(dir, '3.7.0');
       writeFileSync(runtimeVersionStampPath(dir), '3.7.0\n3.12.11+20250808\n');
-      // 가짜 python: `-m pip install …` 이면 dist-info 를 3.7.0 → 3.8.3 으로 바꾼다(pip 흉내), 그 외 0.
+      // 가짜 python: `-m pip install …` 이면 dist-info 를 3.7.0 → 3.8.4 으로 바꾼다(pip 흉내), 그 외 0.
       const py = pythonExePath(dir);
       writeFileSync(
         py,
         `#!/bin/sh
 if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
   rm -rf "${join(sp, 'xgen_agent_runtime-3.7.0.dist-info')}"
-  mkdir -p "${join(sp, 'xgen_agent_runtime-3.8.3.dist-info')}"
-  printf 'Version: 3.8.3\\n' > "${join(sp, 'xgen_agent_runtime-3.8.3.dist-info', 'METADATA')}"
+  mkdir -p "${join(sp, 'xgen_agent_runtime-3.8.4.dist-info')}"
+  printf 'Version: 3.8.4\\n' > "${join(sp, 'xgen_agent_runtime-3.8.4.dist-info', 'METADATA')}"
 fi
 exit 0
 `,
@@ -138,13 +138,13 @@ exit 0
         phases.push(p.phase),
       );
       assert.equal(r.ok, true, r.error);
-      assert.equal(r.version, '3.8.3');
+      assert.equal(r.version, '3.8.4');
       assert.deepEqual(phases, ['pip', 'smoke', 'done']);
       assert.equal(
         readFileSync(runtimeVersionStampPath(dir), 'utf-8'),
-        '3.8.3\n3.12.11+20250808\n',
+        '3.8.4\n3.12.11+20250808\n',
       );
-      assert.equal(readInstalledVersion(dir), '3.8.3');
+      assert.equal(readInstalledVersion(dir), '3.8.4');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

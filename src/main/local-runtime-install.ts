@@ -44,7 +44,7 @@ const execFileP = promisify(execFile);
  * RELEASED_RUNTIME_WHEEL 과 **같은 버전**이어야 한다(test/bundle-layout.test.ts 가 잠근다 —
  * .mjs 는 TS 를 import 할 수 없어 상수를 공유하지 못한다).
  */
-export const RUNTIME_WHEEL_VERSION = '3.8.3';
+export const RUNTIME_WHEEL_VERSION = '3.8.4';
 /** GitHub Release 의 wheel URL(버전 → URL, 패턴 고정). */
 export function runtimeWheelUrl(version: string): string {
   const v = version.replace(/^v/, '');
