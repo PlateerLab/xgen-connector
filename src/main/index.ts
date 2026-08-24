@@ -30,7 +30,14 @@ import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, sep } from 'node:path';
-import { XgenClient, type ChatEvent, type TtsSpeakOptions } from '../core/index';
+import {
+  XgenClient,
+  TEAMS_ATTACHMENT_EXTENSIONS,
+  teamsAttachmentRejectReason,
+  type ChatEvent,
+  type TeamsAttachment,
+  type TtsSpeakOptions,
+} from '../core/index';
 import {
   loadConfig,
   saveConfig,
@@ -40,7 +47,13 @@ import {
   type McpServerConfig,
   type WorkspacePersistConfig,
 } from './config';
-import { tokenStore, credentialStore, storageStatus, mcpSecretStore, mcpOAuthStore } from './keychain';
+import {
+  tokenStore,
+  credentialStore,
+  storageStatus,
+  mcpSecretStore,
+  mcpOAuthStore,
+} from './keychain';
 import { splitServerSecrets, withResolvedSecrets } from './mcp-secrets';
 import { authorizeMcpServer, hasOAuthTokens, clearOAuth } from './mcp-oauth';
 import {
@@ -56,10 +69,7 @@ import { CHANNELS } from './ipc';
 // ⚠ 정적 import 여야 한다. 런타임 require('./x') 는 번들러가 해석하지 않아
 // 패키징본에서 'Cannot find module' 로 죽고, UI 는 조용히 아무 일도 하지
 // 않는다 (v1.7.0 에서 에이전트 추가가 먹통이던 원인).
-import {
-  initWorkspaceManager,
-  getWorkspaceManager,
-} from './workspace-manager';
+import { initWorkspaceManager, getWorkspaceManager } from './workspace-manager';
 import { makeWorkspaceApi } from './workspace-api';
 import { WorkspaceWsClient } from './sync-transport';
 import { hostname, userInfo } from 'os';
@@ -86,6 +96,13 @@ import { getBrowserRuntime } from './browser-runtime';
 import { getBrowserToolProvider } from './browser-tools';
 import { allowedBrowserUrl } from './browser-security';
 import { systemMetricsSampler } from './system-metrics';
+import { TeamsSocketHub } from './teams-ws';
+import {
+  openAttachmentTemp,
+  pickFilesToAttach,
+  readFileForUpload,
+  saveAttachmentAs,
+} from './teams-files';
 
 const IS_LINUX = process.platform === 'linux';
 
@@ -98,7 +115,14 @@ const IS_LINUX = process.platform === 'linux';
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'xgenavatar',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true },
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+      bypassCSP: true,
+    },
   },
 ]);
 
@@ -223,7 +247,12 @@ function createWindow(): void {
     const runtime = getBrowserRuntime();
     const expectedPartition = runtime.partition();
     const safeUrl = allowedBrowserUrl(params.src);
-    if (!runtime.isEnabled() || !expectedPartition || params.partition !== expectedPartition || !safeUrl) {
+    if (
+      !runtime.isEnabled() ||
+      !expectedPartition ||
+      params.partition !== expectedPartition ||
+      !safeUrl
+    ) {
       event.preventDefault();
       return;
     }
@@ -291,7 +320,8 @@ type DisplayT = ReturnType<typeof screen.getPrimaryDisplay>;
 // clamp to its work area — a window saved on an unplugged monitor lands visibly on
 // the nearest one instead of off-screen.
 function restoreWinBounds(saved: WinBounds | undefined, defaults: WinBounds): WinBounds {
-  if (!saved || ![saved.x, saved.y, saved.width, saved.height].every(Number.isFinite)) return defaults;
+  if (!saved || ![saved.x, saved.y, saved.width, saved.height].every(Number.isFinite))
+    return defaults;
   const wa = screen.getDisplayMatching(saved).workArea;
   const width = Math.max(240, Math.min(Math.round(saved.width), wa.width));
   const height = Math.max(220, Math.min(Math.round(saved.height), wa.height));
@@ -372,7 +402,9 @@ function attachContentResilience(win: BrowserWindow, reload: () => void): void {
     clearRetry();
     const delay = Math.min(2000 * Math.pow(1.6, retries), 20000); // 2s → cap 20s
     retries = Math.min(retries + 1, 10);
-    console.warn(`[connector] content load failed (${errorCode} ${errorDesc}); retry in ${Math.round(delay)}ms`);
+    console.warn(
+      `[connector] content load failed (${errorCode} ${errorDesc}); retry in ${Math.round(delay)}ms`,
+    );
     retryTimer = setTimeout(() => {
       if (!win.isDestroyed()) reload();
     }, delay);
@@ -421,7 +453,10 @@ function saveOverlayGeometry(immediate = false): void {
     const b = overlayWindow.getBounds();
     const bounds: WinBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
     const cfg = loadConfig();
-    saveConfig({ overlayByDisplay: { ...(cfg.overlayByDisplay || {}), [displayKey(d)]: bounds }, overlayBounds: bounds });
+    saveConfig({
+      overlayByDisplay: { ...(cfg.overlayByDisplay || {}), [displayKey(d)]: bounds },
+      overlayBounds: bounds,
+    });
   };
   if (immediate) run();
   else overlayGeomTimer = setTimeout(run, 450);
@@ -437,7 +472,9 @@ function restoreOverlayGeometry(): void {
   const saved = cfg.overlayByDisplay?.[displayKey(d)] ?? asWinBounds(cfg.overlayBounds);
   if (saved) overlayWindow.setBounds(restoreWinBounds(saved, saved));
 }
-function asWinBounds(b: { width: number; height: number; x?: number; y?: number } | undefined): WinBounds | undefined {
+function asWinBounds(
+  b: { width: number; height: number; x?: number; y?: number } | undefined,
+): WinBounds | undefined {
   if (!b || b.x === undefined || b.y === undefined) return undefined;
   return { x: b.x, y: b.y, width: b.width, height: b.height };
 }
@@ -726,7 +763,6 @@ function destroyOverlayChip(): void {
   if (overlayChip && !overlayChip.isDestroyed()) overlayChip.destroy();
   overlayChip = null;
 }
-
 
 // ── 잠금과 입력: 컨트롤은 **자기 창**에 산다 ─────────────────────────
 //
@@ -1080,7 +1116,12 @@ function resetPositions(): void {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     const w = 340;
     const h = 460;
-    overlayWindow.setBounds({ x: wa.x + wa.width - w - 28, y: wa.y + wa.height - h - 28, width: w, height: h });
+    overlayWindow.setBounds({
+      x: wa.x + wa.width - w - 28,
+      y: wa.y + wa.height - h - 28,
+      width: w,
+      height: h,
+    });
     overlayWindow.show();
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1235,6 +1276,38 @@ async function refreshAuthToken(): Promise<string | null> {
   const fallback = (await tokenStore.getRefresh()) ?? undefined;
   return c.ensureFreshAuth(fallback);
 }
+/**
+ * Teams 실시간 소켓 허브 — 로그인 동안 사용자 소켓 1개 + 열린 방 소켓 N개.
+ *
+ * 토큰은 항상 **라이브 값**을 집는다(liveAccessToken). keychain 만 읽으면 세션
+ * 중 회전 시점과 기록 사이의 틈에서 폐기된 토큰을 잡아 403 에 갇힌다 — MCP
+ * 브릿지·워크스페이스 동기화가 같은 이유로 같은 규칙을 쓴다.
+ */
+const teamsHub = new TeamsSocketHub();
+let teamsHubConfigured = false;
+
+/** 로그인/로그아웃/서버변경 후 Teams 소켓을 현재 상태에 맞춘다. */
+function syncTeams(): void {
+  const cfg = loadConfig();
+  if (!teamsHubConfigured) {
+    teamsHubConfigured = true;
+    teamsHub.configure({
+      baseUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+      token: async () => (await liveAccessToken()) || '',
+      refreshAuth: refreshAuthToken,
+      allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
+      emit: (event) => safeSend(mainWindow, CHANNELS.teamsEvent, event),
+    });
+  }
+  if (currentUserId() && normalizeServerUrl(cfg.serverUrl)) {
+    teamsHub.startUserSocket();
+  } else {
+    // 로그아웃/서버 미설정 — 방 소켓까지 전부 접는다. 다른 계정의 방을
+    // 물고 있는 상태가 남으면 안 된다.
+    teamsHub.stopAll();
+  }
+}
+
 /** Reconcile MCP manager + bridge with config + login state. */
 function syncMcp(): void {
   const cfg = loadConfig();
@@ -1337,6 +1410,10 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     normalizeServerUrl(patch.serverUrl) !== prevServer;
   if (serverChanged) {
     getMcpBridge().stop();
+    // Teams 소켓도 함께 접는다. 빠뜨리면 구 서버 주소를 문 재연결 루프가 남아
+    // 폐기된 토큰으로 최대 60초 백오프까지 영원히 재시도한다 (로그아웃 경로에는
+    // 있는데 여기만 없어서 생기던 누수).
+    teamsHub.stopAll();
     await getBrowserRuntime().closeAll();
     getBrowserRuntime().configure({ enabled: false });
     void client?.logout().catch(() => undefined); // 구 서버 세션 무효화 (rebind 전 호출)
@@ -1389,6 +1466,7 @@ async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   const persisted = await tokenStore.setAccess(c.getAccessTokenAfterRotation());
   if (refreshToken) await tokenStore.setRefresh(refreshToken);
   syncMcp();
+  syncTeams();
   safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
   // 가상 드라이브는 **로그인 상태에서만** 존재한다. 기동 시점의 리컨사일은
   // 아직 로그인 전이라 아무것도 붙이지 않으므로, 로그인이 끝난 지금 다시
@@ -1414,7 +1492,11 @@ function settleSsoWindow(): void {
 ipcMain.handle(CHANNELS.authSsoLogin, async () => {
   const cfg = loadConfig();
   if (!cfg.ssoEnabled) throw new Error('SSO 로그인이 활성화되지 않았습니다.');
-  const url = buildSsoUrl(normalizeServerUrl(cfg.serverUrl), cfg.ssoPath ?? '/sso/signin', SSO_CALLBACK);
+  const url = buildSsoUrl(
+    normalizeServerUrl(cfg.serverUrl),
+    cfg.ssoPath ?? '/sso/signin',
+    SSO_CALLBACK,
+  );
   const ssoDebug = cfg.ssoDebug === true;
   if (ssoWindow && !ssoWindow.isDestroyed()) {
     ssoWindow.show();
@@ -1422,39 +1504,45 @@ ipcMain.handle(CHANNELS.authSsoLogin, async () => {
     throw new Error('SSO 로그인이 이미 진행 중입니다.');
   }
 
-  return new Promise<{ user: NonNullable<XgenClient['user']>; tokenPersisted: boolean }>((resolve, reject) => {
-    const win = new BrowserWindow(
-      createSsoWindowOptions(join(__dirname, '../preload/sso.js'), ssoDebug, mainWindow ?? undefined),
-    );
-    ssoWindow = win;
-    pendingSso = { resolve, reject };
-    if (ssoDebug) win.webContents.openDevTools({ mode: 'detach', activate: true });
-    win.once('ready-to-show', () => win.show());
-    win.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
-      try {
-        const protocol = new URL(nextUrl).protocol;
-        if (protocol === 'http:' || protocol === 'https:') void win.loadURL(nextUrl);
-      } catch {
-        // 잘못된 팝업 URL은 무시한다.
-      }
-      return { action: 'deny' };
-    });
-    win.on('closed', () => {
-      ssoWindow = null;
-      if (pendingSso) {
+  return new Promise<{ user: NonNullable<XgenClient['user']>; tokenPersisted: boolean }>(
+    (resolve, reject) => {
+      const win = new BrowserWindow(
+        createSsoWindowOptions(
+          join(__dirname, '../preload/sso.js'),
+          ssoDebug,
+          mainWindow ?? undefined,
+        ),
+      );
+      ssoWindow = win;
+      pendingSso = { resolve, reject };
+      if (ssoDebug) win.webContents.openDevTools({ mode: 'detach', activate: true });
+      win.once('ready-to-show', () => win.show());
+      win.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
+        try {
+          const protocol = new URL(nextUrl).protocol;
+          if (protocol === 'http:' || protocol === 'https:') void win.loadURL(nextUrl);
+        } catch {
+          // 잘못된 팝업 URL은 무시한다.
+        }
+        return { action: 'deny' };
+      });
+      win.on('closed', () => {
+        ssoWindow = null;
+        if (pendingSso) {
+          const pending = pendingSso;
+          pendingSso = null;
+          pending.reject(new Error('SSO 로그인이 취소되었습니다.'));
+        }
+      });
+      void win.loadURL(url).catch((error) => {
+        if (!pendingSso) return;
         const pending = pendingSso;
         pendingSso = null;
-        pending.reject(new Error('SSO 로그인이 취소되었습니다.'));
-      }
-    });
-    void win.loadURL(url).catch((error) => {
-      if (!pendingSso) return;
-      const pending = pendingSso;
-      pendingSso = null;
-      settleSsoWindow();
-      pending.reject(error instanceof Error ? error : new Error(String(error)));
-    });
-  });
+        settleSsoWindow();
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+      });
+    },
+  );
 });
 
 ipcMain.on(CHANNELS.authSsoComplete, (event, payload: unknown) => {
@@ -1488,21 +1576,24 @@ ipcMain.on(CHANNELS.authSsoComplete, (event, payload: unknown) => {
   })();
 });
 
-ipcMain.handle(CHANNELS.authLogin, async (_e, email: string, password: string, remember?: boolean) => {
-  const c = getClient();
-  const res = await c.login(email, password);
-  const tokenPersisted = await afterAuthSuccess(res.refreshToken);
-  // Remember (or forget) credentials for auto-login, per the login-form checkbox.
-  let credsPersisted = true;
-  if (remember) {
-    credsPersisted = await credentialStore.save({ email, password });
-    saveConfig({ autoLogin: credsPersisted }); // 저장 실패면 다음 실행 자동 로그인은 불가
-  } else {
-    await credentialStore.clear();
-    saveConfig({ autoLogin: false });
-  }
-  return { user: c.user, tokenPersisted, credsPersisted };
-});
+ipcMain.handle(
+  CHANNELS.authLogin,
+  async (_e, email: string, password: string, remember?: boolean) => {
+    const c = getClient();
+    const res = await c.login(email, password);
+    const tokenPersisted = await afterAuthSuccess(res.refreshToken);
+    // Remember (or forget) credentials for auto-login, per the login-form checkbox.
+    let credsPersisted = true;
+    if (remember) {
+      credsPersisted = await credentialStore.save({ email, password });
+      saveConfig({ autoLogin: credsPersisted }); // 저장 실패면 다음 실행 자동 로그인은 불가
+    } else {
+      await credentialStore.clear();
+      saveConfig({ autoLogin: false });
+    }
+    return { user: c.user, tokenPersisted, credsPersisted };
+  },
+);
 
 // Launch: sign in with the remembered credentials (only when 자동 로그인 is on).
 ipcMain.handle(CHANNELS.authAutoLogin, async () => {
@@ -1540,7 +1631,9 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
   const access = await tokenStore.getAccess();
   const refresh = await tokenStore.getRefresh();
   if (!access) return { user: null };
-  const verdict = await c.restoreDetailed(access, refresh ?? undefined).catch(() => 'network' as const);
+  const verdict = await c
+    .restoreDetailed(access, refresh ?? undefined)
+    .catch(() => 'network' as const);
   if (verdict === 'valid') {
     const rotated = c.getAccessTokenAfterRotation();
     if (rotated && rotated !== access) await tokenStore.setAccess(rotated);
@@ -1551,6 +1644,7 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
     // 워크스페이스 리컨사일이 빠져 **재시작할 때마다 드라이브가 안 붙었다**.
     // 갈래가 둘이면 한쪽만 갱신되는 날이 온다 — 한 곳으로 모은다.
     syncMcp();
+    syncTeams();
     safeSend(overlayWindow, CHANNELS.avatarRefresh); // session restored → overlay can load the avatar
     void getWorkspaceManager()?.reconcile();
     return { user: c.user };
@@ -1565,6 +1659,7 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
 
 ipcMain.handle(CHANNELS.authLogout, async () => {
   getMcpBridge().stop();
+  teamsHub.stopAll();
   await getBrowserRuntime().closeAll();
   getBrowserRuntime().configure({ enabled: false });
   if (client) await client.logout();
@@ -1584,7 +1679,9 @@ ipcMain.handle(CHANNELS.authLogout, async () => {
 
 ipcMain.handle(CHANNELS.authStatus, () => ({ user: client?.user ?? null }));
 ipcMain.handle(CHANNELS.userAvatarConfig, () => getClient().preferences.getAvatarConfig());
-ipcMain.handle(CHANNELS.userSaveAvatarConfig, (_e, cfg) => getClient().preferences.saveAvatarConfig(cfg));
+ipcMain.handle(CHANNELS.userSaveAvatarConfig, (_e, cfg) =>
+  getClient().preferences.saveAvatarConfig(cfg),
+);
 ipcMain.handle(CHANNELS.userSaveAvatarTransform, (_e, avatarId, tf) =>
   getClient().preferences.saveAvatarTransform(avatarId, tf),
 );
@@ -1599,7 +1696,9 @@ function avatarConfigChanged<T>(result: T): T {
 ipcMain.handle(CHANNELS.avatarUploadAsset, (_e, bytes: Uint8Array, filename: string) =>
   getClient().avatars.uploadAsset(bytes, filename),
 );
-ipcMain.handle(CHANNELS.avatarDeleteAsset, (_e, avatarId: string) => getClient().avatars.deleteAsset(avatarId));
+ipcMain.handle(CHANNELS.avatarDeleteAsset, (_e, avatarId: string) =>
+  getClient().avatars.deleteAsset(avatarId),
+);
 ipcMain.handle(CHANNELS.avatarSetEnabled, async (_e, enabled: boolean) =>
   avatarConfigChanged(await getClient().preferences.setAvatarEnabled(enabled)),
 );
@@ -1619,11 +1718,15 @@ ipcMain.handle(CHANNELS.avatarStoreList, () => getClient().avatars.storeList());
 ipcMain.handle(CHANNELS.avatarStorePublish, (_e, descriptor, name: string, description: string) =>
   getClient().avatars.storePublish(descriptor, name, description),
 );
-ipcMain.handle(CHANNELS.avatarStoreDownload, (_e, storeId: string) => getClient().avatars.storeDownload(storeId));
+ipcMain.handle(CHANNELS.avatarStoreDownload, (_e, storeId: string) =>
+  getClient().avatars.storeDownload(storeId),
+);
 ipcMain.handle(CHANNELS.avatarStoreRate, (_e, storeId: string, stars: number) =>
   getClient().avatars.storeRate(storeId, stars),
 );
-ipcMain.handle(CHANNELS.avatarStoreUnpublish, (_e, storeId: string) => getClient().avatars.storeUnpublish(storeId));
+ipcMain.handle(CHANNELS.avatarStoreUnpublish, (_e, storeId: string) =>
+  getClient().avatars.storeUnpublish(storeId),
+);
 
 // ── IPC: agents ──────────────────────────────────────────────────
 ipcMain.handle(CHANNELS.agentsList, (_e, query) => getClient().agents.list(query ?? {}));
@@ -1632,26 +1735,158 @@ ipcMain.handle(CHANNELS.agentsList, (_e, query) => getClient().agents.list(query
 // The renderer captures audio via getUserMedia and hands bytes to main; main
 // proxies to the backend with the Bearer token. Secrets never reach here.
 ipcMain.handle(CHANNELS.voiceConfig, () => getClient().voice.getVoiceConfig());
-ipcMain.handle(CHANNELS.voiceTranscribe, (_e, bytes: Uint8Array, mime: string, language?: string) => {
-  // Copy to a standalone ArrayBuffer (the IPC view may span a shared buffer).
-  const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  const blob = new Blob([buf], { type: mime || 'audio/webm' });
-  return getClient().voice.transcribe(blob, language);
-});
 ipcMain.handle(
-  CHANNELS.voiceSpeak,
-  async (_e, text: string, opts?: TtsSpeakOptions) => {
-    const blob = await getClient().voice.speak(text, opts);
-    const buf = Buffer.from(await blob.arrayBuffer());
-    return { bytes: new Uint8Array(buf), mime: blob.type };
+  CHANNELS.voiceTranscribe,
+  (_e, bytes: Uint8Array, mime: string, language?: string) => {
+    // Copy to a standalone ArrayBuffer (the IPC view may span a shared buffer).
+    const buf = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+    const blob = new Blob([buf], { type: mime || 'audio/webm' });
+    return getClient().voice.transcribe(blob, language);
   },
 );
+ipcMain.handle(CHANNELS.voiceSpeak, async (_e, text: string, opts?: TtsSpeakOptions) => {
+  const blob = await getClient().voice.speak(text, opts);
+  const buf = Buffer.from(await blob.arrayBuffer());
+  return { bytes: new Uint8Array(buf), mime: blob.type };
+});
 
 // ── IPC: history ─────────────────────────────────────────────────
-ipcMain.handle(CHANNELS.historyTurns, (_e, workflowId: string, interactionId: string, name?: string) =>
-  getClient().history.turns(workflowId, interactionId, name),
+ipcMain.handle(
+  CHANNELS.historyTurns,
+  (_e, workflowId: string, interactionId: string, name?: string) =>
+    getClient().history.turns(workflowId, interactionId, name),
 );
 ipcMain.handle(CHANNELS.historyConversations, () => getClient().history.conversations());
+
+// ── IPC: Teams (사람 사이의 대화) ────────────────────────────────
+// REST 는 전부 core 의 TeamsApi 에 위임한다 — 이 파일에는 매핑 로직이 없다.
+// 실시간은 teamsHub 가 CHANNELS.teamsEvent 로 렌더러에 밀어 준다.
+ipcMain.handle(CHANNELS.teamsRooms, () => getClient().teams.listRooms());
+ipcMain.handle(CHANNELS.teamsCreateRoom, (_e, name: string, description?: string) =>
+  // 커넥터가 만드는 방은 항상 '사람끼리만' 모드로 시작한다. 에이전트를 붙이는
+  // 것은 후속 단계이고, 그때는 방 설정에서 모드를 올린다 (서버가 이미 지원).
+  getClient().teams.createRoom({ name, description, routerMode: 'chat' }),
+);
+ipcMain.handle(CHANNELS.teamsOpenDm, (_e, userId: number, username?: string) =>
+  getClient().teams.openDirectMessage(userId, username),
+);
+ipcMain.handle(CHANNELS.teamsLeaveRoom, async (_e, roomId: string) => {
+  await getClient().teams.leaveRoom(roomId);
+  // 나간 방의 소켓을 그대로 두면 서버가 거절할 때까지 재연결을 시도한다.
+  teamsHub.closeRoom(roomId);
+  return true;
+});
+ipcMain.handle(CHANNELS.teamsMembers, (_e, roomId: string) =>
+  getClient().teams.listMembers(roomId),
+);
+ipcMain.handle(CHANNELS.teamsAddMember, async (_e, roomId: string, userId: number) => {
+  await getClient().teams.addMember(roomId, userId);
+  return true;
+});
+ipcMain.handle(CHANNELS.teamsSearchUsers, (_e, query: string) =>
+  getClient().teams.searchUsers(query),
+);
+ipcMain.handle(CHANNELS.teamsMessages, (_e, roomId: string, before?: string) =>
+  getClient().teams.listMessages(roomId, { before }),
+);
+ipcMain.handle(
+  CHANNELS.teamsSend,
+  (_e, roomId: string, content: string, replyToId?: string, attachments?: TeamsAttachment[]) =>
+    getClient().teams.sendMessage(roomId, content, { replyToId, attachments }),
+);
+ipcMain.handle(CHANNELS.teamsEdit, (_e, roomId: string, messageId: string, content: string) =>
+  getClient().teams.editMessage(roomId, messageId, content),
+);
+ipcMain.handle(CHANNELS.teamsReact, (_e, roomId: string, messageId: string, emoji: string) =>
+  getClient().teams.toggleReaction(roomId, messageId, emoji),
+);
+ipcMain.handle(CHANNELS.teamsWatch, (_e, roomId: string) => {
+  teamsHub.openRoom(roomId);
+  return true;
+});
+ipcMain.handle(CHANNELS.teamsUnwatch, (_e, roomId: string) => {
+  teamsHub.closeRoom(roomId);
+  return true;
+});
+ipcMain.handle(CHANNELS.teamsTyping, (_e, roomId: string, typing: boolean) => {
+  teamsHub.sendTyping(roomId, typing);
+  return true;
+});
+
+ipcMain.handle(CHANNELS.clipboardWrite, (_e, text: unknown) => {
+  const value = typeof text === 'string' ? text : String(text ?? '');
+  if (!value) return false;
+  clipboard.writeText(value);
+  return true;
+});
+
+// ── IPC: Teams 첨부 ──────────────────────────────────────────────
+// 파일 경로는 **메인에만** 존재한다. 렌더러는 "고르기 → 올리기" 를 시킬 수만
+// 있고, 어떤 경로를 읽고 쓸지는 정하지 못한다.
+
+/** 사용자가 고른 로컬 파일들을 방에 올린다. 취소하면 빈 배열. */
+ipcMain.handle(CHANNELS.teamsUploadAttachment, async (_e, roomId: string) => {
+  const paths = await pickFilesToAttach(mainWindow, [...TEAMS_ATTACHMENT_EXTENSIONS]);
+  // **전부 먼저 검사한다.** 하나씩 올리다 중간에서 멈추면 앞의 파일은 이미 서버에
+  // 올라갔는데 호출자는 오류만 받아, 올라간 파일을 알 수도 지울 수도 없게 된다
+  // (서버에 첨부 삭제 API 가 없다).
+  const files = [];
+  for (const path of paths) {
+    const file = await readFileForUpload(path);
+    const reason = teamsAttachmentRejectReason(file.filename, file.bytes.byteLength);
+    if (reason) throw new Error(reason);
+    files.push(file);
+  }
+  const uploaded: TeamsAttachment[] = [];
+  for (const file of files) {
+    uploaded.push(await getClient().teams.uploadAttachment(roomId, file.bytes, file.filename));
+  }
+  return uploaded;
+});
+
+/**
+ * 워크스페이스(가상 드라이브)의 파일을 그대로 방에 올린다 — 에이전트 산출물 공유.
+ *
+ * 렌더러는 **드라이브 상대 경로**(`/에이전트/…`)만 넘긴다. 절대 경로를 받아
+ * "안에 있는지" 검사하는 방식은 심볼릭 링크·대소문자·UNC 로 뚫린다. 탐색기의
+ * `workspaceOpenPath` 와 같은 규칙을 그대로 쓴다: 검증된 상대 경로를 마운트
+ * 루트에 붙이는 것만 허용한다.
+ */
+ipcMain.handle(CHANNELS.teamsShareWorkspaceFile, async (_e, roomId: string, path: unknown) => {
+  const root = getWorkspaceManager()?.status()?.path;
+  const rel = safeDrivePath(path);
+  if (!root || !rel) throw new Error('워크스페이스 안의 파일만 공유할 수 있습니다.');
+  const target = join(root, ...rel.split('/').filter(Boolean));
+  const file = await readFileForUpload(target);
+  const reason = teamsAttachmentRejectReason(file.filename, file.bytes.byteLength);
+  if (reason) throw new Error(reason);
+  return getClient().teams.uploadAttachment(roomId, file.bytes, file.filename);
+});
+
+ipcMain.handle(CHANNELS.teamsSaveAttachment, async (_e, roomId: string, att: TeamsAttachment) => {
+  const bytes = await getClient().teams.downloadAttachment(roomId, att);
+  return saveAttachmentAs(mainWindow, att.filename, bytes);
+});
+
+/**
+ * 그림 미리보기용 원본 바이트.
+ *
+ * `<img src>` 에 서버 주소를 그대로 박을 수 없어서 이 통로가 필요하다: 렌더러가
+ * 보내는 요청에는 Authorization 헤더가 실리지 않아 401 이 되고, 토큰을 쿼리에
+ * 실으면 그 URL 이 캐시·로그에 남는다. 바이트를 건네주면 렌더러는 blob URL 만
+ * 만들면 된다.
+ */
+ipcMain.handle(CHANNELS.teamsReadAttachment, async (_e, roomId: string, att: TeamsAttachment) =>
+  getClient().teams.downloadAttachment(roomId, att),
+);
+
+ipcMain.handle(CHANNELS.teamsOpenAttachment, async (_e, roomId: string, att: TeamsAttachment) => {
+  const bytes = await getClient().teams.downloadAttachment(roomId, att);
+  return openAttachmentTemp(att.filename, att.storageKey, bytes);
+});
 
 // ── IPC: chat streaming ──────────────────────────────────────────
 // The renderer starts a stream with a client-generated streamId; each ChatEvent
@@ -1689,16 +1924,16 @@ ipcMain.handle(CHANNELS.chatCancel, (_e, streamId: string) => {
 // ── IPC: browser runtime ─────────────────────────────────────────
 ipcMain.handle(CHANNELS.browserState, () => getBrowserRuntime().state());
 ipcMain.handle(CHANNELS.browserCreate, (_e, request) => getBrowserRuntime().create(request));
-ipcMain.handle(
-  CHANNELS.browserEnsureShared,
-  (_e, workflowId: string, workflowName?: string) =>
-    getBrowserRuntime().ensureShared(workflowId, workflowName),
+ipcMain.handle(CHANNELS.browserEnsureShared, (_e, workflowId: string, workflowName?: string) =>
+  getBrowserRuntime().ensureShared(workflowId, workflowName),
 );
 ipcMain.handle(CHANNELS.browserBindShared, (_e, pageId: string, webContentsId: number) =>
   getBrowserRuntime().bindSharedPage(pageId, webContentsId),
 );
 ipcMain.handle(CHANNELS.browserNavigate, (_e, request) => getBrowserRuntime().navigate(request));
-ipcMain.handle(CHANNELS.browserActivate, (_e, pageId: string) => getBrowserRuntime().activate(pageId));
+ipcMain.handle(CHANNELS.browserActivate, (_e, pageId: string) =>
+  getBrowserRuntime().activate(pageId),
+);
 ipcMain.handle(CHANNELS.browserClose, async (_e, pageId: string) => {
   await getBrowserRuntime().close(pageId);
   return true;
@@ -1858,10 +2093,7 @@ ipcMain.handle(CHANNELS.autostartSet, (_e, enabled: boolean) => {
 ipcMain.on(CHANNELS.resetPositions, () => resetPositions());
 ipcMain.on(CHANNELS.resetSettings, () => {
   void resetStoredSettings().catch((err) => {
-    dialog.showErrorBox(
-      '설정 초기화 실패',
-      err instanceof Error ? err.message : String(err),
-    );
+    dialog.showErrorBox('설정 초기화 실패', err instanceof Error ? err.message : String(err));
   });
 });
 ipcMain.on(CHANNELS.appRestart, () => {
@@ -1942,7 +2174,8 @@ ipcMain.handle(CHANNELS.mcpTestServer, async (e, cfg) => {
   const stored = cfg?.name ? await mcpSecretStore.get(cfg.name).catch(() => null) : null;
   const resolved = cfg ? withResolvedSecrets(cfg, stored) : cfg;
   return getMcpManager().test(resolved, (lines) => {
-    if (!e.sender.isDestroyed()) e.sender.send(CHANNELS.mcpTestProgressEvent, { name: cfg?.name, lines });
+    if (!e.sender.isDestroyed())
+      e.sender.send(CHANNELS.mcpTestProgressEvent, { name: cfg?.name, lines });
   });
 });
 ipcMain.handle(CHANNELS.mcpAuthorize, async (_e, cfg) => {
@@ -1969,13 +2202,17 @@ ipcMain.handle(CHANNELS.mcpRenameSecrets, async (_e, oldName, newName) => {
   if (!from || !to || from === to) return { ok: true };
   try {
     const sec = await mcpSecretStore.get(from);
-    if (sec) { await mcpSecretStore.save(to, sec); }
+    if (sec) {
+      await mcpSecretStore.save(to, sec);
+    }
     const oauth = await mcpOAuthStore.load(from);
     if (oauth && (oauth.tokens || oauth.clientInformation || oauth.codeVerifier)) {
       await mcpOAuthStore.save(to, oauth);
     }
     // 옛 이름은 mcpSaveServers 의 삭제정리가 처리한다(중복 제거).
-  } catch { /* best-effort — 저장은 계속 진행 */ }
+  } catch {
+    /* best-effort — 저장은 계속 진행 */
+  }
   return { ok: true };
 });
 ipcMain.handle(CHANNELS.mcpStatus, () => getMcpBridge().status());
@@ -2006,7 +2243,6 @@ function openInFileManager(target: string): void {
     console.log(`[workspace] 폴더 열기 실패: ${(e as Error).message}`);
   }
 }
-
 
 // ── 계정별 워크스페이스 ────────────────────────────────────────────
 //
@@ -2195,7 +2431,7 @@ function wireWorkspaceManager(): void {
           });
         }
       }
-      if (!res.ok) return null;   // 모르면 경고하지 않는다
+      if (!res.ok) return null; // 모르면 경고하지 않는다
       const body = (await res.json()) as {
         needs_reconnect?: string[];
         devices?: Array<{ device_id: string; home_folder?: string }>;
@@ -2235,14 +2471,17 @@ ipcMain.handle(CHANNELS.workspaceStatus, () => {
  * 서버 쓰기가 실패하면 **로컬도 바꾸지 않는다.** 한쪽만 바뀌면 정확히 예전
  * 상태(두 목록이 어긋남)로 돌아간다.
  */
-ipcMain.handle(CHANNELS.workspaceAttach, async (_e, agent: { workflowId: string; label: string }) => {
-  await cloudLinkRequest('POST', '/api/cloud/links', {
-    workflow_id: agent.workflowId,
-    label: agent.label,
-  });
-  await getWorkspaceManager()?.reconcile();
-  return getWorkspaceManager()?.status();
-});
+ipcMain.handle(
+  CHANNELS.workspaceAttach,
+  async (_e, agent: { workflowId: string; label: string }) => {
+    await cloudLinkRequest('POST', '/api/cloud/links', {
+      workflow_id: agent.workflowId,
+      label: agent.label,
+    });
+    await getWorkspaceManager()?.reconcile();
+    return getWorkspaceManager()?.status();
+  },
+);
 ipcMain.handle(CHANNELS.workspaceDetach, async (_e, workflowId: string) => {
   await cloudLinkRequest('DELETE', `/api/cloud/links/${encodeURIComponent(workflowId)}`);
   await getWorkspaceManager()?.reconcile();
@@ -2385,7 +2624,10 @@ ipcMain.handle(CHANNELS.quickChatSetEnabled, (_e, enabled: boolean) => {
   setQuickChatEnabled(!!enabled);
   return !!enabled;
 });
-ipcMain.handle(CHANNELS.quickChatGetHotkey, () => loadConfig().quickChatHotkey ?? DEFAULT_QUICKCHAT);
+ipcMain.handle(
+  CHANNELS.quickChatGetHotkey,
+  () => loadConfig().quickChatHotkey ?? DEFAULT_QUICKCHAT,
+);
 ipcMain.handle(CHANNELS.quickChatSubmit, (_e, text: string) => {
   const r = deliverQuickChat(text);
   if (r.ok) dismissQuickChat();
@@ -2404,7 +2646,9 @@ ipcMain.on(CHANNELS.quickChatClose, () => dismissQuickChat());
 process.on('uncaughtException', (err) => {
   try {
     console.log(`[main] 처리되지 않은 예외: ${err?.stack || err}`);
-    void import('./diag-log').then(({ diag }) => diag('main', `처리되지 않은 예외: ${err?.stack || err}`));
+    void import('./diag-log').then(({ diag }) =>
+      diag('main', `처리되지 않은 예외: ${err?.stack || err}`),
+    );
   } catch {
     /* 로깅 실패가 종료 사유가 되면 안 된다 */
   }
@@ -2412,7 +2656,9 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   try {
     console.log(`[main] 처리되지 않은 거부: ${String(reason)}`);
-    void import('./diag-log').then(({ diag }) => diag('main', `처리되지 않은 거부: ${String(reason)}`));
+    void import('./diag-log').then(({ diag }) =>
+      diag('main', `처리되지 않은 거부: ${String(reason)}`),
+    );
   } catch {
     /* 위와 같다 */
   }
@@ -2452,7 +2698,9 @@ if (!gotLock) {
         // xgenavatar://a/<path> → <serverUrl>/<path>. Electron net.fetch: no CORS/CSP.
         return await net.fetch(`${serverUrl}${u.pathname}${u.search}`, { method: 'GET' });
       } catch (e) {
-        return new Response(`avatar proxy error: ${e instanceof Error ? e.message : String(e)}`, { status: 502 });
+        return new Response(`avatar proxy error: ${e instanceof Error ? e.message : String(e)}`, {
+          status: 502,
+        });
       }
     });
     // The install callback flips appQuitting so quitAndInstall isn't blocked by

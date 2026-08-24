@@ -3918,3 +3918,794 @@ button {
 .toollog-detail pre.err {
   color: #b91c1c;
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Teams — 사람 사이의 대화
+   에이전트 채팅과 같은 어휘(msg-row / bubble / composer / agent-item)를 재사용하고,
+   여기서는 "여러 사람이 말한다"는 차이에서 오는 것만 새로 정의한다.
+   테마 토큰만 쓰므로 라이트/다크가 함께 따라온다.
+   ───────────────────────────────────────────────────────────── */
+
+/* 사이드탭 아이콘 위 안 읽음 배지 */
+.ab-badge-dot {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* 새 대화 / 1:1 시작 폼 */
+.teams-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.teams-form-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.teams-form-hint {
+  flex: 1;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.teams-form button.sm,
+button.sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.teams-user-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.teams-user-results.tall {
+  max-height: 320px;
+  margin-top: 10px;
+}
+
+/* 빈 상태 / 오류 */
+.teams-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+.teams-empty p {
+  margin: 0;
+}
+.teams-empty .sub {
+  font-size: 11.5px;
+  opacity: 0.85;
+  line-height: 1.5;
+}
+.teams-empty.sm {
+  padding: 10px;
+  font-size: 12px;
+}
+.teams-error {
+  margin: 8px 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.teams-error.inline {
+  margin: 8px 16px 0;
+}
+.teams-banner {
+  margin: 8px 16px 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+  border: 1px solid var(--primary-soft-border);
+  color: var(--text);
+  font-size: 12px;
+}
+
+/* 방 목록 안 읽음 배지 */
+.teams-badge {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.teams-badge.done {
+  background: var(--panel-2);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* 사람 아바타 — 이름 첫 글자. 에이전트(로고)와 구분된다. */
+.teams-avatar {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--primary-grad);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+.teams-avatar.spacer {
+  background: none;
+}
+
+/* 연속 발화는 머리(아바타·이름) 없이 붙여 그린다. */
+.msg-row.grouped {
+  margin-top: -6px;
+}
+.teams-sender {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.teams-system {
+  align-self: center;
+  margin: 6px 0;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.teams-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.msg-row:hover .teams-meta-row {
+  opacity: 1;
+}
+.msg-row.user .teams-meta-row {
+  justify-content: flex-end;
+}
+.teams-time,
+.teams-edited {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.teams-react-btn {
+  background: none;
+  border: none;
+  padding: 1px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.teams-react-btn:hover {
+  color: var(--primary);
+}
+
+.teams-react-picker {
+  display: flex;
+  gap: 3px;
+  margin-top: 4px;
+  padding: 4px;
+  width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+}
+.teams-react-picker button {
+  background: none;
+  border: none;
+  padding: 3px 5px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+.teams-react-picker button:hover {
+  background: var(--panel-2);
+}
+
+.teams-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.teams-reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.teams-reaction.mine {
+  background: var(--primary-soft);
+  border-color: var(--primary-soft-border);
+}
+.teams-reaction .count {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.teams-typing {
+  padding: 0 4px 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* 아직 서버가 확정하지 않은 메시지 — 흐리게. */
+.bubble.pending {
+  opacity: 0.6;
+}
+
+.modal.teams-invite h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Agent ↔ Teams 다리
+   두 탭은 분리돼 있지만 경계에 문이 있다: 에이전트 답변/파일은 방으로
+   나가고, 방의 대화는 프롬프트 문맥으로 들어온다.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 답변에 딸린 행동 (복사 / Teams로 공유) ────────────────────── */
+.msg-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  /* 평소에는 물러나 있다가 그 답변에 다가가면 드러난다 — 흐름을 읽는 동안
+     버튼이 시선을 끌면 안 된다. */
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.msg-row:hover .msg-actions,
+.msg-actions:focus-within {
+  opacity: 1;
+}
+.msg-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.msg-actions button:hover {
+  color: var(--text);
+  border-color: var(--primary-soft-border);
+  background: var(--primary-soft);
+}
+
+/* ── 컨텍스트 칩 (composer 위) ────────────────────────────────────
+   켜져 있다는 사실이 항상 보여야 한다 — 화면 캡처 토글과 같은 원칙. */
+.teams-ctx {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--primary-soft-border);
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+  color: var(--text);
+  font-size: 11.5px;
+}
+.teams-ctx-name {
+  font-weight: 600;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teams-ctx-sep,
+.teams-ctx-actual {
+  color: var(--muted);
+}
+.teams-ctx-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+}
+.teams-ctx-range select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11.5px;
+  padding: 1px 4px;
+  cursor: pointer;
+}
+.teams-ctx-note {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teams-ctx-off {
+  flex-shrink: 0;
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.teams-ctx-off:hover {
+  color: var(--text);
+  background: var(--border-soft);
+}
+.teams-ctx-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin: 0 0 6px;
+  padding: 3px 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.teams-ctx-add:hover {
+  color: var(--text);
+  border-color: var(--primary-soft-border);
+}
+
+/* ── 전송 전 확인 — 몇 건이 나가는지 ─────────────────────────── */
+.modal.teams-ctx-confirm {
+  max-width: 420px;
+}
+.teams-ctx-confirm-lead {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.teams-ctx-confirm-sub {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* ── 공유 모달 ─────────────────────────────────────────────────── */
+.modal.teams-share {
+  max-width: 480px;
+}
+.teams-share-preview {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+}
+.teams-share-preview .label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.teams-share-preview pre {
+  margin: 0;
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.teams-share-file {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* ── 방 안의 공유 출처 카드 ────────────────────────────────────── */
+.teams-share-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  border-left: 2px solid var(--primary);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--primary-soft);
+  font-size: 11.5px;
+}
+.teams-share-from {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.teams-share-from .sub {
+  font-weight: 400;
+  color: var(--muted);
+}
+.teams-share-card .link {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.teams-share-card .link:hover {
+  text-decoration: underline;
+}
+
+/* ── 답장: 인용 + composer 배너 ────────────────────────────────── */
+.teams-quote {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 3px;
+  padding: 3px 8px;
+  border-left: 2px solid var(--border);
+  background: var(--panel-2);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 100%;
+}
+.teams-quote .who {
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.teams-quote .text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teams-reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  border-left: 2px solid var(--primary);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--panel-2);
+  font-size: 11.5px;
+}
+.teams-reply-bar .who {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.teams-reply-bar .quote {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teams-reply-bar button {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.teams-reply-bar button:hover {
+  color: var(--text);
+  background: var(--border-soft);
+}
+
+/* ── 보내기 전 대기 중인 첨부 ──────────────────────────────────── */
+.teams-staged {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.teams-staged-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  font-size: 11px;
+}
+.teams-staged-item .name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teams-staged-item .size {
+  color: var(--muted);
+}
+.teams-staged-item button {
+  display: inline-flex;
+  padding: 1px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.teams-staged-item button:hover {
+  color: #b91c1c;
+}
+
+/* ── 메시지에 붙은 첨부 ────────────────────────────────────────── */
+.teams-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.teams-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  max-width: 340px;
+}
+.teams-file-mark {
+  display: inline-flex;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.teams-file-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.teams-file-name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teams-file-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+.teams-file-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.teams-file-actions button {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.teams-file-actions button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--primary-soft-border);
+}
+.teams-file-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ── 내 메시지 인라인 편집 ─────────────────────────────────────── */
+.teams-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--primary-soft-border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  min-width: 260px;
+}
+.teams-edit textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--text);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.teams-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.teams-edit-actions .kbd-hint {
+  margin-right: auto;
+  font-size: 10.5px;
+}
+
+/* ── 방 헤더의 ⋯ 메뉴 ─────────────────────────────────────────── */
+.teams-menu-wrap {
+  position: relative;
+}
+.teams-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.teams-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 41;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.teams-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.teams-menu button:hover {
+  background: var(--panel-2);
+}
+.teams-menu button.danger {
+  color: #b91c1c;
+}
+.teams-menu button.danger:hover {
+  background: rgba(220, 38, 38, 0.08);
+}
+
+/* ── 탐색기 행의 [Teams로 공유] ───────────────────────────────── */
+.tree-share {
+  flex-shrink: 0;
+  display: inline-flex;
+  padding: 2px;
+  margin-left: 4px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+}
+.tree-row:hover .tree-share,
+.tree-share:focus-visible {
+  opacity: 1;
+}
+.tree-share:hover {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+/* ── 그림 첨부 인라인 미리보기 ─────────────────────────────────── */
+.teams-image {
+  margin: 4px 0 0;
+  max-width: 340px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--panel);
+}
+.teams-image img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  background: var(--panel-2);
+  cursor: zoom-in;
+}
+.teams-image-loading {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11.5px;
+  background: var(--panel-2);
+}
+.teams-image figcaption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+.teams-image figcaption .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.teams-image figcaption .size {
+  flex-shrink: 0;
+}
+.teams-image figcaption button {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  padding: 3px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.teams-image figcaption button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--border-soft);
+}

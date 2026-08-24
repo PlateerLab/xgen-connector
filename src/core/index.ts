@@ -25,6 +25,7 @@ import { AvatarsApi } from './avatars';
 import { ChatApi } from './chat';
 import { HistoryApi } from './history';
 import { PreferencesApi } from './preferences';
+import { TeamsApi } from './teams';
 import { VoiceApi } from './voice';
 import { HttpClient, type FetchLike } from './client';
 import type { CurrentUser, LoginResult } from './types';
@@ -51,6 +52,7 @@ export class XgenClient {
   readonly chat: ChatApi;
   readonly history: HistoryApi;
   readonly preferences: PreferencesApi;
+  readonly teams: TeamsApi;
   readonly avatars: AvatarsApi;
   readonly voice: VoiceApi;
 
@@ -74,6 +76,7 @@ export class XgenClient {
     this.chat = new ChatApi(this.http);
     this.history = new HistoryApi(this.http);
     this.preferences = new PreferencesApi(this.http);
+    this.teams = new TeamsApi(this.http);
     this.avatars = new AvatarsApi(this.http);
     this.voice = new VoiceApi(this.http);
   }
@@ -230,3 +233,30 @@ export { SseParser } from './sse';
 export { frameToChatEvent } from './chat';
 export { sha256Hex } from './hash';
 export type { StoreAvatar } from './avatars';
+// Agent ↔ Teams 다리 — 컨텍스트 봉투와 공유 출처 표식. 렌더러와 메인이 같은
+// 형식을 써야 하므로 core 를 통해서만 노출한다.
+export {
+  TEAMS_CONTEXT_START,
+  TEAMS_CONTEXT_END,
+  TEAMS_CONTEXT_MAX_CHARS,
+  toContextEntries,
+  buildTeamsContext,
+  prependTeamsContext,
+  stripTeamsContext,
+  formatShareHeader,
+  buildSharedMessage,
+  parseSharedMessage,
+  shareBodyOf,
+} from './teams-bridge';
+export {
+  TEAMS_ATTACHMENT_EXTENSIONS,
+  TEAMS_ATTACHMENT_MAX_BYTES,
+  teamsAttachmentRejectReason,
+} from './teams';
+export type {
+  TeamsContextEntry,
+  TeamsContextRoom,
+  TeamsContextEnvelope,
+  TeamsShareRef,
+  ParsedSharedMessage,
+} from './teams-bridge';

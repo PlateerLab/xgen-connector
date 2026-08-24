@@ -251,3 +251,75 @@ export const ForwardIcon: React.FC<P> = ({ size = 16, className }) => (
     <path d="M5 12h14" />
   </svg>
 );
+
+/** Teams — 사람 사이의 대화(사이드탭). 사람 둘이 겹친 Lucide 'users'. */
+export const TeamsIcon: React.FC<P> = ({ size = 18, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+  </svg>
+);
+
+/** 대화 상대 초대 — 사람 + 더하기. */
+export const UserPlusIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M19 8v6" />
+    <path d="M22 11h-6" />
+  </svg>
+);
+
+/** 이모지 리액션 — 웃는 얼굴. */
+export const SmileIcon: React.FC<P> = ({ size = 15, className }) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+    <path d="M9 9h.01" />
+    <path d="M15 9h.01" />
+  </svg>
+);
+
+/** 답장 — 되돌아가는 화살표(Lucide 'reply'). */
+export const ReplyIcon: React.FC<P> = ({ size = 14, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="m9 17-5-5 5-5" />
+    <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+  </svg>
+);
+
+/** 파일 첨부 — 클립. */
+export const PaperclipIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+  </svg>
+);
+
+/** 내려받기 — 아래로 향한 화살표 + 받침. */
+export const DownloadIcon: React.FC<P> = ({ size = 14, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="M7 10l5 5 5-5" />
+    <path d="M12 15V3" />
+  </svg>
+);
+
+/** 다른 곳으로 공유 — 상자에서 위로 나가는 화살표(Lucide 'share'). */
+export const ShareIcon: React.FC<P> = ({ size = 14, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+    <path d="M16 6l-4-4-4 4" />
+    <path d="M12 2v13" />
+  </svg>
+);
+
+/** 더 보기 — 가로 점 셋. */
+export const MoreIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="19" cy="12" r="1" />
+    <circle cx="5" cy="12" r="1" />
+  </svg>
+);

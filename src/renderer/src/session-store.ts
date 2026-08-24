@@ -23,6 +23,7 @@
  */
 import type { Agent, ChatEvent, ChatRequest, Citation, ToolEvent } from '../../core/index';
 import { stripBrowserContext } from '../../core/browser';
+import { stripTeamsContext } from '../../core/teams-bridge';
 
 /** One rendered chat message (mirrors the old Chat.Msg shape). */
 export interface ChatMsg {
@@ -160,7 +161,7 @@ export class SessionStore {
   }
 
   active(): SessionState | null {
-    return this._active ? this.map.get(this._active) ?? null : null;
+    return this._active ? (this.map.get(this._active) ?? null) : null;
   }
 
   get(key: string): SessionState | null {
@@ -249,10 +250,15 @@ export class SessionStore {
       for (const tn of turns) {
         // 최종 방어: text 는 무조건 문자열이어야 렌더가 안전하다 (transport 가
         // 이미 문자열화하지만, 다른 주입 경로가 생겨도 여기서 못 뚫게 한다).
-        const input = stripBrowserContext(
-          typeof tn.input === 'string' ? tn.input : tn.input == null ? '' : String(tn.input),
+        // 봉투는 **두 겹**일 수 있다 — 브라우저 컨텍스트와 Teams 컨텍스트가 같은
+        // 턴에 붙는다. 붙인 순서(teams → browser)의 역순으로 벗긴다.
+        const input = stripTeamsContext(
+          stripBrowserContext(
+            typeof tn.input === 'string' ? tn.input : tn.input == null ? '' : String(tn.input),
+          ),
         );
-        const output = typeof tn.output === 'string' ? tn.output : tn.output == null ? '' : String(tn.output);
+        const output =
+          typeof tn.output === 'string' ? tn.output : tn.output == null ? '' : String(tn.output);
         if (input) msgs.push({ role: 'user', text: input });
         if (output) msgs.push({ role: 'assistant', text: output });
       }
@@ -260,7 +266,13 @@ export class SessionStore {
       this.patch(key, (s) =>
         s.streaming || s.messages.length > 0
           ? { ...s, loadingHistory: false, historyLoaded: true }
-          : { ...s, messages: msgs, loadingHistory: false, historyLoaded: true, updatedAt: this.now() },
+          : {
+              ...s,
+              messages: msgs,
+              loadingHistory: false,
+              historyLoaded: true,
+              updatedAt: this.now(),
+            },
       );
     } catch {
       this.patch(key, (s) => ({ ...s, loadingHistory: false, historyLoaded: true }));
@@ -307,10 +319,20 @@ export class SessionStore {
       role: 'user',
       text,
       screenshot: shot
-        ? { sourceName: shot.sourceName ?? '화면', width: shot.width ?? 0, height: shot.height ?? 0 }
+        ? {
+            sourceName: shot.sourceName ?? '화면',
+            width: shot.width ?? 0,
+            height: shot.height ?? 0,
+          }
         : undefined,
     };
-    const asst: ChatMsg = { role: 'assistant', text: '', tools: [], citations: [], streaming: true };
+    const asst: ChatMsg = {
+      role: 'assistant',
+      text: '',
+      tools: [],
+      citations: [],
+      streaming: true,
+    };
     this.patch(key, (st) => ({
       ...st,
       messages: [...st.messages, userMsg, asst],

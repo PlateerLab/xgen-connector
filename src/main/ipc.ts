@@ -40,6 +40,35 @@ export const CHANNELS = {
   voiceTranscribe: 'voice:transcribe', // audio bytes → POST /api/audio/stt/transcribe → text
   voiceSpeak: 'voice:speak', // text → POST /api/audio/tts/speak → audio bytes
 
+  // Teams — 사람 사이의 대화. REST 는 요청/응답, 실시간은 teamsEvent push.
+  teamsRooms: 'teams:rooms',
+  teamsCreateRoom: 'teams:createRoom',
+  teamsOpenDm: 'teams:openDm',
+  teamsLeaveRoom: 'teams:leaveRoom',
+  teamsMembers: 'teams:members',
+  teamsAddMember: 'teams:addMember',
+  teamsSearchUsers: 'teams:searchUsers',
+  teamsMessages: 'teams:messages',
+  teamsSend: 'teams:send',
+  teamsEdit: 'teams:edit',
+  teamsReact: 'teams:react',
+  teamsWatch: 'teams:watch', // 방 탭 열림 → 방 WS 연결
+  teamsUnwatch: 'teams:unwatch', // 방 탭 닫힘 → 방 WS 해제
+  teamsTyping: 'teams:typing',
+  teamsEvent: 'teams:event', // main → renderer (정규화된 실시간 이벤트)
+  // 첨부 — 업로드는 바이트를 받아 서버에 multipart 로 올리고, 저장/열기는
+  // 내려받은 바이트를 디스크에 쓴다. 렌더러는 파일 경로를 만지지 않는다.
+  /** 임의 텍스트를 **main 의 clipboard 로** 복사. 렌더러의 navigator.clipboard 는
+   *  Electron 에서 권한/보안 컨텍스트 때문에 조용히 실패할 수 있다. */
+  clipboardWrite: 'clipboard:write',
+  teamsUploadAttachment: 'teams:uploadAttachment',
+  teamsSaveAttachment: 'teams:saveAttachment',
+  teamsOpenAttachment: 'teams:openAttachment',
+  /** 첨부 원본 바이트 — 그림 미리보기용. 디스크를 거치지 않는다. */
+  teamsReadAttachment: 'teams:readAttachment',
+  /** 워크스페이스(가상 드라이브)의 파일을 그대로 방에 올린다 — 에이전트 산출물 공유. */
+  teamsShareWorkspaceFile: 'teams:shareWorkspaceFile',
+
   historyTurns: 'history:turns',
   historyConversations: 'history:conversations',
 

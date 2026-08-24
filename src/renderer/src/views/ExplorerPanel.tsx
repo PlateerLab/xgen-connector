@@ -13,6 +13,8 @@
  */
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { xgen } from '../bridge';
+import { teamsAttachmentRejectReason } from '../../../core/index';
+import { ShareToTeamsModal } from './ShareToTeams';
 import type { WorkspaceStatusLike } from '../../../preload/index';
 import {
   childPath,
@@ -30,6 +32,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   RefreshIcon,
+  ShareIcon,
   UploadIcon,
 } from '../brand/icons';
 
@@ -39,7 +42,15 @@ interface DirState {
   loading: boolean;
 }
 
-export const ExplorerPanel: React.FC<{ onOpenSettings: () => void }> = ({ onOpenSettings }) => {
+export const ExplorerPanel: React.FC<{
+  onOpenSettings: () => void;
+  /** 로그인 사용자 표시 이름 — 파일을 Teams 로 공유할 때 낙관적 렌더에 쓴다. */
+  myName: string;
+}> = ({ onOpenSettings, myName }) => {
+  /** Teams 로 공유하려고 고른 파일의 드라이브 경로. null 이면 모달이 닫혀 있다. */
+  const [sharePath, setSharePath] = useState<{ path: string; name: string; size: number } | null>(
+    null,
+  );
   const [status, setStatus] = useState<WorkspaceStatusLike | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -190,6 +201,21 @@ export const ExplorerPanel: React.FC<{ onOpenSettings: () => void }> = ({ onOpen
           </span>
           <span className="tree-name">{e.name}</span>
           {e.size > 0 && <span className="tree-size">{formatSize(e.size)}</span>}
+          {/* 에이전트 산출물을 Teams 방으로 — 탐색기가 [Agent]와 [Teams] 사이의
+              세 번째 문이다. 올릴 수 없는 형식이면 버튼조차 띄우지 않는다. */}
+          {teamsAttachmentRejectReason(e.name, e.size) === null && (
+            <button
+              className="tree-share"
+              title="이 파일을 Teams 대화방에 공유"
+              aria-label="Teams로 공유"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setSharePath({ path: p, name: e.name, size: e.size });
+              }}
+            >
+              <ShareIcon size={12} />
+            </button>
+          )}
         </div>
       );
     });
@@ -320,6 +346,17 @@ export const ExplorerPanel: React.FC<{ onOpenSettings: () => void }> = ({ onOpen
           </>
         )}
       </div>
+
+      {sharePath && (
+        <ShareToTeamsModal
+          title="파일을 Teams로 공유"
+          body={`${sharePath.name} 파일을 공유합니다.`}
+          myName={myName}
+          shareRef={{ kind: 'file', label: sharePath.name }}
+          file={{ drivePath: sharePath.path, name: sharePath.name, size: sharePath.size }}
+          onClose={() => setSharePath(null)}
+        />
+      )}
 
       {status && !blocked && (
         <div className="explorer-foot">

@@ -328,8 +328,16 @@ test('E2E: background job → job_id, ShellJob list/poll/kill 로 관리', async
   const jobId = m![1]
   const list = await p.callTool(SHELL_JOB_TOOL, { action: 'list' })
   assert.match(list.content[0].text, new RegExp(jobId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
-  await new Promise((r) => setTimeout(r, 500))
-  const poll = await p.callTool(SHELL_JOB_TOOL, { action: 'poll', job_id: jobId })
+  // 셸 기동은 부하에 따라 수백 ms 씩 흔들린다(윈도 PowerShell 이 특히). 고정 대기
+  // 뒤 한 번만 들여다보면 느린 날에는 stdout 이 아직 비어 실패한다 — 여기서 지키려는
+  // 것은 "언제" 가 아니라 "백그라운드 job 의 출력이 쌓이는가" 이므로, 준비될 때까지
+  // 짧게 되묻는다. 명령의 sleep 은 3초라 그 안에는 여전히 running 이다.
+  let poll = await p.callTool(SHELL_JOB_TOOL, { action: 'poll', job_id: jobId })
+  const deadline = Date.now() + 2500
+  while (!/started-xgen/.test(poll.content[0].text) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100))
+    poll = await p.callTool(SHELL_JOB_TOOL, { action: 'poll', job_id: jobId })
+  }
   assert.match(poll.content[0].text, /started-xgen/)
   assert.match(poll.content[0].text, /running/)
   const kill = await p.callTool(SHELL_JOB_TOOL, { action: 'kill', job_id: jobId })

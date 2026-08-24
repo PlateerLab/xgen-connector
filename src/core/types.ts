@@ -208,3 +208,132 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
 }
+
+// ─────────────────────────────────────────────────────────────
+// Teams — 사람 사이의 대화 (XGEN Teams, /api/teams/*)
+//
+// 서버(xgen-workflow/controller/teams)는 방·메시지·멤버·첨부·WebSocket 을 이미
+// 제공한다. 커넥터는 그 API 를 그대로 쓰고, snake_case → camelCase 변환은 전부
+// core/teams.ts 한 곳에서 끝낸다 (렌더러는 raw 응답을 절대 보지 않는다).
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 방의 라우팅 모드 — 에이전트가 언제 끼어드는가.
+ *   chat   : 에이전트 침묵, 사람끼리만 대화 (@mention / "!" 는 예외 탈출구)
+ *   hybrid : Router LLM 이 chat/task 를 판단해 매칭 에이전트만 실행
+ *   manual : 분류 없이 모든 메시지를 방 에이전트에게 전달
+ * 커넥터는 1차 목표(사람 사이의 대화)에 맞춰 방을 만들 때 'chat' 을 쓴다.
+ */
+export type TeamsRouterMode = 'chat' | 'hybrid' | 'manual' | 'auto';
+
+/** 메시지를 보낸 주체. system 은 입장/퇴장 등 서버가 만든 안내. */
+export type TeamsSenderType = 'user' | 'agent' | 'router' | 'system';
+
+/** 채팅방 한 개 (목록 카드에 필요한 만큼). */
+export interface TeamsRoom {
+  id: string;
+  name: string;
+  description?: string;
+  routerMode: TeamsRouterMode;
+  /** 1:1 대화방인지. 멤버가 늘면 서버가 자동으로 false 로 바꾼다. */
+  isDirect: boolean;
+  createdAt: string;
+  createdBy: number;
+  /** 마지막 메시지 시각 (ISO). 목록 정렬 기준. */
+  lastMessageAt?: string;
+}
+
+/** 방 멤버 (사람). */
+export interface TeamsMember {
+  userId: number;
+  username: string;
+  role: 'owner' | 'admin' | 'member';
+  isOnline: boolean;
+  joinedAt: string;
+}
+
+/** 이모지 리액션 집계 한 줄. */
+export interface TeamsReaction {
+  emoji: string;
+  count: number;
+  userIds: number[];
+}
+
+/**
+ * 메시지에 매달린 첨부 파일 메타 — 서버 `attachment_controller` 업로드 응답과
+ * 1:1 로 대응한다.
+ *
+ * `extractedText` 를 들고 다니는 이유: 서버는 업로드 시점에 문서에서 본문을
+ * 추출해 돌려주고, **메시지를 보낼 때 그 값을 함께 실어야만** 나중에 에이전트가
+ * 그 첨부의 내용을 볼 수 있다 (서버가 워크플로우 입력에 prepend 한다). 업로드
+ * 응답을 받아 그대로 되돌려주지 않으면 파일은 붙되 내용은 사라진다.
+ */
+export interface TeamsAttachment {
+  id: string;
+  filename: string;
+  mime: string;
+  size: number;
+  storageKey: string;
+  /** 서버가 추출한 본문. 이미지처럼 추출 대상이 아니면 없다. */
+  extractedText?: string;
+  /** 추출 본문이 서버 상한(50만자)에서 잘렸는가. */
+  truncated?: boolean;
+}
+
+/** 메시지 한 개. */
+export interface TeamsMessage {
+  id: string;
+  roomId: string;
+  senderType: TeamsSenderType;
+  /** user 면 user_id 문자열, agent 면 agent id. */
+  senderId: string;
+  senderName: string;
+  content: string;
+  createdAt: string;
+  reactions?: TeamsReaction[];
+  attachments?: TeamsAttachment[];
+  replyToId?: string;
+  replyToSenderName?: string;
+  replyToContent?: string;
+  isEdited?: boolean;
+  editedAt?: string;
+}
+
+/** 초대 대상 검색 결과 (XGEN 사용자). */
+export interface TeamsUser {
+  id: number;
+  username: string;
+  fullName?: string;
+  email?: string;
+}
+
+/**
+ * 메인 프로세스의 WebSocket 이 렌더러로 밀어 주는 이벤트 — 서버 원본 프레임을
+ * 그대로 넘기지 않고 커넥터가 쓰는 것만 좁혀 정규화한다.
+ *
+ * `roomId` 는 어떤 방에서 온 이벤트인지 항상 채워진다 (user WS 의 알림 포함).
+ */
+export type TeamsEvent =
+  /** 방 WS 연결 상태 — 렌더러가 "연결 끊김" 배너를 띄우는 근거. */
+  | { kind: 'status'; roomId: string; connected: boolean }
+  | { kind: 'message'; roomId: string; message: TeamsMessage }
+  /**
+   * 메시지 편집. **전체 메시지가 아니라 바뀐 부분만** 온다 — 서버의
+   * `message_updated` 프레임이 `{message_id, content, edited_at}` 뿐이기 때문이다
+   * (`message_controller.edit_message`). 전체 메시지로 착각해 통째로 갈아끼우면
+   * 답장 인용·첨부처럼 프레임에 없는 필드가 지워진다.
+   */
+  | {
+      kind: 'message_edited';
+      roomId: string;
+      messageId: string;
+      content: string;
+      editedAt?: string;
+    }
+  | { kind: 'reactions'; roomId: string; messageId: string; reactions: TeamsReaction[] }
+  | { kind: 'typing'; roomId: string; userId: number; username: string; typing: boolean }
+  | { kind: 'presence'; roomId: string; onlineUserIds: number[] }
+  /** 내가 보고 있지 않은 방의 새 메시지 (user WS). 목록 배지/알림용. */
+  | { kind: 'notify'; roomId: string; message: TeamsMessage }
+  /** 방 목록 자체가 바뀜 (초대/강퇴/방 정보 변경) — 목록을 다시 부른다. */
+  | { kind: 'rooms_changed'; roomId: string };

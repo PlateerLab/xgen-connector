@@ -1,8 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import { sessionStore, useSessions } from '../session';
+import { teamsStore, useTeams } from '../teams';
+import { teamsContextStore } from '../teams-context';
 import { useBrowserState } from '../browser-state';
-import type { Agent, CurrentUser } from '../../../core/index';
+import type {
+  Agent,
+  CurrentUser,
+  TeamsRoom as TeamsRoomModel,
+  TeamsShareRef,
+} from '../../../core/index';
 import type { BrowserConnectionEvent } from '../../../core/browser';
 import type { ConnectorConfig } from '../../../main/config';
 import { Chat } from './Chat';
@@ -11,6 +18,8 @@ import { AvatarSettings } from './AvatarSettings';
 import { ActivityBar, type SideView } from './ActivityBar';
 import { AgentPanel } from './AgentPanel';
 import { ExplorerPanel } from './ExplorerPanel';
+import { TeamsPanel } from './TeamsPanel';
+import { TeamsRoom } from './TeamsRoom';
 import { TabBar } from './TabBar';
 import { BrowserPane, type BrowserSurfaceRect } from './BrowserPane';
 import { BrowserSurface } from './BrowserSurface';
@@ -179,6 +188,109 @@ export const Workspace: React.FC<{
     [sessions],
   );
   const browserState = useBrowserState();
+  const teams = useTeams();
+
+  // Teams 스토어에 로그인 사용자와 저장된 열람 시각을 넘긴다 (안 읽음 계산 근거).
+  // 계정이 바뀌면 남의 방 상태가 남지 않도록 먼저 비운다.
+  useEffect(() => {
+    teamsStore.reset();
+    teamsContextStore.reset();
+    teamsStore.init(user.userId, config.teams?.lastReadAt);
+  }, [user.userId]);
+
+  /** 사이드바에서 방을 고르면 메인 영역에 탭으로 연다 (이미 있으면 그 탭 선택). */
+  const openRoomTab = useCallback((room: TeamsRoomModel) => {
+    const id = `teams:${room.id}`;
+    setLayout((current) => {
+      const existing = findTab(current, id);
+      if (existing) return selectWorkspaceTab(current, existing.group.id, id);
+      return addWorkspaceTab(current, current.focusedGroupId, {
+        id,
+        kind: 'teams',
+        roomId: room.id,
+        roomName: room.name,
+      });
+    });
+  }, []);
+
+  /** 열린 방 탭 중 지금 보고 있는 방 (사이드바 활성 표시용). */
+  const activeRoomId = useMemo(() => {
+    for (const group of layout.groups) {
+      const active = group.tabs.find((tab) => tab.id === group.activeTabId);
+      if (active?.kind === 'teams' && active.roomId) return active.roomId;
+    }
+    return null;
+  }, [layout]);
+
+  /**
+   * "지금 보고 있는 Teams 방" 을 Agent 쪽에 알린다 — Slack 의 `app_context_changed`
+   * 에 해당한다. 사용자가 방을 보다가 Agent 탭으로 넘어가면 그 방이 문맥으로
+   * 따라붙고, 사용자는 "이거 요약해줘" 라고만 하면 된다.
+   *
+   * 방을 **떠날 때는 알리지 않는다**(null 을 보내지 않는다). Agent 탭으로 가는
+   * 순간 activeRoomId 는 null 이 되는데, 그때 지워 버리면 이 기능을 쓰려는 바로
+   * 그 순간에 문맥이 사라진다.
+   */
+  useEffect(() => {
+    if (!activeRoomId) return;
+    const room = teams.rooms.find((item) => item.id === activeRoomId);
+    if (room) teamsContextStore.setViewedRoom(room);
+  }, [activeRoomId, teams.rooms]);
+
+  /**
+   * 공유된 산출물의 [원본 대화 보기] — 그 에이전트 대화를 탭으로 되살린다.
+   *
+   * 이미 열려 있으면 그 탭을 고르고, 아니면 openResume 으로 히스토리를 불러온다.
+   * 표식에는 에이전트 메타(노드 수 등)가 없으므로 이름만 채운 최소 Agent 를
+   * 만든다 — 브라우저에서 이어 여는 경로가 이미 같은 방식을 쓴다.
+   */
+  const openSharedSource = useCallback(
+    (ref: TeamsShareRef) => {
+      if (!ref.workflowId || !ref.interactionId) return;
+      const known = [...sessions]
+        .filter((session) => session.agent.workflowId === ref.workflowId)
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      const agent: Agent = known?.agent ?? {
+        id: 0,
+        workflowId: ref.workflowId,
+        workflowName: ref.label,
+        nodeCount: 0,
+        isShared: false,
+        isDeployed: false,
+        isCompleted: true,
+        workflowType: 'canvas',
+        description: '',
+        username: '',
+        fullName: '',
+        createdAt: '',
+        updatedAt: '',
+      };
+      const sessionKey = sessionStore.openResume(agent, ref.interactionId, ref.label);
+      setSideView('agent');
+      setLayout((current) => {
+        const id = `chat:${sessionKey}`;
+        const existing = findTab(current, id);
+        if (existing) return selectWorkspaceTab(current, existing.group.id, id);
+        return addWorkspaceTab(current, current.focusedGroupId, {
+          id,
+          kind: 'chat',
+          sessionKey,
+          workflowId: agent.workflowId,
+          workflowName: agent.workflowName,
+        });
+      });
+    },
+    [sessions],
+  );
+
+  /** 방을 나갔다 — 그 방을 띄우고 있던 탭을 닫는다. */
+  const closeRoomTabs = useCallback((roomId: string) => {
+    setLayout((current) => removeWorkspaceTab(current, `teams:${roomId}`));
+  }, []);
+  const teamsUnread = useMemo(
+    () => Object.values(teams.unread).reduce((sum, n) => sum + n, 0),
+    [teams.unread],
+  );
 
   useEffect(
     () =>
@@ -266,8 +378,14 @@ export const Workspace: React.FC<{
 
   const closeTab = useCallback((tab: WorkspaceTab) => {
     setLayout((current) => removeWorkspaceTab(current, tab.id));
-    if (tab.kind === 'chat' && tab.sessionKey) sessionStore.endChat(tab.sessionKey);
+    if (tab.kind === 'chat' && tab.sessionKey) {
+      sessionStore.endChat(tab.sessionKey);
+      // 세션이 사라지면 그 세션에 매달린 Teams 문맥 설정도 함께 버린다.
+      teamsContextStore.forgetSession(tab.sessionKey);
+    }
     if (tab.kind === 'browser' && tab.workflowId) void xgen.browser.closeWorkflow(tab.workflowId);
+    // 방 탭을 닫으면 그 방의 WebSocket 도 접는다 — 열어 둔 방 수만큼만 연결한다.
+    if (tab.kind === 'teams' && tab.roomId) teamsStore.closeRoom(tab.roomId);
   }, []);
 
   const activeWorkflowFor = useCallback((group: WorkspaceGroup) => {
@@ -423,11 +541,11 @@ export const Workspace: React.FC<{
       window.removeEventListener('pointerup', up, true);
       window.removeEventListener('pointercancel', up, true);
       document.body.classList.remove('workspace-tab-dragging');
-        if (started && preview) {
-          suppressClickRef.current = true;
-          setTimeout(() => {
-            suppressClickRef.current = false;
-          }, 0);
+      if (started && preview) {
+        suppressClickRef.current = true;
+        setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
         setLayout((current) =>
           dropWorkspaceTab(
             current,
@@ -508,7 +626,15 @@ export const Workspace: React.FC<{
     const active = group.tabs.find((tab) => tab.id === group.activeTabId) ?? null;
     if (active?.kind === 'chat' && active.sessionKey) {
       const chat = sessionMap.get(active.sessionKey);
-      if (chat) return <Chat key={chat.key} session={chat} mcpDebug={config.mcpDebug === true} />;
+      if (chat)
+        return (
+          <Chat
+            key={chat.key}
+            session={chat}
+            myName={user.username || '나'}
+            mcpDebug={config.mcpDebug === true}
+          />
+        );
     }
     if (active?.kind === 'browser' && active.workflowId) {
       return (
@@ -517,6 +643,28 @@ export const Workspace: React.FC<{
           workflowName={active.workflowName || active.workflowId}
           addressSearch={config.browser?.addressSearch}
           onSurface={reportSurface}
+        />
+      );
+    }
+    if (active?.kind === 'teams' && active.roomId) {
+      // 방 이름은 목록이 최신이다 (이름이 바뀌었을 수 있다). 없으면 탭에 적힌 이름.
+      const room =
+        teams.rooms.find((item) => item.id === active.roomId) ??
+        ({
+          id: active.roomId,
+          name: active.roomName || '대화',
+          routerMode: 'chat',
+          isDirect: false,
+          createdAt: '',
+          createdBy: 0,
+        } as TeamsRoomModel);
+      return (
+        <TeamsRoom
+          key={room.id}
+          room={room}
+          user={user}
+          onOpenSource={openSharedSource}
+          onLeft={closeRoomTabs}
         />
       );
     }
@@ -550,6 +698,7 @@ export const Workspace: React.FC<{
         view={sideView}
         collapsed={collapsed}
         onPressView={pressView}
+        teamsUnread={teamsUnread}
         overlayOn={overlayOn}
         onToggleOverlay={() => void toggleOverlay()}
         avatarActive={avatarActive}
@@ -571,7 +720,13 @@ export const Workspace: React.FC<{
           className="panel-host"
           style={{ display: sideView === 'explorer' ? undefined : 'none' }}
         >
-          <ExplorerPanel onOpenSettings={() => setShowSettings(true)} />
+          <ExplorerPanel
+            onOpenSettings={() => setShowSettings(true)}
+            myName={user.username || '나'}
+          />
+        </div>
+        <div className="panel-host" style={{ display: sideView === 'teams' ? undefined : 'none' }}>
+          <TeamsPanel activeRoomId={activeRoomId} onOpenRoom={openRoomTab} />
         </div>
         <div className="sidebar-resize" onMouseDown={startSidebarResize} />
       </aside>
@@ -652,10 +807,12 @@ export const Workspace: React.FC<{
             ×
           </button>
         </div>
-      ) : notice && (
-        <div className="workspace-notice" role="status">
-          {notice}
-        </div>
+      ) : (
+        notice && (
+          <div className="workspace-notice" role="status">
+            {notice}
+          </div>
+        )
       )}
       {drag && (
         <div className="workspace-drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>

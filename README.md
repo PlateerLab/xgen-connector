@@ -17,11 +17,11 @@ agent execution stream. Avatar/overlay support is intentionally left as an
 
 Grab an installer from the [**Releases**](https://github.com/PlateerLab/xgen-connector/releases/latest) page:
 
-| OS | File | Install |
-|---|---|---|
-| Windows | `XGEN-Connector-Setup-*.exe` | Run it → if SmartScreen appears, **More info → Run anyway** (unsigned). |
-| macOS | `XGEN-Connector-*.dmg` | Open, drag **XGEN Connector.app** to **Applications** → first launch **right-click → Open**. If it says *"damaged"*, run `xattr -dr com.apple.quarantine "/Applications/XGEN Connector.app"`. |
-| Linux | `XGEN-Connector-*.AppImage` / `*.deb` | AppImage: `chmod +x` then run · deb: `sudo dpkg -i`. |
+| OS      | File                                  | Install                                                                                                                                                                                       |
+| ------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows | `XGEN-Connector-Setup-*.exe`          | Run it → if SmartScreen appears, **More info → Run anyway** (unsigned).                                                                                                                       |
+| macOS   | `XGEN-Connector-*.dmg`                | Open, drag **XGEN Connector.app** to **Applications** → first launch **right-click → Open**. If it says _"damaged"_, run `xattr -dr com.apple.quarantine "/Applications/XGEN Connector.app"`. |
+| Linux   | `XGEN-Connector-*.AppImage` / `*.deb` | AppImage: `chmod +x` then run · deb: `sudo dpkg -i`.                                                                                                                                          |
 
 The app auto-updates from these releases (toggle in Settings). On first launch,
 enter your **XGEN server URL** and **account**, then pick an agent and chat.
@@ -38,6 +38,22 @@ enter your **XGEN server URL** and **account**, then pick an agent and chat.
   like the XGEN grid.
 - **Chat** — pick an agent and chat with live token streaming, tool-activity
   chips, and multi-turn continuity (one conversation id per session).
+- **Teams (사람 사이의 대화)** — a third sidebar view next to Agent and 탐색기.
+  Browse the rooms you belong to, open one as a tab, and talk to your teammates
+  in real time (WebSocket): live messages, replies, edits, file attachments with
+  inline image previews, typing indicators, presence, emoji reactions, unread
+  badges, group rooms and 1:1 DMs. Rooms created here are people-only
+  (`router_mode: chat`); agents stay silent until you add them.
+- **Agent ↔ Teams bridge** — the two tabs stay separate (an agent session and a
+  team room are different kinds of space), but the boundary is permeable:
+  - **Teams → Agent**: whichever room you were last viewing rides along as a
+    context chip above the composer, so "이거 요약해줘" already knows what "이거"
+    is. Scope is adjustable, the chip can be switched off, and the first send
+    per room+range asks for confirmation stating exactly how many messages go out.
+  - **Agent → Teams**: any finished answer can be shared into a room, carrying a
+    provenance header so the room can jump back to the source conversation.
+  - **탐색기 → Teams**: agent output on the virtual drive can be attached to a
+    room directly from the file tree.
 - **Two-panel tabs** — drag chat, browser and avatar tabs between groups or onto
   a left/right/top/bottom edge. At most two groups stay live; the divider,
   direction, tab order and group focus are restored after restart.
@@ -86,9 +102,13 @@ src/
     chat.ts      POST /api/agentflow/execute/based-id/stream → normalized events
     sse.ts       incremental SSE frame parser
     history.ts   io-logs + interaction list
+    teams.ts     /api/teams/* — rooms, messages, members, attachments
+    teams-bridge.ts  Agent↔Teams 다리 — 컨텍스트 봉투 + 공유 출처 표식 (순수)
     index.ts     XgenClient facade
   main/        # Electron main: window, connector.json config, keychain, updater, IPC
                # browser runtime, one-page CDP proxies, agent-browser command queues
+               # teams-ws.ts: Teams realtime sockets (headers → gateway auth)
+               # teams-files.ts: 첨부의 디스크 쪽 (경로는 렌더러로 새지 않는다)
   preload/     # contextBridge → window.xgen (the only renderer↔native surface)
   renderer/    # React UI: ServerSetup → Login → Workspace(agent list + Chat)
 ```
@@ -99,16 +119,40 @@ the typed `window.xgen` bridge.
 
 ## XGEN API used
 
-| Purpose | Endpoint |
-|---|---|
-| Login | `POST /api/auth/login` `{email, password: sha256(pw), token:null}` |
-| Session/identity | `POST /api/auth/validate-token`, `POST /api/auth/refresh` |
-| Agent list | `GET /api/agentflow/list/detail?page&page_size&search&owner` |
-| Chat (SSE) | `POST /api/agentflow/execute/based-id/stream` → `text/event-stream` |
-| History | `GET /api/chat/io-logs`, `GET /api/interaction/list` |
+| Purpose           | Endpoint                                                                                                        |
+| ----------------- | --------------------------------------------------------------------------------------------------------------- |
+| Login             | `POST /api/auth/login` `{email, password: sha256(pw), token:null}`                                              |
+| Session/identity  | `POST /api/auth/validate-token`, `POST /api/auth/refresh`                                                       |
+| Agent list        | `GET /api/agentflow/list/detail?page&page_size&search&owner`                                                    |
+| Chat (SSE)        | `POST /api/agentflow/execute/based-id/stream` → `text/event-stream`                                             |
+| History           | `GET /api/chat/io-logs`, `GET /api/interaction/list`                                                            |
+| Teams rooms       | `GET /api/teams/rooms/list`, `POST /api/teams/rooms/create`, `POST /api/teams/rooms/dm/lookup-or-create`        |
+| Teams messages    | `GET                                                                                                            | POST /api/teams/rooms/{id}/messages`, `PATCH …/{msgId}`, `POST …/{msgId}/reactions` |
+| Teams members     | `GET                                                                                                            | POST /api/teams/rooms/{id}/members`, `GET /api/teams/users/search`                  |
+| Teams realtime    | `WS /api/teams/ws/{roomId}` (room), `WS /api/teams/ws/user` (notifications)                                     |
+| Teams attachments | `POST /api/teams/rooms/{id}/attachments/upload` (multipart `file`), `GET …/attachments/{storage_key}?filename=` |
 
 All authenticated calls send `Authorization: Bearer <access_token>` (including
 the SSE stream). Continue a conversation by reusing the same `interaction_id`.
+
+The Teams WebSockets carry the same `Authorization` header on the handshake —
+the gateway turns it into the `X-User-Id` header the workflow service expects.
+Browsers cannot set handshake headers (the web app uses cookies instead), so
+these sockets live in the **main process** (`src/main/teams-ws.ts`) and the
+renderer receives normalized events over IPC.
+
+Two connector-only envelopes ride inside the chat `input` and are stripped
+before anything is shown to a user: `<xgen_browser_context>` (open pages) and
+`<xgen_teams_context>` (the attached room's recent messages). They nest — teams
+inside, browser outside — and `session-store.ts` peels them in that order. The
+Teams envelope is capped and drops the oldest messages first, recording
+`truncated` so the model knows the head is missing.
+
+Sharing in the other direction writes a provenance header as the first line of
+the Teams message (`🤖 <agent> · XGEN 에이전트 답변 공유 ⟨xgen:…⟩`). The connector
+hides that line and renders a card with 원본 대화 보기; clients that don't know the
+tag (the web Teams UI) still read it as a plain attribution sentence. There is no
+metadata column on Teams messages, which is why the marker lives in the body.
 
 The chat SSE stream is normalized into a single `ChatEvent` union:
 `text` · `tool` · `node_status` · `execution_io` · `summary` · `error` · `end`

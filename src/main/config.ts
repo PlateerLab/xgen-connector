@@ -133,10 +133,18 @@ export interface ConnectorConfig {
   linuxClickThrough?: boolean;
   /** 메인 창 크롬 상태와 두 패널 탭 배치. */
   ui?: {
-    sideView?: 'agent' | 'explorer';
+    sideView?: 'agent' | 'explorer' | 'teams';
     sidebarCollapsed?: boolean;
     sidebarWidth?: number;
     workspaceLayout?: WorkspaceLayoutPersistConfig;
+  };
+  /**
+   * Teams 로컬 상태. 서버는 "안 읽음" 을 세어 주지 않으므로(웹 Teams 도 항상 0)
+   * 방별 마지막 열람 시각을 이 PC 가 기억해 배지를 계산한다.
+   * 키는 room id, 값은 ISO 시각.
+   */
+  teams?: {
+    lastReadAt?: Record<string, string>;
   };
 }
 
@@ -154,10 +162,12 @@ export interface WorkspaceLayoutPersistConfig {
     id: string;
     tabs: Array<{
       id: string;
-      kind: 'chat' | 'browser' | 'avatar';
+      kind: 'chat' | 'browser' | 'avatar' | 'teams';
       sessionKey?: string;
       workflowId?: string;
       workflowName?: string;
+      roomId?: string;
+      roomName?: string;
     }>;
     activeTabId: string | null;
   }>;
