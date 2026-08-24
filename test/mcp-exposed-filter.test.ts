@@ -19,7 +19,7 @@ test('노출 도구 패널이 _ 접두 내부 도구를 거른다', () => {
   );
   assert.match(SRC, /\.filter\(\(t\) => isExposed\(t\.name\)\)/);
   // total 은 필터된 servers 에서 계산한다(내부 도구가 개수에 안 잡힘).
-  assert.match(SRC, /const total = servers\.reduce/);
+  assert.match(SRC, /const total = externals\.reduce/);
 });
 
 test('복사는 main clipboard(copyText)를 쓴다 — navigator.clipboard 직접 사용 없음', () => {
@@ -27,11 +27,12 @@ test('복사는 main clipboard(copyText)를 쓴다 — navigator.clipboard 직�
   assert.doesNotMatch(SRC, /navigator\.clipboard\.writeText/);
 });
 
-test('내장 도구는 기본 접힘 요약, 외부 MCP 서버는 펼침', () => {
-  // 커넥터 내장(local) 도구는 접힘 요약(builtinOpen 기본 false)으로 두고,
-  // 등록한 MCP 서버(externals)만 펼쳐 MCP 탭이 붐비지 않게 한다.
-  assert.match(SRC, /const \[builtinOpen, setBuiltinOpen\] = useState\(false\)/);
-  assert.match(SRC, /const builtin = servers\.find\(\(s\) => s\.name === 'local'\)/);
-  assert.match(SRC, /const externals = servers\.filter\(\(s\) => s\.name !== 'local'\)/);
-  assert.match(SRC, /커넥터 내장 도구/);
+test('MCP 탭 패널은 외부 MCP 서버만 — 내장(local) 도구는 제외', () => {
+  // 기본 로컬 실행 경로에서 에이전트는 런타임 자체 도구를 쓰고, 커넥터 내장 도구는 로컬 턴에
+  // 주입되지 않는다. MCP 탭 패널은 내가 등록한 외부 MCP 서버만 보여준다('local' 제외).
+  assert.match(SRC, /\.filter\(\(s\) => s\.name !== 'local'\)/);
+  assert.doesNotMatch(SRC, /const builtin = /);
+  assert.doesNotMatch(SRC, /builtinOpen/);
+  assert.match(SRC, /MCP 서버 도구/); // 헤더
+  assert.match(SRC, /PC 컨트롤·브라우저 탭에서 관리/); // 내장은 MCP 서버 아님 안내
 });
