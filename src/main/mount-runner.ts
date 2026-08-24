@@ -12,25 +12,25 @@
  * 추측할 수밖에 없다.
  */
 
-import { execFile } from 'child_process'
-import { existsSync, mkdirSync, readdirSync, rmdirSync } from 'fs'
-import { homedir } from 'os'
-import { basename, join } from 'path'
-import { diag } from './diag-log'
+import { execFile } from 'child_process';
+import { existsSync, mkdirSync, readdirSync, rmdirSync } from 'fs';
+import { homedir } from 'os';
+import { basename, join } from 'path';
+import { diag } from './diag-log';
 
 export interface MountResult {
-  ok: boolean
+  ok: boolean;
   /** 실제로 붙은 경로 (Windows 는 드라이브 문자). */
-  path?: string
-  error?: string
+  path?: string;
+  error?: string;
   /** 사용자에게 보여줄 다음 행동. */
-  hint?: string
+  hint?: string;
 }
 
 export interface RunResult {
-  code: number
-  stdout: string
-  stderr: string
+  code: number;
+  stdout: string;
+  stderr: string;
 }
 
 /** 명령 실행 + 로깅. 절대 throw 하지 않는다 — 실패도 결과다. */
@@ -39,7 +39,7 @@ export async function run(
   args: string[],
   opts: { timeoutMs?: number } = {},
 ): Promise<RunResult> {
-  diag('mount', `exec ${cmd} ${args.join(' ')}`)
+  diag('mount', `exec ${cmd} ${args.join(' ')}`);
   return new Promise<RunResult>((resolve) => {
     execFile(
       cmd,
@@ -50,15 +50,15 @@ export async function run(
           code: err ? Number((err as NodeJS.ErrnoException & { code?: number }).code ?? 1) : 0,
           stdout: String(stdout ?? ''),
           stderr: String(stderr ?? ''),
-        }
+        };
         diag('mount', `exit=${res.code}`, {
           stdout: res.stdout.slice(0, 500),
           stderr: res.stderr.slice(0, 500),
-        })
-        resolve(res)
+        });
+        resolve(res);
       },
-    )
-  })
+    );
+  });
 }
 
 // ── macOS ────────────────────────────────────────────────────────────
@@ -86,31 +86,31 @@ const MACOS_ATTEMPTS: Array<{ label: string; args: (url: string, mnt: string) =>
   { label: '-S', args: (u, m) => ['-S', u, m] },
   // 플래그 없이 (가장 보수적)
   { label: 'bare', args: (u, m) => [u, m] },
-]
+];
 
 export async function mountMacos(url: string, mountpoint: string): Promise<MountResult> {
-  await unmountMacos(mountpoint) // 스테일 정리
+  await unmountMacos(mountpoint); // 스테일 정리
   try {
-    mkdirSync(mountpoint, { recursive: true })
+    mkdirSync(mountpoint, { recursive: true });
   } catch (e) {
-    return { ok: false, error: `마운트 지점을 만들지 못했습니다: ${(e as Error).message}` }
+    return { ok: false, error: `마운트 지점을 만들지 못했습니다: ${(e as Error).message}` };
   }
 
-  const failures: string[] = []
+  const failures: string[] = [];
   for (const attempt of MACOS_ATTEMPTS) {
-    diag('mount', `macOS 시도: ${attempt.label}`)
-    const r = await run('/sbin/mount_webdav', attempt.args(url, mountpoint))
+    diag('mount', `macOS 시도: ${attempt.label}`);
+    const r = await run('/sbin/mount_webdav', attempt.args(url, mountpoint));
     if (r.code === 0) {
-      diag('mount', `macOS 마운트 성공 (${attempt.label}) → ${mountpoint}`)
-      return { ok: true, path: mountpoint }
+      diag('mount', `macOS 마운트 성공 (${attempt.label}) → ${mountpoint}`);
+      return { ok: true, path: mountpoint };
     }
-    const err = (r.stderr || r.stdout).trim().split('\n')[0] || `code ${r.code}`
-    failures.push(`${attempt.label}: ${err}`)
+    const err = (r.stderr || r.stdout).trim().split('\n')[0] || `code ${r.code}`;
+    failures.push(`${attempt.label}: ${err}`);
     // usage 오류가 아니라 실제 마운트 실패(권한/네트워크)면 다음 조합도 같은
     // 이유로 실패한다 — 사다리를 계속 타는 건 로그만 지저분해진다.
     if (!/usage:/i.test(err)) {
-      diag('mount', `사다리 중단 (usage 오류 아님): ${err}`)
-      break
+      diag('mount', `사다리 중단 (usage 오류 아님): ${err}`);
+      break;
     }
   }
 
@@ -120,16 +120,16 @@ export async function mountMacos(url: string, mountpoint: string): Promise<Mount
     hint:
       'Finder 에서 "이동 > 서버에 연결"로 같은 주소가 열리는지 확인해 보세요. ' +
       '진단 로그에 시도한 조합이 전부 남아 있습니다.',
-  }
+  };
 }
 
 export async function unmountMacos(mountpoint: string): Promise<void> {
-  if (!existsSync(mountpoint)) return
+  if (!existsSync(mountpoint)) return;
   // 마운트돼 있지 않아도 umount 는 무해하게 실패한다 — 상태 조회보다 싸다.
-  await run('/sbin/umount', ['-f', mountpoint], { timeoutMs: 10_000 })
+  await run('/sbin/umount', ['-f', mountpoint], { timeoutMs: 10_000 });
   try {
     // 빈 디렉터리만 정리 (사용자 파일이 남아 있으면 건드리지 않는다).
-    if (existsSync(mountpoint) && readdirSync(mountpoint).length === 0) rmdirSync(mountpoint)
+    if (existsSync(mountpoint) && readdirSync(mountpoint).length === 0) rmdirSync(mountpoint);
   } catch {
     /* 정리는 실패해도 무방 */
   }
@@ -139,13 +139,13 @@ export async function unmountMacos(mountpoint: string): Promise<void> {
 
 /** 쓸 수 있는 드라이브 문자를 고른다 (Z 부터 거꾸로 — 흔한 문자를 피한다). */
 export async function pickDriveLetter(): Promise<string | null> {
-  const used = new Set<string>()
-  const r = await run('cmd.exe', ['/d', '/s', '/c', 'net use'])
-  for (const m of r.stdout.matchAll(/^\s*\S*\s+([A-Z]):/gim)) used.add(m[1].toUpperCase())
+  const used = new Set<string>();
+  const r = await run('cmd.exe', ['/d', '/s', '/c', 'net use']);
+  for (const m of r.stdout.matchAll(/^\s*\S*\s+([A-Z]):/gim)) used.add(m[1].toUpperCase());
   for (const c of 'ZYXWVUTSRQPONMLKJIH') {
-    if (!used.has(c) && !existsSync(`${c}:\\`)) return `${c}:`
+    if (!used.has(c) && !existsSync(`${c}:\\`)) return `${c}:`;
   }
-  return null
+  return null;
 }
 
 /**
@@ -158,29 +158,78 @@ export async function pickDriveLetter(): Promise<string | null> {
 export async function mountWindows(url: string): Promise<MountResult> {
   // WebClient 가 꺼져 있으면 net use 가 "시스템 오류 67" 로 실패한다 —
   // 시작을 시도하고, 안 되면 사용자에게 그대로 알린다.
-  await run('cmd.exe', ['/d', '/s', '/c', 'sc start WebClient'], { timeoutMs: 15_000 })
-  const drive = await pickDriveLetter()
+  await run('cmd.exe', ['/d', '/s', '/c', 'sc start WebClient'], { timeoutMs: 15_000 });
+  // 새 마운트 전에 이전 세션이 남긴 유령 WebDAV 마운트를 걷어 낸다(무한 누적 방지).
+  await unmountStaleWindows().catch(() => 0);
+  const drive = await pickDriveLetter();
   if (!drive) {
-    return { ok: false, error: '사용 가능한 드라이브 문자가 없습니다.' }
+    return { ok: false, error: '사용 가능한 드라이브 문자가 없습니다.' };
   }
-  const r = await run('cmd.exe', ['/d', '/s', '/c', `net use ${drive} ${url} /persistent:no`])
+  const r = await run('cmd.exe', ['/d', '/s', '/c', `net use ${drive} ${url} /persistent:no`]);
   if (r.code === 0) {
-    diag('mount', `Windows 마운트 성공: ${drive}`)
-    return { ok: true, path: drive }
+    diag('mount', `Windows 마운트 성공: ${drive}`);
+    return { ok: true, path: drive };
   }
-  const err = (r.stdout || r.stderr).trim()
+  const err = (r.stdout || r.stderr).trim();
   return {
     ok: false,
     error: err || `net use 가 코드 ${r.code} 로 실패했습니다`,
     hint: /67|WebClient/i.test(err)
       ? 'Windows 의 "WebClient" 서비스가 필요합니다. 서비스 관리자에서 시작한 뒤 다시 시도하세요.'
       : undefined,
+  };
+}
+
+/**
+ * 스테일 Windows WebDAV 마운트 정리 — **누적 버그의 근본 해결**.
+ *
+ * 우리 마운트는 매 시작마다 새 포트/토큰/드라이브 문자로 붙는데(webdav-server),
+ * 앱이 업데이트로 **언마운트 전에 강제 종료**되면 이전 마운트가 유령 드라이브로
+ * 남는다(실기: net use 에 "연결 안 됨" 으로 쌓임). 다음 시작이 또 다른 문자로 붙으며
+ * 무한 누적됐다. 새 마운트를 만들기 **전에** 우리(127.0.0.1 로컬 WebDAV) 마운트를
+ * 전부 걷어 낸다 — 마커 유무와 무관하게(이 수정 이전 버전이 남긴 것도 정리).
+ *
+ * 127.0.0.1 로 WebDAV 를 붙이는 건 이 커넥터뿐이라 안전하다. 반환은 정리한 개수.
+ */
+/**
+ * `net use` 출력 → 정리할 대상(드라이브 문자 또는 원격 경로) 목록. 순수 함수(테스트 대상).
+ * 우리 마운트만: 원격이 127.0.0.1 인 항목. 드라이브 문자가 있으면 그걸로, 없으면(연결 끊김) 원격 경로로.
+ */
+export function parseStaleWebdavTargets(netUseStdout: string): string[] {
+  const drives = new Set<string>();
+  const remotes = new Set<string>();
+  for (const line of String(netUseStdout || '').split(/\r?\n/)) {
+    if (!/127\.0\.0\.1/.test(line)) continue; // 우리 로컬 WebDAV 만
+    const dm = line.match(/\b([A-Z]):/);
+    if (dm) drives.add(`${dm[1]}:`);
+    else {
+      const rm = line.match(/\\\\127\.0\.0\.1@\d+\S*/);
+      if (rm) remotes.add(rm[0].trim());
+    }
   }
+  return [...drives, ...remotes];
+}
+
+export async function unmountStaleWindows(): Promise<number> {
+  const r = await run('cmd.exe', ['/d', '/s', '/c', 'net use']);
+  const targets = parseStaleWebdavTargets(r.stdout);
+  let cleaned = 0;
+  for (const target of targets) {
+    const del = await run('cmd.exe', ['/d', '/s', '/c', `net use "${target}" /delete /y`], {
+      timeoutMs: 15_000,
+    });
+    if (del.code === 0) {
+      cleaned++;
+      diag('mount', `스테일 WebDAV 마운트 정리: ${target}`);
+    }
+  }
+  if (cleaned) diag('mount', `스테일 WebDAV 마운트 ${cleaned}개 정리 완료`);
+  return cleaned;
 }
 
 export async function unmountWindows(drive: string): Promise<void> {
-  if (!drive) return
-  await run('cmd.exe', ['/d', '/s', '/c', `net use ${drive} /delete /y`], { timeoutMs: 15_000 })
+  if (!drive) return;
+  await run('cmd.exe', ['/d', '/s', '/c', `net use ${drive} /delete /y`], { timeoutMs: 15_000 });
 }
 
 // ── Linux (FUSE 제공자가 별도로 처리) ────────────────────────────────
@@ -193,23 +242,23 @@ export async function unmountWindows(drive: string): Promise<void> {
  * 걷어내지 않으면 한 번 크래시한 사용자는 폴더가 영구히 먹통이 된다.
  */
 export async function clearStaleFuse(mountpoint: string): Promise<boolean> {
-  if (!existsSync(mountpoint)) return false
+  if (!existsSync(mountpoint)) return false;
   try {
-    readdirSync(mountpoint)
-    return false // 정상 — 건드리지 않는다
+    readdirSync(mountpoint);
+    return false; // 정상 — 건드리지 않는다
   } catch (e) {
-    const msg = (e as Error).message
-    diag('mount', `스테일 마운트 감지: ${mountpoint} (${msg})`)
+    const msg = (e as Error).message;
+    diag('mount', `스테일 마운트 감지: ${mountpoint} (${msg})`);
     for (const bin of ['/usr/bin/fusermount3', '/usr/bin/fusermount', '/bin/fusermount']) {
-      if (!existsSync(bin)) continue
-      const r = await run(bin, ['-uz', mountpoint], { timeoutMs: 10_000 })
+      if (!existsSync(bin)) continue;
+      const r = await run(bin, ['-uz', mountpoint], { timeoutMs: 10_000 });
       if (r.code === 0) {
-        diag('mount', '스테일 마운트 정리됨')
-        return true
+        diag('mount', '스테일 마운트 정리됨');
+        return true;
       }
     }
-    diag('mount', '스테일 마운트를 정리하지 못했다 — 사용자 개입 필요')
-    return false
+    diag('mount', '스테일 마운트를 정리하지 못했다 — 사용자 개입 필요');
+    return false;
   }
 }
 
@@ -218,7 +267,7 @@ export async function clearStaleFuse(mountpoint: string): Promise<boolean> {
 export function defaultMountpoint(root: string): string {
   // macOS 는 /Volumes 대신 사용자 홈 아래를 쓴다 — /Volumes 쓰기는 권한이
   // 걸리고, 홈 아래면 Finder 사이드바에도 자연스럽게 붙는다.
-  return process.platform === 'darwin' ? root : root
+  return process.platform === 'darwin' ? root : root;
 }
 
 export async function mountWebdav(
@@ -226,26 +275,26 @@ export async function mountWebdav(
   root: string,
   platform: NodeJS.Platform = process.platform,
 ): Promise<MountResult> {
-  diag('mount', `마운트 시작 platform=${platform} root=${basename(root)}`)
-  if (platform === 'darwin') return mountMacos(url, defaultMountpoint(root))
-  if (platform === 'win32') return mountWindows(url)
+  diag('mount', `마운트 시작 platform=${platform} root=${basename(root)}`);
+  if (platform === 'darwin') return mountMacos(url, defaultMountpoint(root));
+  if (platform === 'win32') return mountWindows(url);
   return {
     ok: false,
     error: `${platform} 에서는 WebDAV 마운트를 지원하지 않습니다.`,
     hint: 'Linux 는 FUSE 제공자를 사용합니다.',
-  }
+  };
 }
 
 export async function unmountWebdav(
   path: string,
   platform: NodeJS.Platform = process.platform,
 ): Promise<void> {
-  diag('mount', `언마운트 ${path}`)
-  if (platform === 'darwin') return unmountMacos(path)
-  if (platform === 'win32') return unmountWindows(path)
+  diag('mount', `언마운트 ${path}`);
+  if (platform === 'darwin') return unmountMacos(path);
+  if (platform === 'win32') return unmountWindows(path);
 }
 
 /** 기본 루트 (마운트 지점). */
 export function defaultRootPath(home = homedir()): string {
-  return join(home, 'XGEN-Workspace')
+  return join(home, 'XGEN-Workspace');
 }

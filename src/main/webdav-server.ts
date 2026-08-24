@@ -30,18 +30,18 @@
  *   * OPTIONS 에 Allow 목록.
  */
 
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
-import { randomBytes } from 'crypto'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
+import { randomBytes } from 'crypto';
 
 /** 백엔드가 다루는 항목 하나. */
 export interface DavNode {
   /** 부모 기준 이름 (루트는 ''). */
-  name: string
-  isDir: boolean
-  size: number
-  mtime: Date
+  name: string;
+  isDir: boolean;
+  size: number;
+  mtime: Date;
   /** 내용 식별자 — 있으면 ETag 로 그대로 나간다. */
-  etag?: string
+  etag?: string;
 }
 
 /**
@@ -49,32 +49,32 @@ export interface DavNode {
  * 없는 경로는 :meth:`stat` 이 null 을 돌려준다 (예외 아님).
  */
 export interface WebdavBackend {
-  stat(path: string): Promise<DavNode | null>
-  readdir(path: string): Promise<DavNode[]>
-  read(path: string): Promise<Buffer>
+  stat(path: string): Promise<DavNode | null>;
+  readdir(path: string): Promise<DavNode[]>;
+  read(path: string): Promise<Buffer>;
   /**
    * 선택 구현 — **부분 읽기**. 있으면 Range 요청에 이걸 쓴다.
    *
    * 없으면 전체를 읽어 잘라 보내는데, 그건 조각마다 파일 전체를 서버에서
    * 내려받는다는 뜻이다 (macOS/Windows 는 큰 파일을 조각으로 읽는다).
    */
-  readRange?(path: string, start: number, end: number): Promise<Buffer>
-  write(path: string, data: Buffer): Promise<void>
-  mkdir(path: string): Promise<void>
-  remove(path: string): Promise<void>
-  move(from: string, to: string, overwrite: boolean): Promise<void>
+  readRange?(path: string, start: number, end: number): Promise<Buffer>;
+  write(path: string, data: Buffer): Promise<void>;
+  mkdir(path: string): Promise<void>;
+  remove(path: string): Promise<void>;
+  move(from: string, to: string, overwrite: boolean): Promise<void>;
 }
 
 export interface DavServerHandle {
-  server: Server
-  port: number
-  token: string
+  server: Server;
+  port: number;
+  token: string;
   /** 마운트에 쓸 URL (끝에 / 포함). */
-  url(): string
-  close(): Promise<void>
+  url(): string;
+  close(): Promise<void>;
 }
 
-const ALLOW = 'OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, MKCOL, MOVE, COPY, LOCK, UNLOCK'
+const ALLOW = 'OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, MKCOL, MOVE, COPY, LOCK, UNLOCK';
 
 /** XML 텍스트 이스케이프 — 파일명에 &, <, > 가 들어가면 응답이 깨진다. */
 export function xmlEscape(s: string): string {
@@ -82,7 +82,7 @@ export function xmlEscape(s: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+    .replace(/"/g, '&quot;');
 }
 
 /**
@@ -93,23 +93,23 @@ export function xmlEscape(s: string): string {
  * 방어가 한 곳에 남는다).
  */
 export function decodePath(rawUrl: string, token: string): string | null {
-  let p: string
+  let p: string;
   try {
-    p = decodeURIComponent(new URL(rawUrl, 'http://127.0.0.1').pathname)
+    p = decodeURIComponent(new URL(rawUrl, 'http://127.0.0.1').pathname);
   } catch {
-    return null
+    return null;
   }
-  const prefix = `/${token}`
-  if (p !== prefix && !p.startsWith(`${prefix}/`)) return null
-  p = p.slice(prefix.length) || '/'
-  const parts: string[] = []
+  const prefix = `/${token}`;
+  if (p !== prefix && !p.startsWith(`${prefix}/`)) return null;
+  p = p.slice(prefix.length) || '/';
+  const parts: string[] = [];
   for (const seg of p.split('/')) {
-    if (!seg || seg === '.') continue
+    if (!seg || seg === '.') continue;
     if (seg === '..') {
-      parts.pop()
-      continue
+      parts.pop();
+      continue;
     }
-    parts.push(seg)
+    parts.push(seg);
   }
   // ⚠ **NFC 로 정규화한다.**
   //
@@ -118,7 +118,7 @@ export function decodePath(rawUrl: string, token: string): string | null {
   // 않으면 **같은 이름이 서로 다른 두 파일**이 되어 목록에 두 번 뜨고,
   // 한쪽에서 지워도 다른 쪽이 남는다. 레플리카 엔진(sync-fs)은 이걸 이미
   // 알고 정규화하는데, 가상 드라이브 경로에는 그 지식이 안 넘어와 있었다.
-  return (`/${parts.join('/')}`.replace(/\/+$/, '') || '/').normalize('NFC')
+  return (`/${parts.join('/')}`.replace(/\/+$/, '') || '/').normalize('NFC');
 }
 
 /**
@@ -133,12 +133,12 @@ export function decodePath(rawUrl: string, token: string): string | null {
  * 가상 드라이브에도 있어야 한다.
  */
 export function isOsJunk(path: string): boolean {
-  const name = path.slice(path.lastIndexOf('/') + 1)
-  if (!name) return false
-  if (name.startsWith('._')) return true // macOS AppleDouble
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  if (!name) return false;
+  if (name.startsWith('._')) return true; // macOS AppleDouble
   return /^(\.DS_Store|\.localized|\.Trashes|\.Spotlight-V100|\.fseventsd|\.TemporaryItems|\.DocumentRevisions-V100|Thumbs\.db|desktop\.ini|\.directory)$/i.test(
     name,
-  )
+  );
 }
 
 /** ``Range: bytes=...`` 해석. null = 범위 없음, 'invalid' = 만족 불가(416). */
@@ -146,27 +146,27 @@ export function parseRange(
   header: string,
   size: number,
 ): { start: number; end: number } | null | 'invalid' {
-  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
-  if (!m) return null // 여러 범위/알 수 없는 단위는 전체를 준다 (RFC 허용)
-  const [, rawStart, rawEnd] = m
-  if (rawStart === '' && rawEnd === '') return 'invalid'
-  let start: number
-  let end: number
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m) return null; // 여러 범위/알 수 없는 단위는 전체를 준다 (RFC 허용)
+  const [, rawStart, rawEnd] = m;
+  if (rawStart === '' && rawEnd === '') return 'invalid';
+  let start: number;
+  let end: number;
   if (rawStart === '') {
     // suffix range: 마지막 N 바이트
-    const n = Number(rawEnd)
-    if (n <= 0) return 'invalid'
-    start = Math.max(0, size - n)
-    end = size - 1
+    const n = Number(rawEnd);
+    if (n <= 0) return 'invalid';
+    start = Math.max(0, size - n);
+    end = size - 1;
   } else {
-    start = Number(rawStart)
-    end = rawEnd === '' ? size - 1 : Number(rawEnd)
+    start = Number(rawStart);
+    end = rawEnd === '' ? size - 1 : Number(rawEnd);
   }
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return 'invalid'
-  if (start >= size || start < 0) return 'invalid'
-  if (end >= size) end = size - 1
-  if (end < start) return 'invalid'
-  return { start, end }
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 'invalid';
+  if (start >= size || start < 0) return 'invalid';
+  if (end >= size) end = size - 1;
+  if (end < start) return 'invalid';
+  return { start, end };
 }
 
 function href(token: string, path: string, isDir: boolean): string {
@@ -174,19 +174,19 @@ function href(token: string, path: string, isDir: boolean): string {
     .split('/')
     .filter(Boolean)
     .map((s) => encodeURIComponent(s))
-    .join('/')
-  const base = `/${token}${enc ? `/${enc}` : ''}`
-  return xmlEscape(isDir && !base.endsWith('/') ? `${base}/` : base)
+    .join('/');
+  const base = `/${token}${enc ? `/${enc}` : ''}`;
+  return xmlEscape(isDir && !base.endsWith('/') ? `${base}/` : base);
 }
 
 function propfindEntry(token: string, path: string, node: DavNode): string {
-  const iso = node.mtime.toUTCString()
-  const created = node.mtime.toISOString().replace(/\.\d+Z$/, 'Z')
-  const resourceType = node.isDir ? '<D:collection/>' : ''
+  const iso = node.mtime.toUTCString();
+  const created = node.mtime.toISOString().replace(/\.\d+Z$/, 'Z');
+  const resourceType = node.isDir ? '<D:collection/>' : '';
   // 디렉터리에는 getcontentlength 를 주지 않는다 — 일부 클라이언트가 이를
   // 파일 신호로 받아들여 폴더를 열지 못한다.
-  const len = node.isDir ? '' : `<D:getcontentlength>${node.size}</D:getcontentlength>`
-  const etag = node.etag ? `<D:getetag>"${xmlEscape(node.etag)}"</D:getetag>` : ''
+  const len = node.isDir ? '' : `<D:getcontentlength>${node.size}</D:getcontentlength>`;
+  const etag = node.etag ? `<D:getetag>"${xmlEscape(node.etag)}"</D:getetag>` : '';
   return (
     `<D:response><D:href>${href(token, path, node.isDir)}</D:href>` +
     `<D:propstat><D:prop>` +
@@ -198,30 +198,35 @@ function propfindEntry(token: string, path: string, node: DavNode): string {
     `<D:supportedlock><D:lockentry><D:lockscope><D:exclusive/></D:lockscope>` +
     `<D:locktype><D:write/></D:locktype></D:lockentry></D:supportedlock>` +
     `</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`
-  )
+  );
 }
 
 function multistatus(body: string): string {
   return (
     `<?xml version="1.0" encoding="utf-8"?>` +
     `<D:multistatus xmlns:D="DAV:">${body}</D:multistatus>`
-  )
+  );
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = []
-  for await (const c of req) chunks.push(c as Buffer)
-  return Buffer.concat(chunks)
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  return Buffer.concat(chunks);
 }
 
-function send(res: ServerResponse, status: number, body = '', headers: Record<string, string> = {}): void {
+function send(
+  res: ServerResponse,
+  status: number,
+  body = '',
+  headers: Record<string, string> = {},
+): void {
   res.writeHead(status, {
     // 모든 응답에 붙어야 하는 것들 — 빠지면 Windows 가 읽기 전용으로 붙는다.
     DAV: '1, 2',
     'MS-Author-Via': 'DAV',
     ...headers,
-  })
-  res.end(body)
+  });
+  res.end(body);
 }
 
 /** 로컬 WebDAV 서버를 띄운다. 127.0.0.1 + 비밀 토큰 경로. */
@@ -229,7 +234,9 @@ export async function startDavServer(
   backend: WebdavBackend,
   opts: { token?: string; port?: number } = {},
 ): Promise<DavServerHandle> {
-  const token = opts.token ?? randomBytes(18).toString('base64url')
+  // 마운트 원격 경로에 식별 마커('xgencloud')를 남겨 스테일 정리에서 우리 마운트를 안전히
+  // 골라낸다. 랜덤 부분이 비밀 경로(127.0.0.1 바인딩 + 이 토큰)를 유지한다.
+  const token = opts.token ?? `xgencloud-${randomBytes(15).toString('base64url')}`;
 
   /**
    * OS 메타데이터 파일의 **임시 보관소** — 클라우드로는 절대 안 나간다.
@@ -238,73 +245,73 @@ export async function startDavServer(
    * 복사 전체를 중단한다. 그래서 받아 주되 **메모리에만** 둔다. 마운트가
    * 걷히면 같이 사라진다 — 원래 사라져야 할 것들이다.
    */
-  const ghosts = new Map<string, { data: Buffer; mtime: Date }>()
+  const ghosts = new Map<string, { data: Buffer; mtime: Date }>();
   const ghostNode = (path: string, g: { data: Buffer; mtime: Date }): DavNode => ({
     name: path.slice(path.lastIndexOf('/') + 1),
     isDir: false,
     size: g.data.length,
     mtime: g.mtime,
-  })
+  });
 
   const server = createServer((req, res) => {
     void handle(req, res).catch((e) => {
       try {
-        send(res, 500, String((e as Error)?.message ?? e))
+        send(res, 500, String((e as Error)?.message ?? e));
       } catch {
         /* 응답이 이미 나갔다 */
       }
-    })
-  })
+    });
+  });
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const method = (req.method || 'GET').toUpperCase()
-    const path = decodePath(req.url || '/', token)
+    const method = (req.method || 'GET').toUpperCase();
+    const path = decodePath(req.url || '/', token);
     // 토큰 불일치 = 존재 자체를 알리지 않는다 (401 은 존재를 알려준다).
-    if (path === null) return send(res, 404)
+    if (path === null) return send(res, 404);
 
     // OS 메타데이터 파일은 백엔드(=클라우드)에 닿지 않는다.
     if (isOsJunk(path)) {
-      const g = ghosts.get(path)
+      const g = ghosts.get(path);
       if (method === 'PUT') {
-        ghosts.set(path, { data: await readBody(req), mtime: new Date() })
-        return send(res, g ? 204 : 201)
+        ghosts.set(path, { data: await readBody(req), mtime: new Date() });
+        return send(res, g ? 204 : 201);
       }
       if (method === 'DELETE') {
-        ghosts.delete(path)
-        return send(res, 204)
+        ghosts.delete(path);
+        return send(res, 204);
       }
       if (method === 'HEAD' || method === 'GET') {
-        if (!g) return send(res, 404)
+        if (!g) return send(res, 404);
         const headers = {
           'Content-Type': 'application/octet-stream',
           'Content-Length': String(g.data.length),
           'Last-Modified': g.mtime.toUTCString(),
-        }
-        if (method === 'HEAD') return send(res, 200, '', headers)
-        res.writeHead(200, { DAV: '1, 2', 'MS-Author-Via': 'DAV', ...headers })
-        return void res.end(g.data)
+        };
+        if (method === 'HEAD') return send(res, 200, '', headers);
+        res.writeHead(200, { DAV: '1, 2', 'MS-Author-Via': 'DAV', ...headers });
+        return void res.end(g.data);
       }
       if (method === 'PROPFIND') {
-        if (!g) return send(res, 404)
+        if (!g) return send(res, 404);
         return send(res, 207, multistatus(propfindEntry(token, path, ghostNode(path, g))), {
           'Content-Type': 'application/xml; charset=utf-8',
-        })
+        });
       }
       if (method === 'LOCK' || method === 'UNLOCK' || method === 'OPTIONS') {
         /* 아래 공통 처리로 내려간다 */
       } else {
-        return send(res, 204)
+        return send(res, 204);
       }
     }
 
     if (method === 'OPTIONS') {
-      return send(res, 200, '', { Allow: ALLOW, 'Content-Length': '0' })
+      return send(res, 200, '', { Allow: ALLOW, 'Content-Length': '0' });
     }
 
     // 잠금: 형식만 맞춘다. 로컬 단일 사용자 마운트라 실제 경합이 없고,
     // 클라이언트는 **응답 형식**만 보고 쓰기 가능 여부를 판단한다.
     if (method === 'LOCK') {
-      const t = `opaquelocktoken:${randomBytes(12).toString('hex')}`
+      const t = `opaquelocktoken:${randomBytes(12).toString('hex')}`;
       return send(
         res,
         200,
@@ -315,66 +322,66 @@ export async function startDavServer(
           `<D:locktoken><D:href>${t}</D:href></D:locktoken>` +
           `</D:activelock></D:lockdiscovery></D:prop>`,
         { 'Content-Type': 'application/xml; charset=utf-8', 'Lock-Token': `<${t}>` },
-      )
+      );
     }
-    if (method === 'UNLOCK') return send(res, 204)
+    if (method === 'UNLOCK') return send(res, 204);
 
     if (method === 'PROPFIND') {
-      const node = await backend.stat(path)
-      if (!node) return send(res, 404)
-      const depth = String(req.headers.depth ?? '1')
-      let body = propfindEntry(token, path, node)
+      const node = await backend.stat(path);
+      if (!node) return send(res, 404);
+      const depth = String(req.headers.depth ?? '1');
+      let body = propfindEntry(token, path, node);
       if (node.isDir && depth !== '0') {
         for (const child of await backend.readdir(path)) {
           // 예전 버전이 이미 올려 둔 OS 쓰레기도 여기서 가린다.
-          if (isOsJunk(child.name)) continue
-          const childPath = path === '/' ? `/${child.name}` : `${path}/${child.name}`
-          body += propfindEntry(token, childPath, child)
+          if (isOsJunk(child.name)) continue;
+          const childPath = path === '/' ? `/${child.name}` : `${path}/${child.name}`;
+          body += propfindEntry(token, childPath, child);
         }
       }
       return send(res, 207, multistatus(body), {
         'Content-Type': 'application/xml; charset=utf-8',
-      })
+      });
     }
 
     if (method === 'GET' || method === 'HEAD') {
-      const node = await backend.stat(path)
-      if (!node) return send(res, 404)
-      if (node.isDir) return send(res, 405)
+      const node = await backend.stat(path);
+      if (!node) return send(res, 404);
+      if (node.isDir) return send(res, 405);
       const headers: Record<string, string> = {
         'Content-Type': 'application/octet-stream',
         'Content-Length': String(node.size),
         'Last-Modified': node.mtime.toUTCString(),
         'Accept-Ranges': 'bytes',
-      }
-      if (node.etag) headers.ETag = `"${node.etag}"`
-      if (method === 'HEAD') return send(res, 200, '', headers)
+      };
+      if (node.etag) headers.ETag = `"${node.etag}"`;
+      if (method === 'HEAD') return send(res, 200, '', headers);
 
       // Range 를 **전체를 읽기 전에** 판정한다. 백엔드가 부분 읽기를 지원하면
       // 필요한 조각만 가져온다 — 큰 파일에서 이게 전부다.
-      const rangeHeader = String(req.headers.range ?? '')
+      const rangeHeader = String(req.headers.range ?? '');
       if (rangeHeader && backend.readRange) {
-        const r = parseRange(rangeHeader, node.size)
+        const r = parseRange(rangeHeader, node.size);
         if (r === 'invalid') {
           return send(res, 416, '', {
             'Content-Range': `bytes */${node.size}`,
             'Content-Length': '0',
-          })
+          });
         }
         if (r) {
-          const slice = await backend.readRange(path, r.start, r.end)
+          const slice = await backend.readRange(path, r.start, r.end);
           res.writeHead(206, {
             DAV: '1, 2',
             'MS-Author-Via': 'DAV',
             ...headers,
             'Content-Range': `bytes ${r.start}-${r.start + slice.length - 1}/${node.size}`,
             'Content-Length': String(slice.length),
-          })
-          return void res.end(slice)
+          });
+          return void res.end(slice);
         }
       }
 
-      const data = await backend.read(path)
+      const data = await backend.read(path);
       // ⚠ **Range 를 실제로 지원한다.**
       //
       // 위에서 `Accept-Ranges: bytes` 를 광고하고 있으므로 클라이언트는 부분
@@ -383,85 +390,90 @@ export async function startDavServer(
       // 전체가 서버에서 내려온다** — 100MB 파일을 여는 데 수 GB 가 오가고
       // 클라이언트 타임아웃에 걸린다. Linux 는 FUSE 가 한 번 통째로 읽어
       // 캐시하므로 이 결함이 드러나지 않았다.
-      const range = parseRange(String(req.headers.range ?? ''), data.length)
+      const range = parseRange(String(req.headers.range ?? ''), data.length);
       if (range === 'invalid') {
         // ⚠ 본문이 없으므로 Content-Length 를 물려주면 안 된다 — 클라이언트가
         // 오지 않을 바이트를 기다리며 멈춘다.
         return send(res, 416, '', {
           'Content-Range': `bytes */${data.length}`,
           'Content-Length': '0',
-        })
+        });
       }
       if (range) {
-        const slice = data.subarray(range.start, range.end + 1)
+        const slice = data.subarray(range.start, range.end + 1);
         res.writeHead(206, {
           DAV: '1, 2',
           'MS-Author-Via': 'DAV',
           ...headers,
           'Content-Range': `bytes ${range.start}-${range.end}/${data.length}`,
           'Content-Length': String(slice.length),
-        })
-        return void res.end(slice)
+        });
+        return void res.end(slice);
       }
-      res.writeHead(200, { DAV: '1, 2', 'MS-Author-Via': 'DAV', ...headers, 'Content-Length': String(data.length) })
-      return void res.end(data)
+      res.writeHead(200, {
+        DAV: '1, 2',
+        'MS-Author-Via': 'DAV',
+        ...headers,
+        'Content-Length': String(data.length),
+      });
+      return void res.end(data);
     }
 
     if (method === 'PUT') {
-      const data = await readBody(req)
-      const existed = await backend.stat(path)
+      const data = await readBody(req);
+      const existed = await backend.stat(path);
       try {
-        await backend.write(path, data)
+        await backend.write(path, data);
       } catch (e) {
         // ⚠ 이유를 본문에 실어 보낸다. FUSE 자식 프로세스는 상태코드만 보고
         // EIO 로 바꾸므로, 여기서 안 실으면 원인이 **여기서 소멸**한다 —
         // 사용자에게는 "입력/출력 오류" 한 줄만 남는다.
-        return send(res, 500, String((e as Error).message ?? e))
+        return send(res, 500, String((e as Error).message ?? e));
       }
-      return send(res, existed ? 204 : 201)
+      return send(res, existed ? 204 : 201);
     }
 
     if (method === 'MKCOL') {
-      if (await backend.stat(path)) return send(res, 405)
-      await backend.mkdir(path)
-      return send(res, 201)
+      if (await backend.stat(path)) return send(res, 405);
+      await backend.mkdir(path);
+      return send(res, 201);
     }
 
     if (method === 'DELETE') {
-      if (!(await backend.stat(path))) return send(res, 404)
-      await backend.remove(path)
-      return send(res, 204)
+      if (!(await backend.stat(path))) return send(res, 404);
+      await backend.remove(path);
+      return send(res, 204);
     }
 
     if (method === 'MOVE' || method === 'COPY') {
-      const dest = decodePath(String(req.headers.destination ?? ''), token)
-      if (dest === null) return send(res, 400)
-      const overwrite = String(req.headers.overwrite ?? 'T').toUpperCase() !== 'F'
-      const existed = await backend.stat(dest)
-      if (existed && !overwrite) return send(res, 412)
+      const dest = decodePath(String(req.headers.destination ?? ''), token);
+      if (dest === null) return send(res, 400);
+      const overwrite = String(req.headers.overwrite ?? 'T').toUpperCase() !== 'F';
+      const existed = await backend.stat(dest);
+      if (existed && !overwrite) return send(res, 412);
       if (method === 'COPY') {
-        const node = await backend.stat(path)
-        if (!node) return send(res, 404)
-        if (node.isDir) await backend.mkdir(dest)
-        else await backend.write(dest, await backend.read(path))
+        const node = await backend.stat(path);
+        if (!node) return send(res, 404);
+        if (node.isDir) await backend.mkdir(dest);
+        else await backend.write(dest, await backend.read(path));
       } else {
-        await backend.move(path, dest, overwrite)
+        await backend.move(path, dest, overwrite);
       }
-      return send(res, existed ? 204 : 201)
+      return send(res, existed ? 204 : 201);
     }
 
-    return send(res, 405, '', { Allow: ALLOW })
+    return send(res, 405, '', { Allow: ALLOW });
   }
 
   const port = await new Promise<number>((resolve, reject) => {
-    server.once('error', reject)
+    server.once('error', reject);
     // ⚠ 127.0.0.1 에만 바인딩한다 — 0.0.0.0 이면 같은 네트워크의 아무나
     // 사용자의 파일을 읽는다.
     server.listen(opts.port ?? 0, '127.0.0.1', () => {
-      const addr = server.address()
-      resolve(typeof addr === 'object' && addr ? addr.port : 0)
-    })
-  })
+      const addr = server.address();
+      resolve(typeof addr === 'object' && addr ? addr.port : 0);
+    });
+  });
 
   return {
     server,
@@ -470,8 +482,8 @@ export async function startDavServer(
     url: () => `http://127.0.0.1:${port}/${token}/`,
     close: () =>
       new Promise<void>((resolve) => {
-        server.close(() => resolve())
-        server.closeAllConnections?.()
+        server.close(() => resolve());
+        server.closeAllConnections?.();
       }),
-  }
+  };
 }
