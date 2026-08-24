@@ -3095,6 +3095,50 @@ async function ensureLocalRuntimeOnBoot(): Promise<void> {
   // autoRuntime=false(인스톨러 체크 해제)는 사다리 안에서 게이트된다(복구 없이 상태만 파악).
   await getLocalEnsurer().ensure('boot');
 }
+/**
+ * 로컬 실행용 외부 MCP 서버 설정 해석 — cfg.mcp 가 켜져 있고 enabled 서버가 있을 때만.
+ * connector.json 의 redacted 설정 + 키체인 시크릿(env/headers) + oauth 토큰(Authorization
+ * Bearer)을 합쳐 **resolved** 설정 리스트를 만든다(사이드카가 런타임 MCP 매니저로 직접 연결).
+ * 실패는 방어적으로 건너뛴다(그 서버만 제외).
+ */
+async function resolveConnectorMcpServersForLocal(): Promise<McpServerConfig[]> {
+  const cfg = loadConfig();
+  if (!cfg.mcp) return [];
+  const servers = (cfg.mcpServers ?? []).filter((sv) => sv && sv.name && sv.enabled !== false);
+  if (servers.length === 0) return [];
+  const out: McpServerConfig[] = [];
+  for (const sv of servers) {
+    try {
+      const stored = await mcpSecretStore.get(sv.name).catch(() => null);
+      const resolved = withResolvedSecrets(sv, stored);
+      // oauth 서버는 저장된 액세스 토큰을 Authorization 헤더로 주입(사이드카는 oauth 흐름 없음).
+      if (
+        resolved.auth === 'oauth' &&
+        (resolved.transport === 'http' || resolved.transport === 'sse')
+      ) {
+        try {
+          const state = await mcpOAuthStore.load(sv.name);
+          const tok = (state?.tokens ?? null) as { access_token?: string } | null;
+          if (tok?.access_token) {
+            resolved.headers = {
+              ...(resolved.headers ?? {}),
+              Authorization: `Bearer ${tok.access_token}`,
+            };
+          } else {
+            continue; // 미인가 oauth 서버는 로컬에서 붙일 수 없다 — 제외(사용자가 브라우저 인가 필요).
+          }
+        } catch {
+          continue;
+        }
+      }
+      out.push(resolved);
+    } catch {
+      /* 이 서버만 제외 */
+    }
+  }
+  return out;
+}
+
 function localChatDeps(signal?: AbortSignal): LocalChatDeps {
   return {
     serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
@@ -3126,6 +3170,9 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
     // CLI provider 턴 직전 바이너리 보장 — 없으면 공식 배포처에서 자동 설치(서버 목표 버전).
     ensureCli: (tool) => ensureCliInstalled(tool),
     flushSync: async (workflowId) => (await localSync?.flushSync(workflowId)) ?? false,
+    // 로컬 실행에서 에이전트가 쓸 외부 MCP 서버 — cfg.mcp 가 켜져 있고 enabled 서버가 있을 때만.
+    // 시크릿(키체인)·oauth 토큰(Bearer 헤더)을 여기서 주입해 resolved 설정으로 사이드카에 넘긴다.
+    connectorMcpServers: async () => resolveConnectorMcpServersForLocal(),
     deviceName: () => defaultDeviceName(hostname(), userInfo().username),
     diag: (m) => {
       void import('./diag-log').then(({ diag }) => diag('local-exec', m)).catch(() => {});
