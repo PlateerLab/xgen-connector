@@ -18,6 +18,7 @@
  * 닫아 버리면 "확인창을 취소했더니 뒤에 있던 설정창까지 사라지는" 일이 된다.
  */
 import { useEffect, useRef } from 'react';
+import type React from 'react';
 
 /** 열려 있는 모달들의 닫기 함수 — 마지막(맨 위)이 Esc 의 대상이다. */
 const stack: Array<() => void> = [];
@@ -63,5 +64,45 @@ export function useModalDismiss(onClose: () => void, enabled = true): void {
       const i = stack.lastIndexOf(entry);
       if (i >= 0) stack.splice(i, 1);
     };
+  }, [enabled]);
+}
+
+/**
+ * 바깥을 클릭하면 닫는다 — **backdrop 이 없는** 인라인 패널용.
+ *
+ * 모달은 전면을 덮는 `.modal-backdrop` 이 클릭을 받아 주지만, 사이드바 안에
+ * 펼쳐지는 폼(새 대화 / 1:1 상대 찾기)은 그런 것이 없어 닫기 버튼에 의존했다.
+ * 여기서 같은 감각을 만든다: 폼 밖을 누르면 닫힌다.
+ *
+ * `insideRefs` 에는 **폼을 여는 버튼도** 넣어야 한다. 안 넣으면 토글 버튼을
+ * 누를 때 "바깥 클릭 → 닫기" 와 버튼의 "토글 → 열기" 가 같이 일어나 한 번
+ * 눌러서는 절대 안 열리거나 깜빡인다.
+ *
+ * `mousedown` 을 듣는 이유: `click` 은 버튼을 누른 뒤 떼는 순간 오는데, 그 사이
+ * 목록이 다시 그려지면 클릭 대상이 사라져 판정이 어긋난다. 누르는 시점이 곧
+ * 사용자의 의도다.
+ */
+export function useOutsideDismiss(
+  insideRefs: Array<React.RefObject<HTMLElement | null>>,
+  onClose: () => void,
+  enabled = true,
+): void {
+  const latest = useRef(onClose);
+  latest.current = onClose;
+  const refs = useRef(insideRefs);
+  refs.current = insideRefs;
+
+  useEffect(() => {
+    if (!enabled) return;
+    const onDown = (e: MouseEvent): void => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      for (const ref of refs.current) {
+        if (ref.current?.contains(target)) return;
+      }
+      latest.current();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
   }, [enabled]);
 }
