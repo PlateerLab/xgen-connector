@@ -30,14 +30,33 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir, platform } from 'node:os';
-import { readFile as fsReadFile, writeFile as fsWriteFile, appendFile as fsAppendFile, readdir, stat, mkdir } from 'node:fs/promises';
-import { resolve as pathResolve, relative as pathRelative, isAbsolute, join as pathJoin, dirname, extname } from 'node:path';
+import {
+  readFile as fsReadFile,
+  writeFile as fsWriteFile,
+  appendFile as fsAppendFile,
+  readdir,
+  stat,
+  mkdir,
+} from 'node:fs/promises';
+import {
+  resolve as pathResolve,
+  relative as pathRelative,
+  isAbsolute,
+  join as pathJoin,
+  dirname,
+  extname,
+} from 'node:path';
 import { augmentedPath, buildChildEnv } from './exec-resolve';
 
 /** Reserved MCP "server" name for connector-hosted built-ins. Agents see the
  *  tool as `mcp_local_<Tool>` after backend sanitization — keep it stable. */
 export const LOCAL_SERVER = 'local';
 export const SHELL_TOOL = 'Shell';
+/** 로컬 MCP 서버 자기관리 도구 — 로컬 MCP(cfg.mcp) 가 켜져 있을 때만 노출된다.
+ *  에이전트가 이 PC(커넥터 로컬)에서 도는 MCP 서버를 스스로 추가/제거/조회한다. */
+export const MCP_ADD_TOOL = 'McpAddServer';
+export const MCP_REMOVE_TOOL = 'McpRemoveServer';
+export const MCP_LIST_TOOL = 'McpListServers';
 export const OPEN_TOOL = 'Open';
 // 반구조화 1급 로컬 도구 — 셸 문자열 우회 없이 파일/클립보드/알림을 다룬다.
 // 파일 계열은 allowedRoots 경로 스코프 안에서만 동작한다(방어적 가드).
@@ -93,7 +112,7 @@ export interface LocalToolDelegate {
   callTool(tool: string, args: unknown): Promise<LocalToolResult>;
 }
 
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 600_000; // 10분 — 긴 설치/빌드/스크립트 기본 허용
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 60 * 60_000;
 const OUTPUT_CAP = 200_000; // chars kept from stdout+stderr
@@ -187,7 +206,9 @@ export function openerInvocation(target: string): { file: string; args: string[]
 
 /** First program token of a command line (for the blocklist check). */
 export function firstToken(command: string): string {
-  const m = String(command || '').trim().match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  const m = String(command || '')
+    .trim()
+    .match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
   const raw = (m && (m[1] || m[2] || m[3])) || '';
   const base = raw.split(/[\\/]/).pop() || raw;
   return base.replace(/\.(exe|cmd|bat|com|ps1)$/i, '').toLowerCase();
@@ -301,6 +322,85 @@ export const SYNCED_WORKSPACE_NOTE =
   `workspace automatically, so web sessions and the sandbox see the same files.`;
 
 /** The Shell tool schema advertised to the agent. */
+/** McpAddServer — 이 PC(커넥터 로컬)에 MCP 서버를 등록/갱신하고 그 도구를 지금 세션
+ *  에이전트들에 붙인다. 표준 mcp.json 서버 항목과 같은 필드를 받는다. */
+export function mcpAddServerToolSchema(): LocalToolSchema {
+  return {
+    name: MCP_ADD_TOOL,
+    description:
+      "Register (or update) a local MCP server ON THE USER'S OWN COMPUTER (this connector) and attach " +
+      'its tools to the current session agents. Same fields as a standard mcp.json server entry. ' +
+      'stdio: give `command` (+ optional `args`, `env`); http/sse: give `url` (+ optional `headers`, ' +
+      "`auth`). If a server with the same `name` exists it is replaced. Runs in the connector's local " +
+      'environment only — NOT the cloud. Example (Atlassian, local uvx): {name:"atlassian", ' +
+      'command:"uvx", args:["mcp-atlassian"], env:{ATLASSIAN_BASE_URL:"https://your-site.atlassian.net", ' +
+      'ATLASSIAN_USERNAME:"you@example.com", ATLASSIAN_API_TOKEN:"..."}}. Example (remote proxy): ' +
+      '{name:"atlassian", command:"npx", args:["-y","mcp-remote","https://mcp.atlassian.com/v1/mcp/authv2"]}. ' +
+      'auth:"oauth" servers need a one-time browser authorization by the user before tools connect. ' +
+      'Returns the connection result and the discovered tool names.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Unique server id (namespaces its tools).' },
+        transport: {
+          type: 'string',
+          enum: ['stdio', 'http', 'sse'],
+          description: 'Optional. Inferred from url (http) / command (stdio) when omitted.',
+        },
+        command: { type: 'string', description: 'stdio: launch command (e.g. "uvx", "npx").' },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'stdio: argv for the command.',
+        },
+        env: {
+          type: 'object',
+          additionalProperties: { type: 'string' },
+          description: 'stdio: extra env (API tokens etc.) merged over the connector env.',
+        },
+        url: { type: 'string', description: 'http/sse: the MCP endpoint URL.' },
+        headers: {
+          type: 'object',
+          additionalProperties: { type: 'string' },
+          description: 'http/sse: extra request headers (e.g. Authorization).',
+        },
+        auth: {
+          type: 'string',
+          enum: ['none', 'oauth'],
+          description: "http/sse auth. Default 'none'.",
+        },
+      },
+      required: ['name'],
+    },
+  };
+}
+
+/** McpRemoveServer — 로컬 MCP 서버를 해제하고(프로세스 종료) 그 도구를 뗀다. */
+export function mcpRemoveServerToolSchema(): LocalToolSchema {
+  return {
+    name: MCP_REMOVE_TOOL,
+    description:
+      'Remove a local MCP server (by name) from this connector: stop its process/connection and detach ' +
+      'its tools from the session agents. Also clears its stored secrets. No-op if it does not exist.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'The server id to remove.' } },
+      required: ['name'],
+    },
+  };
+}
+
+/** McpListServers — 이 PC 에 등록된 로컬 MCP 서버와 연결 상태·도구 수를 조회한다. */
+export function mcpListServersToolSchema(): LocalToolSchema {
+  return {
+    name: MCP_LIST_TOOL,
+    description:
+      'List the local MCP servers registered on this connector with their transport, enabled/connected ' +
+      'state, and the tools each exposes. Secret values are never returned. Use before add/remove.',
+    inputSchema: { type: 'object', properties: {} },
+  };
+}
+
 export function shellToolSchema(): LocalToolSchema {
   return {
     name: SHELL_TOOL,
@@ -333,7 +433,8 @@ export function shellToolSchema(): LocalToolSchema {
         },
         cwd: {
           type: 'string',
-          description: 'Working directory (absolute). Defaults to the configured directory or home.',
+          description:
+            'Working directory (absolute). Defaults to the configured directory or home.',
         },
         shell: {
           type: 'string',
@@ -344,9 +445,15 @@ export function shellToolSchema(): LocalToolSchema {
           type: 'integer',
           description: 'Optional per-command timeout override (ms). Ignored when background=true.',
         },
-        tail: { type: 'integer', description: 'Return only the last N lines of output (for chatty commands).' },
+        tail: {
+          type: 'integer',
+          description: 'Return only the last N lines of output (for chatty commands).',
+        },
         head: { type: 'integer', description: 'Return only the first N lines of output.' },
-        max_bytes: { type: 'integer', description: `Cap returned output bytes (default/cap ${OUTPUT_CAP}).` },
+        max_bytes: {
+          type: 'integer',
+          description: `Cap returned output bytes (default/cap ${OUTPUT_CAP}).`,
+        },
       },
       required: ['command'],
     },
@@ -368,7 +475,10 @@ export function shellJobToolSchema(): LocalToolSchema {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['list', 'poll', 'kill'], description: "Default 'list'." },
-        job_id: { type: 'string', description: 'The job id returned by Shell(background:true). Required for poll/kill.' },
+        job_id: {
+          type: 'string',
+          description: 'The job id returned by Shell(background:true). Required for poll/kill.',
+        },
         tail: { type: 'integer', description: 'poll: last N lines (default 200).' },
         head: { type: 'integer', description: 'poll: first N lines.' },
         max_bytes: { type: 'integer', description: 'poll: cap returned output bytes.' },
@@ -392,7 +502,8 @@ export function openToolSchema(): LocalToolSchema {
       properties: {
         target: {
           type: 'string',
-          description: 'A file/folder path (within allowed folders) or an http/https/mailto/tel/ftp URL.',
+          description:
+            'A file/folder path (within allowed folders) or an http/https/mailto/tel/ftp URL.',
         },
       },
       required: ['target'],
@@ -439,7 +550,8 @@ interface SpawnCaptured {
 function killTree(child: ChildProcess, detachedGroup: boolean): void {
   try {
     if (IS_WIN) {
-      if (child.pid) spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
+      if (child.pid)
+        spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
       else child.kill('SIGKILL');
     } else if (detachedGroup && child.pid) {
       process.kill(-child.pid, 'SIGKILL'); // negative pid = the process group
@@ -523,7 +635,13 @@ export function paginate(
     else out = lines.slice(-tail).join('\n');
     if (out.length < text.length) truncated = true;
   }
-  const cap = Math.max(1, Math.min(OUTPUT_CAP, Number(opts.maxBytes) > 0 ? Math.floor(Number(opts.maxBytes)) : OUTPUT_CAP));
+  const cap = Math.max(
+    1,
+    Math.min(
+      OUTPUT_CAP,
+      Number(opts.maxBytes) > 0 ? Math.floor(Number(opts.maxBytes)) : OUTPUT_CAP,
+    ),
+  );
   if (Buffer.byteLength(out) > cap) {
     // Cap on BYTES (not UTF-16 units), snapping to a UTF-8 character boundary so
     // we never split a multibyte char (no U+FFFD) and never exceed `cap` bytes.
@@ -551,26 +669,60 @@ const SAFE_OPEN_SCHEMES = new Set(['http', 'https', 'mailto', 'tel', 'ftp', 'ftp
  *  (unit-tested) — the actual open uses Electron's shell API (no shell string). */
 export function classifyOpenTarget(
   target: string,
-): { kind: 'url'; value: string } | { kind: 'path'; value: string } | { kind: 'blocked'; reason: string } {
+):
+  | { kind: 'url'; value: string }
+  | { kind: 'path'; value: string }
+  | { kind: 'blocked'; reason: string } {
   const t = String(target || '').trim();
   if (!t) return { kind: 'blocked', reason: 'target 이 비어 있습니다.' };
   const m = t.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
   if (m) {
     const scheme = m[1].toLowerCase();
-    if (scheme === 'file') return { kind: 'path', value: t.replace(/^file:\/\//i, '').replace(/^file:/i, '') };
+    if (scheme === 'file')
+      return { kind: 'path', value: t.replace(/^file:\/\//i, '').replace(/^file:/i, '') };
     if (SAFE_OPEN_SCHEMES.has(scheme)) return { kind: 'url', value: t };
     // Windows drive letters ("C:\…") look like a scheme — treat as a path.
     if (IS_WIN && /^[a-zA-Z]:[\\/]/.test(t)) return { kind: 'path', value: t };
-    return { kind: 'blocked', reason: `허용되지 않은 스킴 '${scheme}:' (javascript/data 등은 차단).` };
+    return {
+      kind: 'blocked',
+      reason: `허용되지 않은 스킴 '${scheme}:' (javascript/data 등은 차단).`,
+    };
   }
   return { kind: 'path', value: t };
 }
 
 /** Extensions we never text-search (binary/asset). */
 const BINARY_EXT = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.pdf', '.zip', '.gz',
-  '.tar', '.7z', '.rar', '.mp3', '.mp4', '.mov', '.avi', '.wav', '.ogg', '.woff',
-  '.woff2', '.ttf', '.eot', '.so', '.dll', '.dylib', '.exe', '.bin', '.class', '.o',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.ico',
+  '.bmp',
+  '.pdf',
+  '.zip',
+  '.gz',
+  '.tar',
+  '.7z',
+  '.rar',
+  '.mp3',
+  '.mp4',
+  '.mov',
+  '.avi',
+  '.wav',
+  '.ogg',
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.eot',
+  '.so',
+  '.dll',
+  '.dylib',
+  '.exe',
+  '.bin',
+  '.class',
+  '.o',
 ]);
 
 function resolveOne(p: string, base: string): string {
@@ -607,8 +759,14 @@ export function readFileToolSchema(): LocalToolSchema {
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'File path. Absolute, ~ for home, or relative to home.' },
-        maxBytes: { type: 'number', description: `Max bytes to return (default/cap ${OUTPUT_CAP}).` },
+        path: {
+          type: 'string',
+          description: 'File path. Absolute, ~ for home, or relative to home.',
+        },
+        maxBytes: {
+          type: 'number',
+          description: `Max bytes to return (default/cap ${OUTPUT_CAP}).`,
+        },
       },
       required: ['path'],
     },
@@ -625,7 +783,10 @@ export function writeFileToolSchema(): LocalToolSchema {
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'File path. Absolute, ~ for home, or relative to home.' },
+        path: {
+          type: 'string',
+          description: 'File path. Absolute, ~ for home, or relative to home.',
+        },
         content: { type: 'string', description: 'Text to write.' },
         mode: { type: 'string', enum: ['overwrite', 'append'], description: 'Default overwrite.' },
       },
@@ -672,7 +833,11 @@ export function clipboardToolSchema(): LocalToolSchema {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['read', 'write'], description: 'read (default) or write.' },
+        action: {
+          type: 'string',
+          enum: ['read', 'write'],
+          description: 'read (default) or write.',
+        },
         text: { type: 'string', description: 'Text to put on the clipboard when action=write.' },
       },
     },
@@ -699,6 +864,9 @@ export class LocalToolProvider {
   private delegate: LocalToolDelegate | null = null;
   /** 서버 런타임이 이 PC 를 실행 환경으로 쓰는 내부 브리지 (workspace-bridge-tools). */
   private workspaceBridge: LocalToolDelegate | null = null;
+  /** 로컬 MCP 자기관리(McpAddServer/McpRemoveServer/McpListServers). 로컬 MCP 가 켜져
+   *  있을 때만 도구를 광고한다 — 이 delegate 자신이 게이트를 판단한다. */
+  private mcpAdmin: LocalToolDelegate | null = null;
 
   configure(cfg: LocalShellConfig | undefined, delegate?: LocalToolDelegate): void {
     this.cfg = shellConfig(cfg);
@@ -708,6 +876,11 @@ export class LocalToolProvider {
   /** 워크스페이스 브리지 배선 — 로컬 동기화 매니저가 준비된 뒤 한 번 건다. */
   configureWorkspaceBridge(bridge: LocalToolDelegate | null): void {
     this.workspaceBridge = bridge;
+  }
+
+  /** 로컬 MCP 자기관리 delegate 배선(syncMcp 에서). null 이면 미노출. */
+  configureMcpAdmin(admin: LocalToolDelegate | null): void {
+    this.mcpAdmin = admin;
   }
 
   /** True iff this call frame belongs to a built-in tool (server === LOCAL_SERVER). */
@@ -734,11 +907,16 @@ export class LocalToolProvider {
     // 스위치에 묶인다. `_` 접두라 서버가 LLM 노출에서 걸러낸다 — 카탈로그에는
     // 실려야 서버 어댑터가 존재를 확인한다.
     const bridge = this.cfg.enabled ? (this.workspaceBridge?.advertise() ?? []) : [];
-    return [...shell, ...bridge, ...(this.delegate?.advertise() ?? [])];
+    // MCP 자기관리 도구는 로컬 셸(cfg.enabled) 과 무관하게 로컬 MCP 스위치로 게이트된다
+    // (delegate 가 스스로 판단) — 로컬 MCP 만 켜도 에이전트가 서버를 추가/제거할 수 있다.
+    const mcpAdmin = this.mcpAdmin?.advertise() ?? [];
+    return [...shell, ...bridge, ...mcpAdmin, ...(this.delegate?.advertise() ?? [])];
   }
 
   async callTool(tool: string, args: unknown): Promise<LocalToolResult> {
     if (this.delegate?.owns(tool)) return this.delegate.callTool(tool, args);
+    // MCP 자기관리 도구는 로컬 셸 게이트 이전에 처리(로컬 MCP 스위치로만 게이트됨).
+    if (this.mcpAdmin?.owns(tool)) return this.mcpAdmin.callTool(tool, args);
     if (!this.cfg.enabled) throw new Error('로컬 도구 접근이 꺼져 있습니다 (설정 > 로컬 도구).');
     if (this.workspaceBridge?.owns(tool)) return this.workspaceBridge.callTool(tool, args);
     if (tool === SHELL_TOOL) return this.shell(args);
@@ -772,10 +950,14 @@ export class LocalToolProvider {
     try {
       const buf = await fsReadFile(abs);
       const text = buf.subarray(0, maxBytes).toString('utf8');
-      const suffix = buf.byteLength > maxBytes ? `\n…(truncated, ${buf.byteLength} bytes total)` : '';
+      const suffix =
+        buf.byteLength > maxBytes ? `\n…(truncated, ${buf.byteLength} bytes total)` : '';
       return { content: [{ type: 'text', text: (text || '(empty file)') + suffix }] };
     } catch (e) {
-      return { content: [{ type: 'text', text: `읽기 실패: ${(e as Error).message}` }], isError: true };
+      return {
+        content: [{ type: 'text', text: `읽기 실패: ${(e as Error).message}` }],
+        isError: true,
+      };
     }
   }
 
@@ -789,10 +971,18 @@ export class LocalToolProvider {
       if (append) await fsAppendFile(abs, content, 'utf8');
       else await fsWriteFile(abs, content, 'utf8');
       return {
-        content: [{ type: 'text', text: `${append ? '이어썼습니다' : '저장했습니다'}: ${abs} (${Buffer.byteLength(content)} bytes)` }],
+        content: [
+          {
+            type: 'text',
+            text: `${append ? '이어썼습니다' : '저장했습니다'}: ${abs} (${Buffer.byteLength(content)} bytes)`,
+          },
+        ],
       };
     } catch (e) {
-      return { content: [{ type: 'text', text: `쓰기 실패: ${(e as Error).message}` }], isError: true };
+      return {
+        content: [{ type: 'text', text: `쓰기 실패: ${(e as Error).message}` }],
+        isError: true,
+      };
     }
   }
 
@@ -813,7 +1003,10 @@ export class LocalToolProvider {
       const more = names.length > 1000 ? `\n…(${names.length} entries, first 1000 shown)` : '';
       return { content: [{ type: 'text', text: rows.join('\n') + more || '(empty directory)' }] };
     } catch (e) {
-      return { content: [{ type: 'text', text: `목록 실패: ${(e as Error).message}` }], isError: true };
+      return {
+        content: [{ type: 'text', text: `목록 실패: ${(e as Error).message}` }],
+        isError: true,
+      };
     }
   }
 
@@ -824,7 +1017,15 @@ export class LocalToolProvider {
     const abs = this.guardPath(a.path ?? '~');
     const maxResults = Math.max(1, Math.min(500, Number(a.maxResults) || 100));
     const hits: string[] = [];
-    const skipDirs = new Set(['node_modules', '.git', '.venv', 'dist', 'out', '.next', '__pycache__']);
+    const skipDirs = new Set([
+      'node_modules',
+      '.git',
+      '.venv',
+      'dist',
+      'out',
+      '.next',
+      '__pycache__',
+    ]);
     const walk = async (dir: string, depth: number): Promise<void> => {
       if (hits.length >= maxResults || depth > 8) return;
       let entries: string[];
@@ -862,7 +1063,12 @@ export class LocalToolProvider {
     };
     await walk(abs, 0);
     return {
-      content: [{ type: 'text', text: hits.length ? hits.join('\n') : `'${query}' 를 찾지 못했습니다 (${abs}).` }],
+      content: [
+        {
+          type: 'text',
+          text: hits.length ? hits.join('\n') : `'${query}' 를 찾지 못했습니다 (${abs}).`,
+        },
+      ],
     };
   }
 
@@ -878,7 +1084,10 @@ export class LocalToolProvider {
       const text = clipboard.readText();
       return { content: [{ type: 'text', text: text || '(클립보드가 비어 있습니다)' }] };
     } catch (e) {
-      return { content: [{ type: 'text', text: `클립보드 접근 실패: ${(e as Error).message}` }], isError: true };
+      return {
+        content: [{ type: 'text', text: `클립보드 접근 실패: ${(e as Error).message}` }],
+        isError: true,
+      };
     }
   }
 
@@ -889,12 +1098,18 @@ export class LocalToolProvider {
     try {
       const { Notification } = await import('electron');
       if (!Notification.isSupported()) {
-        return { content: [{ type: 'text', text: '이 OS 에서 알림을 지원하지 않습니다.' }], isError: true };
+        return {
+          content: [{ type: 'text', text: '이 OS 에서 알림을 지원하지 않습니다.' }],
+          isError: true,
+        };
       }
       new Notification({ title, body }).show();
       return { content: [{ type: 'text', text: '알림을 표시했습니다.' }] };
     } catch (e) {
-      return { content: [{ type: 'text', text: `알림 실패: ${(e as Error).message}` }], isError: true };
+      return {
+        content: [{ type: 'text', text: `알림 실패: ${(e as Error).message}` }],
+        isError: true,
+      };
     }
   }
 
@@ -907,7 +1122,9 @@ export class LocalToolProvider {
     // 되돌리기 어려운 명령은 사용자 승인을 받는다 (위험 패턴만 — 일반 명령은 확인 없이).
     if (!(await ensureDangerousApproval(command))) {
       return {
-        content: [{ type: 'text', text: '사용자가 이 명령의 실행을 거부했습니다 (위험할 수 있는 명령).' }],
+        content: [
+          { type: 'text', text: '사용자가 이 명령의 실행을 거부했습니다 (위험할 수 있는 명령).' },
+        ],
         isError: true,
       };
     }
@@ -924,7 +1141,11 @@ export class LocalToolProvider {
       Math.min(MAX_TIMEOUT_MS, Math.round(timeoutMs || this.cfg.timeoutMs)),
     );
     const r = await this.spawnCapture(file, argv, env, runCwd, timeout);
-    if (r.error) return { content: [{ type: 'text', text: `셸 실행 실패: ${r.error.message}` }], isError: true };
+    if (r.error)
+      return {
+        content: [{ type: 'text', text: `셸 실행 실패: ${r.error.message}` }],
+        isError: true,
+      };
     if (r.timedOut) {
       return {
         content: [
@@ -933,7 +1154,9 @@ export class LocalToolProvider {
             text:
               `명령이 ${Math.round(timeout / 1000)}초 안에 끝나지 않아 중단했습니다. ` +
               `대화형 명령이거나 종료되지 않는 프로그램(에디터·서버 등)이면 background:true 로 실행하세요.` +
-              (r.stdout || r.stderr ? `\n\n--- 중단 전 출력 ---\n${(r.stdout + '\n' + r.stderr).trim().slice(-2000)}` : ''),
+              (r.stdout || r.stderr
+                ? `\n\n--- 중단 전 출력 ---\n${(r.stdout + '\n' + r.stderr).trim().slice(-2000)}`
+                : ''),
           },
         ],
         isError: true,
@@ -975,7 +1198,10 @@ export class LocalToolProvider {
       if (err) return { content: [{ type: 'text', text: `열기 실패: ${err}` }], isError: true };
       return { content: [{ type: 'text', text: `열었습니다: ${abs}` }] };
     } catch (e) {
-      return { content: [{ type: 'text', text: `열기 실패: ${(e as Error).message}` }], isError: true };
+      return {
+        content: [{ type: 'text', text: `열기 실패: ${(e as Error).message}` }],
+        isError: true,
+      };
     }
   }
 
@@ -1026,7 +1252,9 @@ export class LocalToolProvider {
         err += String(d);
         if (err.length > OUTPUT_CAP * 2) err = err.slice(-OUTPUT_CAP * 2);
       });
-      child.on('error', (e) => finish({ code: null, signal: null, stdout: out, stderr: err, error: e }));
+      child.on('error', (e) =>
+        finish({ code: null, signal: null, stdout: out, stderr: err, error: e }),
+      );
       child.on('close', (code, signal) => finish({ code, signal, stdout: out, stderr: err }));
     });
   }
@@ -1070,7 +1298,12 @@ export class LocalToolProvider {
         });
       } catch (e) {
         resolve({
-          content: [{ type: 'text', text: `백그라운드 실행 실패: ${e instanceof Error ? e.message : String(e)}` }],
+          content: [
+            {
+              type: 'text',
+              text: `백그라운드 실행 실패: ${e instanceof Error ? e.message : String(e)}`,
+            },
+          ],
           isError: true,
         });
         return;
@@ -1110,7 +1343,10 @@ export class LocalToolProvider {
           job.errorMsg = e.message;
           job.endedAt = Date.now();
         }
-        done({ content: [{ type: 'text', text: `백그라운드 실행 실패: ${e.message}` }], isError: true });
+        done({
+          content: [{ type: 'text', text: `백그라운드 실행 실패: ${e.message}` }],
+          isError: true,
+        });
       });
       child.on('close', (code, signal) => {
         // Always record the real exit code/signal (even for a job we killed, so
@@ -1155,7 +1391,12 @@ export class LocalToolProvider {
     const jobId = String(a.job_id ?? a.jobId ?? '').trim();
 
     if (action === 'list') {
-      if (!bgJobs.size) return { content: [{ type: 'text', text: '실행 중이거나 최근 종료된 백그라운드 작업이 없습니다.' }] };
+      if (!bgJobs.size)
+        return {
+          content: [
+            { type: 'text', text: '실행 중이거나 최근 종료된 백그라운드 작업이 없습니다.' },
+          ],
+        };
       const rows = [...bgJobs.values()]
         .sort((x, y) => y.startedAt - x.startedAt)
         .map((j) => {
@@ -1169,7 +1410,12 @@ export class LocalToolProvider {
     const job = jobId ? bgJobs.get(jobId) : undefined;
     if (!job) {
       return {
-        content: [{ type: 'text', text: `job_id '${jobId}' 를 찾지 못했습니다. ShellJob(action:'list') 로 확인하세요.` }],
+        content: [
+          {
+            type: 'text',
+            text: `job_id '${jobId}' 를 찾지 못했습니다. ShellJob(action:'list') 로 확인하세요.`,
+          },
+        ],
         isError: true,
       };
     }
@@ -1180,7 +1426,11 @@ export class LocalToolProvider {
         job.status = 'killed';
         job.endedAt = Date.now();
       }
-      return { content: [{ type: 'text', text: `작업 ${job.id} 을(를) 종료했습니다 (상태: ${job.status}).` }] };
+      return {
+        content: [
+          { type: 'text', text: `작업 ${job.id} 을(를) 종료했습니다 (상태: ${job.status}).` },
+        ],
+      };
     }
 
     // poll / logs — status + captured output (paginated).
@@ -1201,13 +1451,23 @@ export class LocalToolProvider {
         `--- stdout${outP.truncated ? ` (last, ${outP.totalBytes}B total)` : ''} ---\n${outP.text || '(none)'}`,
       );
       if (errP.text.trim() || errP.totalBytes) {
-        parts.push(`--- stderr${errP.truncated ? ` (last, ${errP.totalBytes}B total)` : ''} ---\n${errP.text || '(none)'}`);
+        parts.push(
+          `--- stderr${errP.truncated ? ` (last, ${errP.totalBytes}B total)` : ''} ---\n${errP.text || '(none)'}`,
+        );
       }
-      return { content: [{ type: 'text', text: parts.join('\n\n') }], isError: job.status === 'error' };
+      return {
+        content: [{ type: 'text', text: parts.join('\n\n') }],
+        isError: job.status === 'error',
+      };
     }
 
     return {
-      content: [{ type: 'text', text: `알 수 없는 action '${action}'. list | poll | kill 중 하나를 쓰세요.` }],
+      content: [
+        {
+          type: 'text',
+          text: `알 수 없는 action '${action}'. list | poll | kill 중 하나를 쓰세요.`,
+        },
+      ],
       isError: true,
     };
   }
