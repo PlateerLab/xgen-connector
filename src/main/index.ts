@@ -117,7 +117,17 @@ import { accountKey, describeAccount, moveRoot, rootConflict, rootOf } from './w
 import { TRAY_ICON_B64 } from './tray-icon';
 import { getMcpManager, type McpHttpFetch } from './mcp-manager';
 import { getMcpBridge } from './mcp-bridge';
-import { getLocalToolProvider } from './local-tools';
+import {
+  getLocalToolProvider,
+  mcpAddServerToolSchema,
+  mcpRemoveServerToolSchema,
+  mcpListServersToolSchema,
+  MCP_ADD_TOOL,
+  MCP_REMOVE_TOOL,
+  MCP_LIST_TOOL,
+  type LocalToolDelegate,
+  type LocalToolResult,
+} from './local-tools';
 import {
   clearMcpRuntimeLogs,
   mcpRuntimeLogs,
@@ -1347,6 +1357,118 @@ function syncTeams(): void {
   }
 }
 
+/** 에이전트 자기관리용 로컬 MCP delegate — McpAddServer/McpRemoveServer/McpListServers.
+ *  로컬 MCP(cfg.mcp) 가 켜져 있을 때만 도구를 광고한다. 추가/제거는 설정 UI 와 **같은**
+ *  applyMcpServers() 경로(비밀 키체인·redacted 저장·syncMcp 재조정)를 쓴다. 커넥터 로컬에서만
+ *  동작하며, 등록된 서버 도구는 다음 턴부터(또는 list_changed 재광고로) 에이전트에 붙는다. */
+function txt(text: string, isError = false): LocalToolResult {
+  return { content: [{ type: 'text', text }], isError };
+}
+const mcpAdminDelegate: LocalToolDelegate = {
+  advertise() {
+    return loadConfig().mcp
+      ? [mcpAddServerToolSchema(), mcpRemoveServerToolSchema(), mcpListServersToolSchema()]
+      : [];
+  },
+  owns(tool: string) {
+    return tool === MCP_ADD_TOOL || tool === MCP_REMOVE_TOOL || tool === MCP_LIST_TOOL;
+  },
+  async callTool(tool: string, rawArgs: unknown): Promise<LocalToolResult> {
+    if (!loadConfig().mcp) return txt('로컬 MCP 가 꺼져 있습니다 (설정 > MCP).', true);
+    const a = (rawArgs && typeof rawArgs === 'object' ? rawArgs : {}) as Record<string, unknown>;
+
+    if (tool === MCP_LIST_TOOL) {
+      const servers = loadConfig().mcpServers ?? [];
+      const adverts = await getMcpManager()
+        .advertise()
+        .catch(
+          () =>
+            [] as { name: string; connected: boolean; error?: string; tools: { name: string }[] }[],
+        );
+      const byName = new Map(adverts.map((x) => [x.name, x]));
+      const rows = servers.map((sv) => {
+        const live = byName.get(sv.name);
+        return {
+          name: sv.name,
+          transport: sv.transport,
+          enabled: sv.enabled !== false,
+          connected: !!live?.connected,
+          error: live?.error,
+          tools: (live?.tools ?? []).map((t) => t.name),
+        };
+      });
+      return txt(JSON.stringify({ servers: rows }, null, 2));
+    }
+
+    if (tool === MCP_REMOVE_TOOL) {
+      const name = String(a.name ?? '').trim();
+      if (!name) return txt('name 이 필요합니다.', true);
+      const prev = loadConfig().mcpServers ?? [];
+      if (!prev.some((sv) => sv.name === name))
+        return txt(`MCP 서버 '${name}' 이(가) 없습니다.`, true);
+      await applyMcpServers(prev.filter((sv) => sv.name !== name));
+      return txt(`MCP 서버 '${name}' 를 제거했습니다 (프로세스 종료·도구 분리).`);
+    }
+
+    // McpAddServer
+    const name = String(a.name ?? '').trim();
+    if (!name) return txt('name 이 필요합니다.', true);
+    const hasUrl = typeof a.url === 'string' && String(a.url).trim() !== '';
+    const transport = (
+      ['stdio', 'http', 'sse'].includes(String(a.transport))
+        ? String(a.transport)
+        : hasUrl
+          ? 'http'
+          : 'stdio'
+    ) as McpServerConfig['transport'];
+    const server: McpServerConfig = { name, transport, enabled: true };
+    if (typeof a.command === 'string' && a.command.trim())
+      server.command = String(a.command).trim();
+    if (Array.isArray(a.args)) server.args = a.args.map((x) => String(x));
+    if (a.env && typeof a.env === 'object')
+      server.env = Object.fromEntries(
+        Object.entries(a.env as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+      );
+    if (hasUrl) server.url = String(a.url).trim();
+    if (a.headers && typeof a.headers === 'object')
+      server.headers = Object.fromEntries(
+        Object.entries(a.headers as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+      );
+    if (a.auth === 'oauth' || a.auth === 'none') server.auth = a.auth;
+    if (transport === 'stdio' && !server.command)
+      return txt('stdio 서버는 command 가 필요합니다.', true);
+    if ((transport === 'http' || transport === 'sse') && !server.url)
+      return txt('http/sse 서버는 url 이 필요합니다.', true);
+
+    const prev = loadConfig().mcpServers ?? [];
+    const replaced = prev.some((sv) => sv.name === name);
+    await applyMcpServers([...prev.filter((sv) => sv.name !== name), server]);
+
+    // 연결/도구 검색을 잠깐 기다렸다 결과를 요약한다(첫 실행은 의존성 내려받기로 느릴 수 있음).
+    await new Promise((r) => setTimeout(r, 1500));
+    const adverts = await getMcpManager()
+      .advertise()
+      .catch(() => []);
+    const live = adverts.find((x) => x.name === name);
+    const toolNames = (live?.tools ?? []).map((t) => t.name);
+    const verb = replaced ? '갱신' : '추가';
+    if (server.auth === 'oauth' && !live?.connected) {
+      return txt(
+        `MCP 서버 '${name}' 를 ${verb}했습니다. OAuth 인증이 필요합니다 — 사용자가 설정 > MCP 에서 "브라우저로 인가하기" 를 완료하면 도구가 연결됩니다.`,
+      );
+    }
+    if (live?.error) {
+      return txt(
+        `MCP 서버 '${name}' 를 ${verb}했으나 연결 오류: ${live.error}. 명령/인자/토큰을 확인하세요 (여전히 등록은 유지됨, 재연결 자동 시도).`,
+        true,
+      );
+    }
+    return txt(
+      `MCP 서버 '${name}' 를 ${verb}·연결했습니다. 노출 도구 ${toolNames.length}개: ${toolNames.join(', ') || '(아직 검색 중 — 다음 턴에 반영될 수 있음)'}. 이 도구들은 mcp__${name}__* 로 호출됩니다.`,
+    );
+  },
+};
+
 /** Reconcile MCP manager + bridge with config + login state. */
 function syncMcp(): void {
   const cfg = loadConfig();
@@ -1374,6 +1496,8 @@ function syncMcp(): void {
   const browserTools = getBrowserToolProvider(getBrowserRuntime());
   browserTools.configure(cfg.browser?.enabled === true, cfg.localShell?.allowedRoots ?? []);
   getLocalToolProvider().configure(cfg.localShell, browserTools);
+  // 로컬 MCP 자기관리 도구(McpAddServer 등) — cfg.mcp 스위치로 delegate 가 스스로 게이트한다.
+  getLocalToolProvider().configureMcpAdmin(mcpAdminDelegate);
   const bridge = getMcpBridge();
   if (!mcpStatusWired) {
     mcpStatusWired = true;
@@ -2306,10 +2430,13 @@ ipcMain.handle(CHANNELS.mcpSetEnabled, (_e, enabled: boolean) => {
   return !!enabled;
 });
 ipcMain.handle(CHANNELS.mcpListServers, () => loadConfig().mcpServers ?? []);
-ipcMain.handle(CHANNELS.mcpSaveServers, async (_e, servers) => {
-  // G8a: move secret env/headers values to the encrypted keychain; persist only
-  // redacted configs (keys kept, values '') to connector.json.
-  const incoming: McpServerConfig[] = Array.isArray(servers) ? servers : [];
+/**
+ * MCP 서버 목록을 반영한다(설정 UI 와 에이전트 자기관리 도구의 공통 경로).
+ * G8a: 비밀 env/headers 값은 암호화 키체인으로 옮기고 connector.json 에는 redacted(값 '')만
+ * 저장한다. 제거된 서버의 비밀/OAuth 상태는 정리한다. 저장 후 syncMcp() 로 매니저를 재조정하고
+ * broadcast 한다. 반환은 저장된(redacted) 서버 목록.
+ */
+async function applyMcpServers(incoming: McpServerConfig[]): Promise<McpServerConfig[]> {
   const prev = loadConfig().mcpServers ?? [];
   const redacted: McpServerConfig[] = [];
   for (const s of incoming) {
@@ -2331,6 +2458,11 @@ ipcMain.handle(CHANNELS.mcpSaveServers, async (_e, servers) => {
   syncMcp();
   broadcastConfig(next);
   return next.mcpServers ?? [];
+}
+
+ipcMain.handle(CHANNELS.mcpSaveServers, async (_e, servers) => {
+  const incoming: McpServerConfig[] = Array.isArray(servers) ? servers : [];
+  return applyMcpServers(incoming);
 });
 ipcMain.handle(CHANNELS.mcpTestServer, async (e, cfg) => {
   // OAuth 서버는 테스트가 임시이름(__test__)로 붙어 토큰이 없어 항상 실패하고, DCR 이
