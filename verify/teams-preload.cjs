@@ -189,6 +189,19 @@ const api = {
       record('teams.shareWorkspaceFile', { roomId, drivePath });
       return UPLOADED;
     },
+    updateRoom: async (roomId, patch) => {
+      record('teams.updateRoom', { roomId, patch });
+      return { ...ROOM, ...patch };
+    },
+    deleteRoom: async (roomId) => {
+      record('teams.deleteRoom', { roomId });
+      return true;
+    },
+    notify: async (payload) => {
+      record('teams.notify', payload);
+      return true;
+    },
+    onNotificationClick: off,
     saveAttachment: async () => null,
     openAttachment: async () => '',
     readAttachment: async () => new Uint8Array([1, 2, 3]),

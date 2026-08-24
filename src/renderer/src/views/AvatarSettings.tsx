@@ -12,6 +12,7 @@
  * 와 경합해도 서로를 덮어쓰지 않고, 수정 즉시 오버레이가 갱신된다.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useModalDismiss } from './use-modal-dismiss';
 import { xgen } from '../bridge';
 import type { CurrentUser, StoreAvatar } from '../../../core/index';
 import type { AvatarConfig, AvatarDescriptor } from '../../../core/preferences';
@@ -80,6 +81,7 @@ const PublishModal: React.FC<{
   onClose: () => void;
   onPublish: (avatar: AvatarDescriptor, name: string, description: string) => Promise<void>;
 }> = ({ myAvatars, onClose, onPublish }) => {
+  useModalDismiss(onClose);
   const [selectedId, setSelectedId] = useState(myAvatars[0]?.id ?? '');
   const selected = myAvatars.find((a) => a.id === selectedId) ?? myAvatars[0] ?? null;
   const [name, setName] = useState(selected?.name ?? '');
@@ -174,6 +176,8 @@ export const AvatarSettings: React.FC<{
   const [pendingAdd, setPendingAdd] = useState<AvatarDescriptor | null>(null);
   const [renaming, setRenaming] = useState<AvatarDescriptor | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<AvatarDescriptor | null>(null);
+  // 삭제 확인이 떠 있으면 Esc 는 **그것만** 닫는다 (스택의 맨 위가 대상).
+  useModalDismiss(() => setConfirmDelete(null), !!confirmDelete);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

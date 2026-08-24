@@ -295,6 +295,35 @@ export class TeamsApi {
     return mapRoom(res.data?.room);
   }
 
+  /**
+   * 방 정보 수정 (이름·설명). 서버는 **멤버 전원**에게 허용한다(방장 전용이 아니다).
+   *
+   * ⚠ 서버가 이 변경을 broadcast 하지 않는다 — 다른 클라이언트는 새로고침 전까지
+   * 옛 이름을 본다. 우리 화면만 즉시 갱신할 수 있다.
+   */
+  async updateRoom(
+    roomId: string,
+    patch: { name?: string; description?: string | null },
+  ): Promise<TeamsRoom | null> {
+    const res = await this.http.put<Envelope<unknown>>(
+      `/api/teams/rooms/${encodeURIComponent(roomId)}`,
+      {
+        // 서버는 null 을 "변경 없음" 으로 읽는다. 보내지 않을 값은 넣지 않는다.
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.description !== undefined ? { description: patch.description } : {}),
+      },
+    );
+    return res.data ? mapRoom(res.data) : null;
+  }
+
+  /**
+   * 방 삭제. **방장만** 가능하고(그 외 403), soft-delete 라 서버의 보존 기간
+   * 안에서는 웹에서 복구할 수 있다.
+   */
+  async deleteRoom(roomId: string): Promise<void> {
+    await this.http.del(`/api/teams/rooms/${encodeURIComponent(roomId)}`);
+  }
+
   async leaveRoom(roomId: string): Promise<void> {
     await this.http.post(`/api/teams/rooms/${encodeURIComponent(roomId)}/leave`);
   }

@@ -329,3 +329,21 @@ export const MoreIcon: React.FC<P> = ({ size = 16, className }) => (
     <circle cx="5" cy="12" r="1" />
   </svg>
 );
+
+/** 알림 켜짐 — 종. */
+export const BellIcon: React.FC<P> = ({ size = 14, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+    <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+  </svg>
+);
+
+/** 알림 꺼짐 — 종에 사선. */
+export const BellOffIcon: React.FC<P> = ({ size = 14, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M8.7 3A6 6 0 0 1 18 8c0 2.4.4 4.2.9 5.5" />
+    <path d="M17 17H3s3-2 3-9a6 6 0 0 1 .3-1.8" />
+    <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    <path d="m2 2 20 20" />
+  </svg>
+);

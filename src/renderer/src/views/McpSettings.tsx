@@ -4,6 +4,7 @@
  * backend auto-injects their tools into your agents' next turns.
  */
 import React, { useEffect, useMemo, useState } from 'react';
+import { useModalDismiss } from './use-modal-dismiss';
 import { xgen, copyText } from '../bridge';
 import type { McpServerConfig } from '../../../main/config';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
@@ -331,6 +332,8 @@ export const McpSettings: React.FC<{ onClose: () => void; embedded?: boolean }> 
   onClose,
   embedded,
 }) => {
+  // 모달로 떠 있을 때만 Esc 로 닫는다 — embedded(탭 안)에서는 닫을 대상이 없다.
+  useModalDismiss(onClose, !embedded);
   const [enabled, setEnabled] = useState(false);
   const [servers, setServers] = useState<McpServerConfig[]>([]);
   const [status, setStatus] = useState<McpBridgeStatusLike | null>(null);

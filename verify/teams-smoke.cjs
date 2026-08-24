@@ -242,6 +242,83 @@ app
       { before: quoteBefore, after: await js(`window.__count('.teams-quote')`) },
     );
 
+    // ── 5b. 방 관리 — 이름 · 알림 · 삭제 ─────────────────────────
+    section('5b. 방 관리 (이름/알림/삭제)');
+    await clearCalls();
+    ok('방 메뉴를 연다', await js(`window.__click('.icon-btn', '대화방 메뉴')`));
+    await sleep(300);
+    const menu = await js(`window.__text('.teams-menu')`);
+    ok('이름 바꾸기가 있다', /이름 바꾸기/.test(menu || ''), menu);
+    ok('알림 끄기가 있다', /알림 끄기/.test(menu || ''));
+    ok('나가기가 있다', /나가기/.test(menu || ''));
+    // 목의 내 role 은 owner 이므로 삭제도 보여야 한다.
+    ok('방장에게는 삭제가 보인다', /대화방 삭제/.test(menu || ''));
+    await snap('13-room-menu.png');
+
+    ok('[이름 바꾸기] 를 누른다', await js(`window.__click('.teams-menu button', '이름 바꾸기')`));
+    await sleep(400);
+    ok('이름 입력창이 열린다', (await js(`window.__count('.modal.modal-sm')`)) === 1);
+    await js(`window.__setValue(window.__vis('.modal.modal-sm input')[0], '3팀 개발방 (수정)')`);
+    await sleep(150);
+    ok(
+      '[이름 바꾸기] 확정',
+      await js(`window.__click('.modal.modal-sm .modal-actions button', '이름 바꾸기')`),
+    );
+    await sleep(600);
+    const renameCall = (await calls()).find((c) => c.name === 'teams.updateRoom');
+    ok(
+      'updateRoom 이 새 이름으로 호출된다',
+      renameCall && renameCall.args.patch.name === '3팀 개발방 (수정)',
+      renameCall && renameCall.args,
+    );
+    ok('탭 제목이 바뀐다', /수정/.test((await js(`window.__text('.tab-item.active')`)) || ''));
+
+    await clearCalls();
+    ok('방 메뉴를 다시 연다', await js(`window.__click('.icon-btn', '대화방 메뉴')`));
+    await sleep(250);
+    ok('[알림 끄기] 를 누른다', await js(`window.__click('.teams-menu button', '알림 끄기')`));
+    await sleep(400);
+    const muteSave = (await calls()).find(
+      (c) => c.name === 'config.set' && c.args && c.args.teams && c.args.teams.mutedRooms,
+    );
+    ok(
+      '음소거가 설정에 저장된다',
+      muteSave && muteSave.args.teams.mutedRooms.includes('room-1'),
+      muteSave && muteSave.args,
+    );
+    ok(
+      '메뉴를 다시 열면 [알림 켜기] 로 바뀐다',
+      (await js(`window.__click('.icon-btn', '대화방 메뉴')`)) && true,
+    );
+    await sleep(250);
+    ok('토글 라벨이 반영된다', /알림 켜기/.test((await js(`window.__text('.teams-menu')`)) || ''));
+    await js(`window.__click('.teams-menu-scrim')`);
+    await sleep(200);
+
+    // ── 5c. 모달은 Esc 로도 닫힌다 ───────────────────────────────
+    section('5c. 모달 닫기 (바깥 클릭 · Esc)');
+    ok('초대창을 연다', await js(`window.__click('.chat-header-actions button', '초대')`));
+    await sleep(400);
+    ok('초대창이 열렸다', (await js(`window.__count('.modal.teams-invite')`)) === 1);
+    ok(
+      '[닫기] 버튼은 없어졌다',
+      !/닫기<\/button>/.test((await js(`window.__text('.modal.teams-invite')`)) || '') &&
+        !(await js(
+          `(()=>{const m=window.__vis('.modal.teams-invite')[0];return m?[...m.querySelectorAll('button')].some(b=>(b.textContent||'').trim()==='닫기'):false;})()`,
+        )),
+    );
+    ok('닫는 법을 안내한다', /Esc/.test((await js(`window.__text('.modal.teams-invite')`)) || ''));
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    await sleep(350);
+    ok('Esc 로 닫힌다', (await js(`window.__count('.modal.teams-invite')`)) === 0);
+    ok('다시 연다', await js(`window.__click('.chat-header-actions button', '초대')`));
+    await sleep(350);
+    await js(
+      `(()=>{const b=window.__vis('.modal-backdrop')[0];b.dispatchEvent(new MouseEvent('click',{bubbles:true}));})()`,
+    );
+    await sleep(350);
+    ok('바깥 클릭으로도 닫힌다', (await js(`window.__count('.modal.teams-invite')`)) === 0);
+
     // ── 6. ⭐ 자동 컨텍스트 — 봉투가 실제로 실리는가 ──────────────
     section('6. Teams 문맥 → Agent (자동 칩)');
     ok('Agent 뷰로 전환', await js(`window.__click('.ab-btn', 'Agent')`));
@@ -260,8 +337,18 @@ app
       /사내문서 QA/.test((await js(`window.__text('.tab-item.active')`)) || ''),
       await js(`window.__text('.tab-item.active')`),
     );
+    // ⭐ 자동 부착은 **없어야 한다** — 방을 본 것만으로 문맥이 되면 사용자가
+    // 고른 적 없는 남의 대화가 나간다.
+    ok('아무것도 저절로 붙어 있지 않다', (await js(`window.__count('.teams-ctx')`)) === 0);
+    ok('대신 [Teams 대화 붙이기] 가 있다', (await js(`window.__count('.teams-ctx-add')`)) === 1);
+    ok('붙이기를 누른다', await js(`window.__click('.teams-ctx-add')`));
+    await sleep(600);
+    ok('방 선택 창이 열린다', (await js(`window.__count('.modal.teams-share')`)) === 1);
+    ok('방을 고른다', await js(`window.__click('.modal.teams-share .agent-item', '3팀 개발방')`));
+    await sleep(600);
+    ok('고르면 창이 닫힌다', (await js(`window.__count('.modal.teams-share')`)) === 0);
     const chip = await js(`window.__text('.teams-ctx')`);
-    ok('composer 위에 컨텍스트 칩이 자동으로 떠 있다', /3팀 개발방/.test(chip || ''), chip);
+    ok('고른 방이 칩으로 붙는다', /3팀 개발방/.test(chip || ''), chip);
     ok('칩이 함께 전달된다는 사실을 적어 둔다', /에이전트에게 함께 전달/.test(chip || ''));
     await snap('06-context-chip.png');
 

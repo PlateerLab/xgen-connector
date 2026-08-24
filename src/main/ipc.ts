@@ -46,7 +46,13 @@ export const CHANNELS = {
   teamsRooms: 'teams:rooms',
   teamsCreateRoom: 'teams:createRoom',
   teamsOpenDm: 'teams:openDm',
+  teamsUpdateRoom: 'teams:updateRoom',
+  teamsDeleteRoom: 'teams:deleteRoom',
   teamsLeaveRoom: 'teams:leaveRoom',
+  /** 새 메시지 OS 알림 — 렌더러가 "지금 보고 있지 않고 음소거도 아니다" 를 판정해 요청한다. */
+  teamsNotify: 'teams:notify',
+  /** 알림을 눌렀다 → 그 방을 열라고 렌더러에 알린다. */
+  teamsNotificationClick: 'teams:notificationClick',
   teamsMembers: 'teams:members',
   teamsAddMember: 'teams:addMember',
   teamsSearchUsers: 'teams:searchUsers',

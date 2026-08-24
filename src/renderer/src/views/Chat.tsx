@@ -17,6 +17,8 @@ import { xgen, copyText } from '../bridge';
 import { sessionStore } from '../session';
 import { CONTEXT_LIMIT_CHOICES, teamsContextStore, useContextChip } from '../teams-context';
 import { ShareToTeamsModal } from './ShareToTeams';
+import { TeamsRoomList } from './TeamsRoomPicker';
+import { useModalDismiss } from './use-modal-dismiss';
 import type { SessionState } from '../session-store';
 import type { ToolEvent, Citation, VoiceConfig } from '../../../core/index';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
@@ -192,6 +194,8 @@ export const Chat: React.FC<{
   } | null>(null);
   // 이 답변을 Teams 로 공유하는 중 — 본문을 들고 모달을 띄운다.
   const [shareBody, setShareBody] = useState<string | null>(null);
+  // Teams 대화를 문맥으로 붙일 방을 고르는 중.
+  const [ctxPicker, setCtxPicker] = useState(false);
   const [copiedAt, setCopiedAt] = useState(-1);
   const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
   const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
@@ -468,6 +472,10 @@ export const Chat: React.FC<{
       return null;
     });
   }, []);
+
+  // 문맥 확인창도 Esc 로 취소된다 — 취소는 사용자의 문장을 입력창에 돌려준다.
+  useModalDismiss(cancelContext, !!ctxConfirm);
+  useModalDismiss(() => setCtxPicker(false), ctxPicker);
 
   const stop = useCallback(() => {
     // 사용자가 멈추면 소리도 멈춘다 — 아직 안 읽은 문장을 마저 읽지 않는다.
@@ -911,6 +919,13 @@ export const Chat: React.FC<{
             {chip.available > 0 && chip.available < chip.limit && (
               <span className="teams-ctx-actual">(실제 {chip.available}건)</span>
             )}
+            <button
+              className="teams-ctx-change"
+              onClick={() => setCtxPicker(true)}
+              title="다른 대화로 바꾸기"
+            >
+              변경
+            </button>
             <span className="teams-ctx-note">이 대화가 에이전트에게 함께 전달됩니다</span>
             <button
               className="teams-ctx-off"
@@ -922,15 +937,13 @@ export const Chat: React.FC<{
             </button>
           </div>
         ) : (
-          teamsContextStore.canAttach(session.key) && (
-            <button
-              className="teams-ctx-add"
-              onClick={() => teamsContextStore.restore(session.key)}
-              title="최근에 본 Teams 대화를 문맥으로 붙입니다"
-            >
-              <TeamsIcon size={12} /> Teams 문맥 붙이기
-            </button>
-          )
+          <button
+            className="teams-ctx-add"
+            onClick={() => setCtxPicker(true)}
+            title="Teams 대화를 골라 이 에이전트에게 함께 전달합니다"
+          >
+            <TeamsIcon size={12} /> Teams 대화 붙이기
+          </button>
         )}
         <div className="composer">
           <textarea
@@ -1017,8 +1030,34 @@ export const Chat: React.FC<{
               <button className="secondary" onClick={cancelContext}>
                 취소
               </button>
-              <button onClick={() => void confirmContext()}>보내기</button>
+              <button className="primary" onClick={() => void confirmContext()}>
+                보내기
+              </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Teams 대화 붙이기 — 저절로 붙는 경로는 없다. 사용자가 여기서 고른
+          방만 문맥이 된다. 고르는 즉시 확정되고 창은 닫힌다. */}
+      {ctxPicker && (
+        <div className="modal-backdrop" onClick={() => setCtxPicker(false)}>
+          <div className="modal teams-share" onClick={(e) => e.stopPropagation()}>
+            <h3>어느 대화를 함께 보낼까요?</h3>
+            <p className="teams-ctx-confirm-sub">
+              고른 대화의 최근 메시지가 <strong>{agent.workflowName}</strong> 에이전트에게 함께
+              전달됩니다. 보내기 전에 몇 건인지 다시 확인합니다.
+            </p>
+            <TeamsRoomList
+              selectedId={chip?.roomId}
+              onPick={(room) => {
+                teamsContextStore.pickRoom(session.key, room);
+                setCtxPicker(false);
+              }}
+            />
+            <p className="modal-hint">
+              바깥을 클릭하거나 <kbd>Esc</kbd> 를 누르면 닫힙니다.
+            </p>
           </div>
         </div>
       )}

@@ -18,7 +18,8 @@
  * [원본 대화 보기] 카드로 그리지만, 웹 Teams 처럼 표식을 모르는 클라이언트에서도
  * "누가 어느 에이전트의 답변을 공유했는지" 가 문장으로 읽힌다.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useModalDismiss } from './use-modal-dismiss';
 import {
   buildSharedMessage,
   type TeamsAttachment,
@@ -27,8 +28,8 @@ import {
 } from '../../../core/index';
 import { xgen } from '../bridge';
 import { teamsStore, useTeams } from '../teams';
-import { ChatIcon, TeamsIcon } from '../brand/icons';
-import { filterRooms, formatBytes, roomTime } from './teams-store';
+import { formatBytes } from './teams-store';
+import { TeamsRoomList } from './TeamsRoomPicker';
 
 /** 워크스페이스(가상 드라이브) 파일을 함께 올릴 때. */
 export interface ShareFile {
@@ -52,19 +53,12 @@ export const ShareToTeamsModal: React.FC<{
   /** 공유 성공 — 호출자가 그 방을 탭으로 열어 주면 흐름이 끊기지 않는다. */
   onShared?: (room: TeamsRoom) => void;
 }> = ({ body, shareRef, myName, file, title = 'Teams로 공유', onClose, onShared }) => {
-  const { rooms, loadingRooms } = useTeams();
-  const [query, setQuery] = useState('');
+  useModalDismiss(onClose);
+  const { rooms } = useTeams();
   const [targetId, setTargetId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  // 목록이 비어 있을 수 있다 — 공유 모달이 Teams 탭보다 먼저 열릴 수 있으므로
-  // 여기서도 한 번 채운다 (이미 있으면 갱신만 된다).
-  useEffect(() => {
-    if (rooms.length === 0) void teamsStore.loadRooms();
-  }, []);
-
-  const visible = useMemo(() => filterRooms(rooms, query), [rooms, query]);
   const target = useMemo(() => rooms.find((r) => r.id === targetId) ?? null, [rooms, targetId]);
   const preview = useMemo(() => buildSharedMessage(shareRef, body), [shareRef, body]);
 
@@ -99,44 +93,7 @@ export const ShareToTeamsModal: React.FC<{
       <div className="modal teams-share" onClick={(e) => e.stopPropagation()}>
         <h3>{title}</h3>
 
-        <input
-          className="input"
-          autoFocus
-          value={query}
-          placeholder="대화 검색"
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === 'Escape' && onClose()}
-        />
-
-        <div className="teams-user-results tall">
-          {loadingRooms && rooms.length === 0 && <div className="teams-empty sm">불러오는 중…</div>}
-          {!loadingRooms && visible.length === 0 && (
-            <div className="teams-empty sm">
-              {rooms.length === 0
-                ? '참여 중인 대화가 없습니다. Teams 에서 대화를 먼저 만들어 주세요.'
-                : '일치하는 대화가 없습니다.'}
-            </div>
-          )}
-          {visible.map((room) => (
-            <button
-              key={room.id}
-              className={`agent-item ${targetId === room.id ? 'active' : ''}`}
-              onClick={() => setTargetId(room.id)}
-              title={room.description || room.name}
-            >
-              <span className="agent-mark">
-                {room.isDirect ? <ChatIcon size={16} /> : <TeamsIcon size={16} />}
-              </span>
-              <span className="agent-body">
-                <span className="agent-name">{room.name}</span>
-                <span className="agent-meta">
-                  {room.isDirect ? '1:1 대화' : '그룹 대화'}
-                  {room.lastMessageAt ? ` · ${roomTime(room.lastMessageAt)}` : ''}
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
+        <TeamsRoomList selectedId={targetId} onPick={(room) => setTargetId(room.id)} />
 
         <div className="teams-share-preview">
           <span className="label">이 내용이 방에 올라갑니다</span>
@@ -154,7 +111,7 @@ export const ShareToTeamsModal: React.FC<{
           <button className="secondary" onClick={onClose} disabled={busy}>
             취소
           </button>
-          <button onClick={() => void share()} disabled={!target || busy}>
+          <button className="primary" onClick={() => void share()} disabled={!target || busy}>
             {busy ? '공유 중…' : '공유'}
           </button>
         </div>

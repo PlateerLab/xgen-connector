@@ -9,6 +9,7 @@
  * 정하고 (2) 어떤 에이전트를 넣을지 고르는 것뿐이다.
  */
 import React, { useEffect, useState } from 'react';
+import { useModalDismiss } from './use-modal-dismiss';
 import { xgen } from '../bridge';
 import type { LocalSyncStatusLike, WorkspaceStatusLike } from '../../../preload/index';
 import { syncedAgo } from './explorer-model';
@@ -20,6 +21,8 @@ export const SyncSettings: React.FC<{ onClose?: () => void; embedded?: boolean }
   onClose,
   embedded,
 }) => {
+  // 모달로 떠 있을 때만 Esc 로 닫는다 — embedded(탭 안)에서는 닫을 대상이 없다.
+  useModalDismiss(() => onClose?.(), !embedded && !!onClose);
   const [ws, setWs] = useState<WorkspaceStatusLike | null>(null);
   const [root, setRoot] = useState('');
   const [agents, setAgents] = useState<AgentOption[]>([]);

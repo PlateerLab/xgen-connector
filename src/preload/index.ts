@@ -414,6 +414,27 @@ const api = {
       ipcRenderer.invoke(CHANNELS.teamsOpenDm, userId, username),
     leaveRoom: (roomId: string): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.teamsLeaveRoom, roomId),
+    /** 방 이름·설명 수정. 서버는 멤버 전원에게 허용한다. */
+    updateRoom: (
+      roomId: string,
+      patch: { name?: string; description?: string | null },
+    ): Promise<TeamsRoom | null> => ipcRenderer.invoke(CHANNELS.teamsUpdateRoom, roomId, patch),
+    /** 방 삭제 — 방장만 가능(그 외 403). */
+    deleteRoom: (roomId: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.teamsDeleteRoom, roomId),
+    /** 새 메시지 OS 알림 요청. 보고 있지 않고 음소거도 아닐 때만 렌더러가 부른다. */
+    notify: (payload: {
+      roomId: string;
+      roomName: string;
+      sender: string;
+      body: string;
+    }): Promise<boolean> => ipcRenderer.invoke(CHANNELS.teamsNotify, payload),
+    /** 알림 클릭 → 그 방을 열라는 신호. */
+    onNotificationClick: (cb: (roomId: string) => void): (() => void) => {
+      const h = (_e: unknown, roomId: string) => cb(roomId);
+      ipcRenderer.on(CHANNELS.teamsNotificationClick, h);
+      return () => ipcRenderer.removeListener(CHANNELS.teamsNotificationClick, h);
+    },
     members: (roomId: string): Promise<TeamsMember[]> =>
       ipcRenderer.invoke(CHANNELS.teamsMembers, roomId),
     addMember: (roomId: string, userId: number): Promise<boolean> =>

@@ -8,6 +8,7 @@
  * 기본 이름이 기존 이름과 겹치면 "이름 (2)" 식으로 제안한다.
  */
 import React, { useMemo, useState } from 'react';
+import { useModalDismiss } from './use-modal-dismiss';
 import type { AvatarDescriptor } from '../../../core/preferences';
 import { AvatarModel } from '../avatar/Live2DCanvas';
 
@@ -33,6 +34,8 @@ export const AvatarNameModal: React.FC<{
   onConfirm: (name: string) => void;
   onCancel: () => void;
 }> = ({ avatar, serverUrl, mode, existingNames, busy, onConfirm, onCancel }) => {
+  // Esc 로도 닫힌다 (바깥 클릭은 backdrop 이 처리).
+  useModalDismiss(onCancel);
   const initial = useMemo(
     () => (mode === 'add' ? dedupeName(avatar.name, existingNames) : avatar.name),
     [mode, avatar.name, existingNames],
