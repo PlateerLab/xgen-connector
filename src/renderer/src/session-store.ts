@@ -23,6 +23,7 @@
  */
 import type { Agent, ChatEvent, ChatRequest, Citation, ToolEvent } from '../../core/index';
 import { stripBrowserContext } from '../../core/browser';
+import { stripTeamsContext } from '../../core/teams-bridge';
 
 /** One rendered chat message (mirrors the old Chat.Msg shape). */
 export interface ChatMsg {
@@ -253,8 +254,12 @@ export class SessionStore {
       for (const tn of turns) {
         // 최종 방어: text 는 무조건 문자열이어야 렌더가 안전하다 (transport 가
         // 이미 문자열화하지만, 다른 주입 경로가 생겨도 여기서 못 뚫게 한다).
-        const input = stripBrowserContext(
-          typeof tn.input === 'string' ? tn.input : tn.input == null ? '' : String(tn.input),
+        // 봉투는 **두 겹**일 수 있다 — 브라우저 컨텍스트와 Teams 컨텍스트가 같은
+        // 턴에 붙는다. 붙인 순서(teams → browser)의 역순으로 벗긴다.
+        const input = stripTeamsContext(
+          stripBrowserContext(
+            typeof tn.input === 'string' ? tn.input : tn.input == null ? '' : String(tn.input),
+          ),
         );
         const output =
           typeof tn.output === 'string' ? tn.output : tn.output == null ? '' : String(tn.output);

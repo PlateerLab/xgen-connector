@@ -11,6 +11,13 @@ import type {
   ChatEvent,
   ChatRequest,
   CurrentUser,
+  TeamsAttachment,
+  TeamsEvent,
+  TeamsMember,
+  TeamsMessage,
+  TeamsReaction,
+  TeamsRoom,
+  TeamsUser,
   AgentListQuery,
   AgentListResult,
   HistoryTurn,
@@ -384,6 +391,76 @@ const api = {
           ipcRenderer.removeListener(CHANNELS.chatEvent, h);
         },
       };
+    },
+  },
+
+  /** 클립보드 — main 경유. 렌더러 navigator.clipboard 는 조용히 실패할 수 있다. */
+  clipboard: {
+    write: (text: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.clipboardWrite, text),
+  },
+
+  /**
+   * Teams — 사람 사이의 대화.
+   *
+   * 네트워크와 WebSocket 은 전부 메인 프로세스에 있다. 렌더러는 이 표면만 본다:
+   * REST 는 invoke, 실시간은 `onEvent` 구독. 방 탭을 열면 `watch`, 닫으면
+   * `unwatch` 를 불러 방 소켓 수명을 알린다.
+   */
+  teams: {
+    rooms: (): Promise<TeamsRoom[]> => ipcRenderer.invoke(CHANNELS.teamsRooms),
+    createRoom: (name: string, description?: string): Promise<TeamsRoom> =>
+      ipcRenderer.invoke(CHANNELS.teamsCreateRoom, name, description),
+    openDm: (userId: number, username?: string): Promise<TeamsRoom> =>
+      ipcRenderer.invoke(CHANNELS.teamsOpenDm, userId, username),
+    leaveRoom: (roomId: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.teamsLeaveRoom, roomId),
+    members: (roomId: string): Promise<TeamsMember[]> =>
+      ipcRenderer.invoke(CHANNELS.teamsMembers, roomId),
+    addMember: (roomId: string, userId: number): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.teamsAddMember, roomId, userId),
+    searchUsers: (query: string): Promise<TeamsUser[]> =>
+      ipcRenderer.invoke(CHANNELS.teamsSearchUsers, query),
+    /** `before` 를 주면 그보다 과거 메시지를 더 불러온다 (위로 스크롤). */
+    messages: (roomId: string, before?: string): Promise<TeamsMessage[]> =>
+      ipcRenderer.invoke(CHANNELS.teamsMessages, roomId, before),
+    send: (
+      roomId: string,
+      content: string,
+      replyToId?: string,
+      attachments?: TeamsAttachment[],
+    ): Promise<TeamsMessage> =>
+      ipcRenderer.invoke(CHANNELS.teamsSend, roomId, content, replyToId, attachments),
+    edit: (roomId: string, messageId: string, content: string): Promise<TeamsMessage | null> =>
+      ipcRenderer.invoke(CHANNELS.teamsEdit, roomId, messageId, content),
+    react: (roomId: string, messageId: string, emoji: string): Promise<TeamsReaction[]> =>
+      ipcRenderer.invoke(CHANNELS.teamsReact, roomId, messageId, emoji),
+    watch: (roomId: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.teamsWatch, roomId),
+    unwatch: (roomId: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.teamsUnwatch, roomId),
+    typing: (roomId: string, typing: boolean): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.teamsTyping, roomId, typing),
+    /**
+     * 첨부 — 파일 경로는 메인에만 있다. 렌더러는 "고르게 해 달라 / 올려 달라 /
+     * 저장하게 해 달라" 만 말할 수 있고 어떤 경로인지는 알지도, 정하지도 못한다.
+     */
+    pickAndUpload: (roomId: string): Promise<TeamsAttachment[]> =>
+      ipcRenderer.invoke(CHANNELS.teamsUploadAttachment, roomId),
+    /** 가상 드라이브의 파일(에이전트 산출물)을 그대로 방에 올린다. */
+    shareWorkspaceFile: (roomId: string, drivePath: string): Promise<TeamsAttachment> =>
+      ipcRenderer.invoke(CHANNELS.teamsShareWorkspaceFile, roomId, drivePath),
+    /** 다른 이름으로 저장. 사용자가 취소하면 null. */
+    saveAttachment: (roomId: string, attachment: TeamsAttachment): Promise<string | null> =>
+      ipcRenderer.invoke(CHANNELS.teamsSaveAttachment, roomId, attachment),
+    /** 임시 폴더에 풀어 OS 기본 앱으로 연다. */
+    openAttachment: (roomId: string, attachment: TeamsAttachment): Promise<string> =>
+      ipcRenderer.invoke(CHANNELS.teamsOpenAttachment, roomId, attachment),
+    /** 원본 바이트 — 그림 미리보기용 (blob URL 로 감싸 쓴다). */
+    readAttachment: (roomId: string, attachment: TeamsAttachment): Promise<Uint8Array> =>
+      ipcRenderer.invoke(CHANNELS.teamsReadAttachment, roomId, attachment),
+    onEvent: (cb: (event: TeamsEvent) => void): (() => void) => {
+      const h = (_e: unknown, event: TeamsEvent) => cb(event);
+      ipcRenderer.on(CHANNELS.teamsEvent, h);
+      return () => ipcRenderer.removeListener(CHANNELS.teamsEvent, h);
     },
   },
 

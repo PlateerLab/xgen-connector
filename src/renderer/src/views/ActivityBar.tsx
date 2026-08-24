@@ -12,19 +12,30 @@
  */
 import React, { useState } from 'react';
 import { XgenMark } from '../brand/Logo';
-import { BotIcon, ChatIcon, FilesIcon, LogoutIcon, SettingsIcon, AvatarIcon } from '../brand/icons';
+import {
+  BotIcon,
+  ChatIcon,
+  FilesIcon,
+  LogoutIcon,
+  SettingsIcon,
+  AvatarIcon,
+  TeamsIcon,
+} from '../brand/icons';
 
-export type SideView = 'agent' | 'explorer';
+export type SideView = 'agent' | 'explorer' | 'teams';
 
 const VIEWS: Array<{ id: SideView; title: string; icon: React.FC<{ size?: number }> }> = [
   { id: 'agent', title: 'Agent', icon: ChatIcon },
   { id: 'explorer', title: '탐색기', icon: FilesIcon },
+  { id: 'teams', title: 'Teams', icon: TeamsIcon },
 ];
 
 export const ActivityBar: React.FC<{
   view: SideView;
   collapsed: boolean;
   onPressView: (v: SideView) => void;
+  /** Teams 안 읽음 총합 — 0 이면 배지를 그리지 않는다. */
+  teamsUnread: number;
   overlayOn: boolean;
   onToggleOverlay: () => void;
   avatarActive: boolean;
@@ -38,6 +49,7 @@ export const ActivityBar: React.FC<{
   view,
   collapsed,
   onPressView,
+  teamsUnread,
   overlayOn,
   onToggleOverlay,
   avatarActive,
@@ -69,6 +81,11 @@ export const ActivityBar: React.FC<{
             >
               {active && <span className="ab-ind" />}
               <Icon size={22} />
+              {v.id === 'teams' && teamsUnread > 0 && (
+                <span className="ab-badge-dot" aria-label={`안 읽은 메시지 ${teamsUnread}개`}>
+                  {teamsUnread > 99 ? '99+' : teamsUnread}
+                </span>
+              )}
             </button>
           );
         })}

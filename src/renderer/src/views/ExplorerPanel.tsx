@@ -10,6 +10,8 @@
  */
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { xgen } from '../bridge';
+import { teamsAttachmentRejectReason } from '../../../core/index';
+import { ShareToTeamsModal } from './ShareToTeams';
 import type { LocalSyncStatusLike, WorkspaceStatusLike } from '../../../preload/index';
 import {
   childPath,
@@ -28,6 +30,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   RefreshIcon,
+  ShareIcon,
   UploadIcon,
 } from '../brand/icons';
 
@@ -41,7 +44,15 @@ interface DirState {
 const cloudKey = (path: string) => `cloud:${path}`;
 const agentKey = (workflowId: string, rel: string) => `agent:${workflowId}:${rel}`;
 
-export const ExplorerPanel: React.FC<{ onOpenSettings: () => void }> = ({ onOpenSettings }) => {
+export const ExplorerPanel: React.FC<{
+  onOpenSettings: () => void;
+  /** 로그인 사용자 표시 이름 — 파일을 Teams 로 공유할 때 낙관적 렌더에 쓴다. */
+  myName: string;
+}> = ({ onOpenSettings, myName }) => {
+  /** Teams 로 공유하려고 고른 파일의 드라이브 경로. null 이면 모달이 닫혀 있다. */
+  const [sharePath, setSharePath] = useState<{ path: string; name: string; size: number } | null>(
+    null,
+  );
   const [status, setStatus] = useState<WorkspaceStatusLike | null>(null);
   const [sync, setSync] = useState<LocalSyncStatusLike | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -233,6 +244,27 @@ export const ExplorerPanel: React.FC<{ onOpenSettings: () => void }> = ({ onOpen
           </span>
           <span className="tree-name">{e.name}</span>
           {e.size > 0 && <span className="tree-size">{formatSize(e.size)}</span>}
+          {/* 에이전트 산출물을 Teams 방으로 — 탐색기가 [Agent]와 [Teams] 사이의
+              세 번째 문이다. 올릴 수 없는 형식이면 버튼조차 띄우지 않는다.
+
+              **클라우드(가상 드라이브) 섹션에서만** 띄운다. 두 섹션의 rel 은 서로
+              다른 경로 공간이다 — cloud 는 드라이브 루트 기준(공유 IPC 가 받는 값),
+              agent 는 로컬 동기화 폴더 기준(`xgen.sync`)이다. 구분 없이 넘기면
+              엉뚱한 파일을 가리키거나 "워크스페이스 안의 파일만" 오류가 난다.
+              동기화 폴더 파일 공유는 후속 과제. */}
+          {section.kind === 'cloud' && teamsAttachmentRejectReason(e.name, e.size) === null && (
+            <button
+              className="tree-share"
+              title="이 파일을 Teams 대화방에 공유"
+              aria-label="Teams로 공유"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setSharePath({ path: p, name: e.name, size: e.size });
+              }}
+            >
+              <ShareIcon size={12} />
+            </button>
+          )}
         </div>
       );
     });
@@ -396,6 +428,17 @@ export const ExplorerPanel: React.FC<{ onOpenSettings: () => void }> = ({ onOpen
           </div>
         )}
       </div>
+
+      {sharePath && (
+        <ShareToTeamsModal
+          title="파일을 Teams로 공유"
+          body={`${sharePath.name} 파일을 공유합니다.`}
+          myName={myName}
+          shareRef={{ kind: 'file', label: sharePath.name }}
+          file={{ drivePath: sharePath.path, name: sharePath.name, size: sharePath.size }}
+          onClose={() => setSharePath(null)}
+        />
+      )}
 
       <div className="explorer-foot">
         <span className={`mount-dot ${status?.mounted ? 'on' : ''}`} />

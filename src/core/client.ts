@@ -184,8 +184,53 @@ export class HttpClient {
     return { bytes: new Uint8Array(ab), contentType: res.headers.get('content-type') ?? '' };
   }
 
+  /**
+   * GET a raw BINARY response (Teams 첨부 다운로드 등). `postBinary` 의 GET 짝.
+   *
+   * 파일명은 응답 헤더가 아니라 **호출자가 이미 아는 값**을 쓴다 —
+   * Content-Disposition 의 RFC 5987 인코딩을 여기서 되풀이 파싱할 이유가 없고,
+   * 서버도 우리가 쿼리로 넘긴 이름을 그대로 되돌려줄 뿐이다.
+   */
+  async getBinary(
+    path: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<{ bytes: Uint8Array; contentType: string }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 120_000);
+    let res: Response;
+    try {
+      res = await this.fetchImpl(this.url(path), {
+        method: 'GET',
+        headers: this.headers({ Accept: '*/*' }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      if (res.status === 401) this.onAuthFailure?.();
+      const text = await res.text().catch(() => '');
+      throw new ApiError(res.status, `GET ${path} → ${res.status}`, text);
+    }
+    const ab = await res.arrayBuffer();
+    return { bytes: new Uint8Array(ab), contentType: res.headers.get('content-type') ?? '' };
+  }
+
   put<T>(path: string, body?: unknown, opts?: { auth?: boolean; timeoutMs?: number }): Promise<T> {
     return this.json<T>('PUT', path, body, opts);
+  }
+
+  patch<T>(
+    path: string,
+    body?: unknown,
+    opts?: { auth?: boolean; timeoutMs?: number },
+  ): Promise<T> {
+    return this.json<T>('PATCH', path, body, opts);
+  }
+
+  /** `delete` is a reserved word in some call sites — keep the short alias. */
+  del<T>(path: string, opts?: { auth?: boolean; timeoutMs?: number }): Promise<T> {
+    return this.json<T>('DELETE', path, undefined, opts);
   }
 
   /**

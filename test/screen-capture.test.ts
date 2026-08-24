@@ -34,7 +34,10 @@ test('설정 항목이 있고 기본값이 없다(= 꺼짐)', () => {
 });
 
 test('main 이 설정을 다시 확인한다 — 렌더러를 믿지 않는다', () => {
-  const h = MAIN.slice(MAIN.indexOf('CHANNELS.captureScreen'), MAIN.indexOf('CHANNELS.overlayGetLocked'));
+  const h = MAIN.slice(
+    MAIN.indexOf('CHANNELS.captureScreen'),
+    MAIN.indexOf('CHANNELS.overlayGetLocked'),
+  );
   assert.match(h, /if \(!cfg\.screenCapture\)/, '설정이 꺼져 있어도 찍는다');
   assert.match(h, /return \{ ok: false/);
 });
@@ -80,7 +83,10 @@ test('원본 해상도를 그대로 보내지 않는다', () => {
 
 test('비율을 유지한다', () => {
   // thumbnailSize 를 고정값으로 주면 찌그러진 그림이 나온다.
-  const fn = CAPTURE.slice(CAPTURE.indexOf('function fit('), CAPTURE.indexOf('export async function captureScreen'));
+  const fn = CAPTURE.slice(
+    CAPTURE.indexOf('function fit('),
+    CAPTURE.indexOf('export async function captureScreen'),
+  );
   assert.match(fn, /MAX_EDGE \/ longest/);
   assert.match(fn, /width \* k/);
   assert.match(fn, /height \* k/);
@@ -93,19 +99,41 @@ test('디스플레이 배율을 반영한다', () => {
 
 // ── 4. 보낼 때 붙고, 붙은 것이 보인다 ─────────────────────────────────
 
+// 캡처는 `send` 가 아니라 `dispatch` 안에 있다. Teams 문맥 확인창이 생기면서
+// send 는 "물어볼 것이 있으면 멈추는" 관문이 되었고, **실제 전송 직전**의 자리가
+// dispatch 로 내려갔기 때문이다. 지키려는 것은 그대로다: 확인이 끝나고 진짜로
+// 보내는 그 순간에 찍고, 못 찍어도 질문은 나간다.
+const DISPATCH = CHAT.slice(
+  CHAT.indexOf('const dispatch = useCallback'),
+  CHAT.indexOf('sessionStore.send(session.key'),
+);
+
 test('전송 직전에 찍는다', () => {
   // 주기적으로 올리지 않는다 — 사용자가 언제 무엇이 나갔는지 알아야 한다.
-  const send = CHAT.slice(CHAT.indexOf('const send = useCallback'), CHAT.indexOf('sessionStore.send(session.key'));
-  assert.match(send, /if \(screenCaptureOn\)/);
-  assert.match(send, /await xgen\.capture\.screen\(\)/);
+  assert.ok(DISPATCH.length > 0, 'dispatch 를 찾지 못했다');
+  assert.match(DISPATCH, /if \(screenCaptureOn\)/);
+  assert.match(DISPATCH, /await xgen\.capture\.screen\(\)/);
 });
 
 test('캡처 실패가 대화를 막지 않는다', () => {
   // 캡처는 덤이다. 못 찍었다고 사용자의 질문이 사라지면 그게 더 나쁘다.
   // 실패해도 setCaptureNotice 로 알릴 뿐 return 하지 않고 sessionStore.send 로 이어진다.
-  const send = CHAT.slice(CHAT.indexOf('const send = useCallback'), CHAT.indexOf('sessionStore.send(session.key'));
-  assert.match(send, /setCaptureNotice/, '실패를 알리지 않는다');
-  assert.ok(!/\breturn;/.test(send.slice(send.indexOf('if (screenCaptureOn)'))), '캡처 실패 시 전송을 중단한다');
+  assert.match(DISPATCH, /setCaptureNotice/, '실패를 알리지 않는다');
+  assert.ok(
+    !/\breturn;/.test(DISPATCH.slice(DISPATCH.indexOf('if (screenCaptureOn)'))),
+    '캡처 실패 시 전송을 중단한다',
+  );
+});
+
+test('화면 캡처는 Teams 문맥 확인이 끝난 뒤에 찍는다', () => {
+  // 확인창에서 취소할 수 있는데 먼저 찍으면, 보내지도 않은 화면을 캡처한 셈이 된다.
+  // send 는 멈출 수 있는 관문이고, dispatch 가 실제 전송이어야 한다.
+  const gate = CHAT.slice(
+    CHAT.indexOf('const send = useCallback'),
+    CHAT.indexOf('const confirmContext'),
+  );
+  assert.ok(!/xgen\.capture\.screen/.test(gate), 'send 단계에서 미리 찍는다');
+  assert.match(gate, /setCtxConfirm/, '확인 없이 바로 보낸다');
 });
 
 test('백엔드가 받는 멀티모달 형식으로 보낸다', () => {

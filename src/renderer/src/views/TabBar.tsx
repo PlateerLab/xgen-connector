@@ -7,11 +7,13 @@ import {
   CloseIcon,
   PlusIcon,
   SettingsIcon,
+  TeamsIcon,
 } from '../brand/icons';
 import type { WorkspaceGroup, WorkspaceTab } from './workspace-layout';
 
 function label(tab: WorkspaceTab, sessions: Map<string, SessionState>): string {
   if (tab.kind === 'avatar') return '아바타 설정';
+  if (tab.kind === 'teams') return tab.roomName || '대화';
   if (tab.kind === 'settings') return '설정';
   if (tab.kind === 'browser') return `${tab.workflowName || 'Agent'} 브라우저`;
   return sessions.get(tab.sessionKey ?? '')?.agent.workflowName || tab.workflowName || '대화';
@@ -47,6 +49,8 @@ export const TabBar: React.FC<{
             <span className="tab-icon">
               {tab.kind === 'chat' ? (
                 <ChatIcon size={13} />
+              ) : tab.kind === 'teams' ? (
+                <TeamsIcon size={13} />
               ) : tab.kind === 'browser' ? (
                 <BrowserIcon size={13} />
               ) : tab.kind === 'settings' ? (

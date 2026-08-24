@@ -38,7 +38,15 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, sep } from 'node:path';
-import { XgenClient, type ChatEvent, type ChatRequest, type TtsSpeakOptions } from '../core/index';
+import {
+  XgenClient,
+  TEAMS_ATTACHMENT_EXTENSIONS,
+  teamsAttachmentRejectReason,
+  type ChatEvent,
+  type ChatRequest,
+  type TeamsAttachment,
+  type TtsSpeakOptions,
+} from '../core/index';
 import {
   loadConfig,
   saveConfig,
@@ -126,6 +134,13 @@ import { getBrowserRuntime } from './browser-runtime';
 import { getBrowserToolProvider } from './browser-tools';
 import { allowedBrowserUrl } from './browser-security';
 import { systemMetricsSampler } from './system-metrics';
+import { TeamsSocketHub } from './teams-ws';
+import {
+  openAttachmentTemp,
+  pickFilesToAttach,
+  readFileForUpload,
+  saveAttachmentAs,
+} from './teams-files';
 
 const IS_LINUX = process.platform === 'linux';
 
@@ -1299,6 +1314,38 @@ async function refreshAuthToken(): Promise<string | null> {
   const fallback = (await tokenStore.getRefresh()) ?? undefined;
   return c.ensureFreshAuth(fallback);
 }
+/**
+ * Teams 실시간 소켓 허브 — 로그인 동안 사용자 소켓 1개 + 열린 방 소켓 N개.
+ *
+ * 토큰은 항상 **라이브 값**을 집는다(liveAccessToken). keychain 만 읽으면 세션
+ * 중 회전 시점과 기록 사이의 틈에서 폐기된 토큰을 잡아 403 에 갇힌다 — MCP
+ * 브릿지·워크스페이스 동기화가 같은 이유로 같은 규칙을 쓴다.
+ */
+const teamsHub = new TeamsSocketHub();
+let teamsHubConfigured = false;
+
+/** 로그인/로그아웃/서버변경 후 Teams 소켓을 현재 상태에 맞춘다. */
+function syncTeams(): void {
+  const cfg = loadConfig();
+  if (!teamsHubConfigured) {
+    teamsHubConfigured = true;
+    teamsHub.configure({
+      baseUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+      token: async () => (await liveAccessToken()) || '',
+      refreshAuth: refreshAuthToken,
+      allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
+      emit: (event) => safeSend(mainWindow, CHANNELS.teamsEvent, event),
+    });
+  }
+  if (currentUserId() && normalizeServerUrl(cfg.serverUrl)) {
+    teamsHub.startUserSocket();
+  } else {
+    // 로그아웃/서버 미설정 — 방 소켓까지 전부 접는다. 다른 계정의 방을
+    // 물고 있는 상태가 남으면 안 된다.
+    teamsHub.stopAll();
+  }
+}
+
 /** Reconcile MCP manager + bridge with config + login state. */
 function syncMcp(): void {
   const cfg = loadConfig();
@@ -1413,6 +1460,10 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     normalizeServerUrl(patch.serverUrl) !== prevServer;
   if (serverChanged) {
     getMcpBridge().stop();
+    // Teams 소켓도 함께 접는다. 빠뜨리면 구 서버 주소를 문 재연결 루프가 남아
+    // 폐기된 토큰으로 최대 60초 백오프까지 영원히 재시도한다 (로그아웃 경로에는
+    // 있는데 여기만 없어서 생기던 누수).
+    teamsHub.stopAll();
     await getBrowserRuntime().closeAll();
     getBrowserRuntime().configure({ enabled: false });
     void client?.logout().catch(() => undefined); // 구 서버 세션 무효화 (rebind 전 호출)
@@ -1470,6 +1521,7 @@ async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   const persisted = await tokenStore.setAccess(c.getAccessTokenAfterRotation());
   if (refreshToken) await tokenStore.setRefresh(refreshToken);
   syncMcp();
+  syncTeams();
   safeSend(overlayWindow, CHANNELS.avatarRefresh); // client is now authed → overlay can load the avatar
   // 가상 드라이브는 **로그인 상태에서만** 존재한다. 기동 시점의 리컨사일은
   // 아직 로그인 전이라 아무것도 붙이지 않으므로, 로그인이 끝난 지금 다시
@@ -1658,6 +1710,7 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
     // 워크스페이스 리컨사일이 빠져 **재시작할 때마다 드라이브가 안 붙었다**.
     // 갈래가 둘이면 한쪽만 갱신되는 날이 온다 — 한 곳으로 모은다.
     syncMcp();
+    syncTeams();
     safeSend(overlayWindow, CHANNELS.avatarRefresh); // session restored → overlay can load the avatar
     void getWorkspaceManager()?.reconcile();
     return { user: c.user };
@@ -1672,6 +1725,7 @@ ipcMain.handle(CHANNELS.authRestore, async () => {
 
 ipcMain.handle(CHANNELS.authLogout, async () => {
   getMcpBridge().stop();
+  teamsHub.stopAll();
   await getBrowserRuntime().closeAll();
   getBrowserRuntime().configure({ enabled: false });
   if (client) await client.logout();
@@ -1775,6 +1829,133 @@ ipcMain.handle(
     getClient().history.turns(workflowId, interactionId, name),
 );
 ipcMain.handle(CHANNELS.historyConversations, () => getClient().history.conversations());
+
+// ── IPC: Teams (사람 사이의 대화) ────────────────────────────────
+// REST 는 전부 core 의 TeamsApi 에 위임한다 — 이 파일에는 매핑 로직이 없다.
+// 실시간은 teamsHub 가 CHANNELS.teamsEvent 로 렌더러에 밀어 준다.
+ipcMain.handle(CHANNELS.teamsRooms, () => getClient().teams.listRooms());
+ipcMain.handle(CHANNELS.teamsCreateRoom, (_e, name: string, description?: string) =>
+  // 커넥터가 만드는 방은 항상 '사람끼리만' 모드로 시작한다. 에이전트를 붙이는
+  // 것은 후속 단계이고, 그때는 방 설정에서 모드를 올린다 (서버가 이미 지원).
+  getClient().teams.createRoom({ name, description, routerMode: 'chat' }),
+);
+ipcMain.handle(CHANNELS.teamsOpenDm, (_e, userId: number, username?: string) =>
+  getClient().teams.openDirectMessage(userId, username),
+);
+ipcMain.handle(CHANNELS.teamsLeaveRoom, async (_e, roomId: string) => {
+  await getClient().teams.leaveRoom(roomId);
+  // 나간 방의 소켓을 그대로 두면 서버가 거절할 때까지 재연결을 시도한다.
+  teamsHub.closeRoom(roomId);
+  return true;
+});
+ipcMain.handle(CHANNELS.teamsMembers, (_e, roomId: string) =>
+  getClient().teams.listMembers(roomId),
+);
+ipcMain.handle(CHANNELS.teamsAddMember, async (_e, roomId: string, userId: number) => {
+  await getClient().teams.addMember(roomId, userId);
+  return true;
+});
+ipcMain.handle(CHANNELS.teamsSearchUsers, (_e, query: string) =>
+  getClient().teams.searchUsers(query),
+);
+ipcMain.handle(CHANNELS.teamsMessages, (_e, roomId: string, before?: string) =>
+  getClient().teams.listMessages(roomId, { before }),
+);
+ipcMain.handle(
+  CHANNELS.teamsSend,
+  (_e, roomId: string, content: string, replyToId?: string, attachments?: TeamsAttachment[]) =>
+    getClient().teams.sendMessage(roomId, content, { replyToId, attachments }),
+);
+ipcMain.handle(CHANNELS.teamsEdit, (_e, roomId: string, messageId: string, content: string) =>
+  getClient().teams.editMessage(roomId, messageId, content),
+);
+ipcMain.handle(CHANNELS.teamsReact, (_e, roomId: string, messageId: string, emoji: string) =>
+  getClient().teams.toggleReaction(roomId, messageId, emoji),
+);
+ipcMain.handle(CHANNELS.teamsWatch, (_e, roomId: string) => {
+  teamsHub.openRoom(roomId);
+  return true;
+});
+ipcMain.handle(CHANNELS.teamsUnwatch, (_e, roomId: string) => {
+  teamsHub.closeRoom(roomId);
+  return true;
+});
+ipcMain.handle(CHANNELS.teamsTyping, (_e, roomId: string, typing: boolean) => {
+  teamsHub.sendTyping(roomId, typing);
+  return true;
+});
+
+ipcMain.handle(CHANNELS.clipboardWrite, (_e, text: unknown) => {
+  const value = typeof text === 'string' ? text : String(text ?? '');
+  if (!value) return false;
+  clipboard.writeText(value);
+  return true;
+});
+
+// ── IPC: Teams 첨부 ──────────────────────────────────────────────
+// 파일 경로는 **메인에만** 존재한다. 렌더러는 "고르기 → 올리기" 를 시킬 수만
+// 있고, 어떤 경로를 읽고 쓸지는 정하지 못한다.
+
+/** 사용자가 고른 로컬 파일들을 방에 올린다. 취소하면 빈 배열. */
+ipcMain.handle(CHANNELS.teamsUploadAttachment, async (_e, roomId: string) => {
+  const paths = await pickFilesToAttach(mainWindow, [...TEAMS_ATTACHMENT_EXTENSIONS]);
+  // **전부 먼저 검사한다.** 하나씩 올리다 중간에서 멈추면 앞의 파일은 이미 서버에
+  // 올라갔는데 호출자는 오류만 받아, 올라간 파일을 알 수도 지울 수도 없게 된다
+  // (서버에 첨부 삭제 API 가 없다).
+  const files = [];
+  for (const path of paths) {
+    const file = await readFileForUpload(path);
+    const reason = teamsAttachmentRejectReason(file.filename, file.bytes.byteLength);
+    if (reason) throw new Error(reason);
+    files.push(file);
+  }
+  const uploaded: TeamsAttachment[] = [];
+  for (const file of files) {
+    uploaded.push(await getClient().teams.uploadAttachment(roomId, file.bytes, file.filename));
+  }
+  return uploaded;
+});
+
+/**
+ * 워크스페이스(가상 드라이브)의 파일을 그대로 방에 올린다 — 에이전트 산출물 공유.
+ *
+ * 렌더러는 **드라이브 상대 경로**(`/에이전트/…`)만 넘긴다. 절대 경로를 받아
+ * "안에 있는지" 검사하는 방식은 심볼릭 링크·대소문자·UNC 로 뚫린다. 탐색기의
+ * `workspaceOpenPath` 와 같은 규칙을 그대로 쓴다: 검증된 상대 경로를 마운트
+ * 루트에 붙이는 것만 허용한다.
+ */
+ipcMain.handle(CHANNELS.teamsShareWorkspaceFile, async (_e, roomId: string, path: unknown) => {
+  const root = getWorkspaceManager()?.status()?.path;
+  const rel = safeDrivePath(path);
+  if (!root || !rel) throw new Error('워크스페이스 안의 파일만 공유할 수 있습니다.');
+  const target = join(root, ...rel.split('/').filter(Boolean));
+  const file = await readFileForUpload(target);
+  const reason = teamsAttachmentRejectReason(file.filename, file.bytes.byteLength);
+  if (reason) throw new Error(reason);
+  return getClient().teams.uploadAttachment(roomId, file.bytes, file.filename);
+});
+
+ipcMain.handle(CHANNELS.teamsSaveAttachment, async (_e, roomId: string, att: TeamsAttachment) => {
+  const bytes = await getClient().teams.downloadAttachment(roomId, att);
+  return saveAttachmentAs(mainWindow, att.filename, bytes);
+});
+
+/**
+ * 그림 미리보기용 원본 바이트.
+ *
+ * `<img src>` 에 서버 주소를 그대로 박을 수 없어서 이 통로가 필요하다: 렌더러가
+ * 보내는 요청에는 Authorization 헤더가 실리지 않아 401 이 되고, 토큰을 쿼리에
+ * 실으면 그 URL 이 캐시·로그에 남는다. 바이트를 건네주면 렌더러는 blob URL 만
+ * 만들면 된다.
+ */
+ipcMain.handle(CHANNELS.teamsReadAttachment, async (_e, roomId: string, att: TeamsAttachment) =>
+  getClient().teams.downloadAttachment(roomId, att),
+);
+
+ipcMain.handle(CHANNELS.teamsOpenAttachment, async (_e, roomId: string, att: TeamsAttachment) => {
+  const bytes = await getClient().teams.downloadAttachment(roomId, att);
+  return openAttachmentTemp(att.filename, att.storageKey, bytes);
+});
 
 // ── IPC: chat streaming ──────────────────────────────────────────
 // The renderer starts a stream with a client-generated streamId; each ChatEvent
@@ -2574,10 +2755,10 @@ function getLocalConverger(): LocalRuntimeConverger {
 /** 런타임 wheel 교체 후 — ensurer 캐시 무효화(버전·스모크 재확인) + 사이드카를 유휴 시점에 내린다. */
 function onLocalRuntimeUpgraded(info: { from?: string; to?: string }): void {
   const log = (m: string) =>
-    void import('./diag-log')
-      .then(({ diag }) => diag('local-exec', m))
-      .catch(() => {});
-  log(`runtime upgraded ${info.from ?? '?'}→${info.to ?? '?'} — ensurer 캐시 무효화·사이드카 재기동 예약`);
+    void import('./diag-log').then(({ diag }) => diag('local-exec', m)).catch(() => {});
+  log(
+    `runtime upgraded ${info.from ?? '?'}→${info.to ?? '?'} — ensurer 캐시 무효화·사이드카 재기동 예약`,
+  );
   const e = getLocalEnsurer();
   e.invalidate();
   void e.resolveActive().catch(() => undefined);

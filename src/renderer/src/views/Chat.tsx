@@ -15,6 +15,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import { sessionStore } from '../session';
+import { CONTEXT_LIMIT_CHOICES, teamsContextStore, useContextChip } from '../teams-context';
+import { ShareToTeamsModal } from './ShareToTeams';
 import type { SessionState } from '../session-store';
 import type { ToolEvent, Citation, VoiceConfig } from '../../../core/index';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
@@ -27,14 +29,17 @@ import { XgenMark } from '../brand/Logo';
 import {
   ChatIcon,
   CloseIcon,
+  CopyIcon,
   DocIcon,
   MicIcon,
   MonitorIcon,
   PlusIcon,
   SendIcon,
+  ShareIcon,
   SpeakerIcon,
   SpeakerOffIcon,
   StopIcon,
+  TeamsIcon,
 } from '../brand/icons';
 
 /** 도구 활동 표시 — **한 번에 하나**만 보여주고 다음 것으로 스르륵 교체된다.
@@ -162,8 +167,10 @@ const AGENT_KIND: Record<string, string> = { canvas: 'Canvas', harness: 'Harness
 
 export const Chat: React.FC<{
   session: SessionState;
+  /** 로그인 사용자 표시 이름 — Teams 로 공유할 때 낙관적 렌더에 쓴다. */
+  myName: string;
   mcpDebug?: boolean;
-}> = ({ session, mcpDebug = false }) => {
+}> = ({ session, myName, mcpDebug = false }) => {
   const { agent } = session;
   const messages = session.messages;
   const streaming = session.streaming;
@@ -176,6 +183,16 @@ export const Chat: React.FC<{
   const [captureNotice, setCaptureNotice] = useState('');
   // 전체 도구 로그 — 흐름에는 하나씩 지나가게 두고, 필요할 때 여기서 펼친다.
   const [logFor, setLogFor] = useState<ToolEvent[] | null>(null);
+  // Teams 문맥 — 칩이 붙은 채 처음 보낼 때 확인창을 띄우고, 확인될 때까지
+  // 사용자가 친 문장을 여기에 들고 있는다 (입력창은 이미 비워졌으므로).
+  const [ctxConfirm, setCtxConfirm] = useState<{
+    text: string;
+    count: number;
+    roomName: string;
+  } | null>(null);
+  // 이 답변을 Teams 로 공유하는 중 — 본문을 들고 모달을 띄운다.
+  const [shareBody, setShareBody] = useState<string | null>(null);
+  const [copiedAt, setCopiedAt] = useState(-1);
   const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
   const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
   const [mcpLogsOpen, setMcpLogsOpen] = useState(false);
@@ -376,17 +393,17 @@ export const Chat: React.FC<{
     return () => clearTimeout(t);
   }, [captureNotice]);
 
-  const send = useCallback(
-    async (override?: string) => {
-      const text = (override ?? input).trim();
-      if (!text || streaming) return;
-      if (override === undefined) setInput('');
+  const chip = useContextChip(session.key);
 
-      // 화면 캡처가 켜져 있으면 **보내기 직전** 한 장 찍는다. 주기적으로 올리지
-      // 않는 이유: 사용자가 언제 무엇이 나갔는지 알 수 있어야 한다.
-      //
-      // 실패해도 대화를 막지 않는다 — 캡처는 덤이고, 못 찍었다고 사용자의 질문이
-      // 사라지면 그게 더 나쁘다. 대신 **조용히 넘어가지 않고** 이유를 남긴다.
+  /**
+   * 실제 전송 — 확인이 끝난 뒤에만 불린다.
+   *
+   * 봉투는 **여기서, 매 턴** 준비한다. 한 번 만들어 두고 재사용하면 방금 오간
+   * 말을 못 본 채 답하게 된다. 준비에 실패해도 전송은 막지 않는다 — 문맥은
+   * 덤이고, 그것 때문에 사용자의 질문이 사라지면 그게 더 나쁘다.
+   */
+  const dispatch = useCallback(
+    async (text: string) => {
       let shot: { dataUrl?: string; sourceName?: string; width?: number; height?: number } | null =
         null;
       if (screenCaptureOn) {
@@ -398,13 +415,59 @@ export const Chat: React.FC<{
           setCaptureNotice(e instanceof Error ? e.message : '화면을 캡처하지 못했습니다');
         }
       }
-
+      try {
+        await teamsContextStore.prepare(session.key);
+      } catch {
+        /* 문맥을 못 실었어도 질문은 보낸다 */
+      }
       // 전송·스트림 수명은 스토어가 소유한다 — 이 뷰가 언마운트돼도(세션 전환)
       // 답변은 백그라운드에서 계속 도착한다.
       sessionStore.send(session.key, text, shot);
     },
-    [input, streaming, session.key, screenCaptureOn],
+    [session.key, screenCaptureOn],
   );
+
+  const send = useCallback(
+    async (override?: string) => {
+      const text = (override ?? input).trim();
+      if (!text || streaming) return;
+      if (override === undefined) setInput('');
+
+      // Teams 문맥이 붙어 있는데 아직 승인 전이면 **먼저 묻는다**. 남이 쓴 글이
+      // 에이전트로 나가는 것이므로, 몇 건이 나가는지 보여 주고 동의를 받는다.
+      // 같은 (세션·방·범위) 조합은 다시 묻지 않는다.
+      const pendingChip = teamsContextStore.chipFor(session.key);
+      if (pendingChip && !pendingChip.approved) {
+        const count = await teamsContextStore.ensureLoaded(session.key);
+        if (count > 0) {
+          // 방 이름까지 들고 간다 — 확인창을 칩 상태에 매달아 두면, 그 사이
+          // 칩이 사라질 때 붙잡아 둔 사용자의 문장까지 함께 증발한다.
+          setCtxConfirm({ text, count, roomName: pendingChip.roomName });
+          return;
+        }
+        // 실을 게 없으면 물을 것도 없다 — 그냥 보낸다.
+      }
+      await dispatch(text);
+    },
+    [input, streaming, session.key, dispatch],
+  );
+
+  /** 확인창의 [보내기] — 승인 기록을 남기고 그대로 이어서 보낸다. */
+  const confirmContext = useCallback(async () => {
+    const held = ctxConfirm;
+    if (!held) return;
+    teamsContextStore.approve(session.key);
+    setCtxConfirm(null);
+    await dispatch(held.text);
+  }, [ctxConfirm, session.key, dispatch]);
+
+  /** 확인창의 [취소] — 사용자가 친 문장을 입력창에 그대로 돌려준다. */
+  const cancelContext = useCallback(() => {
+    setCtxConfirm((held) => {
+      if (held) setInput((current) => current || held.text);
+      return null;
+    });
+  }, []);
 
   const stop = useCallback(() => {
     // 사용자가 멈추면 소리도 멈춘다 — 아직 안 읽은 문장을 마저 읽지 않는다.
@@ -758,6 +821,27 @@ export const Chat: React.FC<{
                     <span>화면 첨부 · {m.screenshot.sourceName}</span>
                   </div>
                 )}
+                {/* 답변에 딸린 행동. **끝난 뒤에만** 보인다 — 스트리밍 중에
+                    공유하면 잘린 글이 방에 남고, 방에는 삭제가 없다.
+                    복사는 main 의 clipboard 를 쓴다: 렌더러 navigator.clipboard 는
+                    Electron 에서 권한/보안 컨텍스트 때문에 조용히 실패할 수 있다. */}
+                {m.role === 'assistant' && !m.streaming && !!m.text && !m.error && (
+                  <div className="msg-actions">
+                    <button
+                      onClick={() => {
+                        void xgen.clipboard.write(m.text);
+                        setCopiedAt(i);
+                        window.setTimeout(() => setCopiedAt((at) => (at === i ? -1 : at)), 1200);
+                      }}
+                      title="답변 복사"
+                    >
+                      <CopyIcon size={13} /> {copiedAt === i ? '복사됨' : '복사'}
+                    </button>
+                    <button onClick={() => setShareBody(m.text)} title="이 답변을 Teams 방에 공유">
+                      <ShareIcon size={13} /> Teams로 공유
+                    </button>
+                  </div>
+                )}
                 {/* 전체 도구 로그 — 흐름의 도구 칩은 하나씩 지나가므로,
                     무엇이 있었는지 되짚으려면 펼칠 곳이 필요하다. 답변이
                     끝난 뒤에만 보인다 (진행 중에는 아직 늘어난다). */}
@@ -797,6 +881,54 @@ export const Chat: React.FC<{
           <div className="voice-error small" title={captureNotice}>
             화면을 첨부하지 못했습니다: {captureNotice}
           </div>
+        )}
+        {/* Teams 문맥 칩 — 켜져 있다는 사실이 **항상** 보여야 한다. 화면 캡처
+            토글과 같은 원칙이다: 켜 둔 것을 잊고 남의 대화를 흘려보내는 것이
+            이 기능의 유일한 위험이다. */}
+        {chip ? (
+          <div className="teams-ctx" role="status">
+            <TeamsIcon size={13} />
+            <span className="teams-ctx-name" title={chip.roomName}>
+              {chip.roomName}
+            </span>
+            <span className="teams-ctx-sep">·</span>
+            <label className="teams-ctx-range">
+              최근
+              <select
+                value={chip.limit}
+                onChange={(e) => teamsContextStore.setLimit(session.key, Number(e.target.value))}
+                aria-label="함께 보낼 대화 범위"
+              >
+                {CONTEXT_LIMIT_CHOICES.map((n) => (
+                  <option key={n} value={n}>
+                    {n}건
+                  </option>
+                ))}
+              </select>
+            </label>
+            {chip.available > 0 && chip.available < chip.limit && (
+              <span className="teams-ctx-actual">(실제 {chip.available}건)</span>
+            )}
+            <span className="teams-ctx-note">이 대화가 에이전트에게 함께 전달됩니다</span>
+            <button
+              className="teams-ctx-off"
+              onClick={() => teamsContextStore.dismiss(session.key)}
+              title="이 대화에서 Teams 문맥 끄기"
+              aria-label="Teams 문맥 끄기"
+            >
+              <CloseIcon size={12} />
+            </button>
+          </div>
+        ) : (
+          teamsContextStore.canAttach(session.key) && (
+            <button
+              className="teams-ctx-add"
+              onClick={() => teamsContextStore.restore(session.key)}
+              title="최근에 본 Teams 대화를 문맥으로 붙입니다"
+            >
+              <TeamsIcon size={12} /> Teams 문맥 붙이기
+            </button>
+          )
         )}
         <div className="composer">
           <textarea
@@ -864,6 +996,44 @@ export const Chat: React.FC<{
           </span>
         </div>
       </div>
+
+      {/* 남이 쓴 글이 에이전트로 나가기 전 마지막 확인. 건수를 **정확히** 적는다 —
+          "대화 내용" 같은 뭉뚱그린 표현은 동의를 받은 것이 아니다. */}
+      {ctxConfirm && (
+        <div className="modal-backdrop" onClick={cancelContext}>
+          <div className="modal teams-ctx-confirm" onClick={(e) => e.stopPropagation()}>
+            <h3>Teams 대화를 함께 보냅니다</h3>
+            <p className="teams-ctx-confirm-lead">
+              <strong>{ctxConfirm.roomName}</strong> 의 메시지 <strong>{ctxConfirm.count}건</strong>{' '}
+              이<strong> {agent.workflowName}</strong> 에이전트로 전송됩니다.
+            </p>
+            <p className="teams-ctx-confirm-sub">
+              다른 사람이 쓴 글이 포함됩니다. 이 대화에서 같은 방·같은 범위로 보낼 때는 다시 묻지
+              않습니다.
+            </p>
+            <div className="modal-actions">
+              <button className="secondary" onClick={cancelContext}>
+                취소
+              </button>
+              <button onClick={() => void confirmContext()}>보내기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shareBody !== null && (
+        <ShareToTeamsModal
+          body={shareBody}
+          myName={myName}
+          shareRef={{
+            kind: 'agent',
+            label: agent.workflowName,
+            workflowId: agent.workflowId,
+            interactionId: session.interactionId,
+          }}
+          onClose={() => setShareBody(null)}
+        />
+      )}
     </div>
   );
 };

@@ -1,6 +1,6 @@
 /** Pure, persistence-safe model for the two-group workspace. */
 
-export type WorkspaceTabKind = 'chat' | 'browser' | 'avatar' | 'settings';
+export type WorkspaceTabKind = 'chat' | 'browser' | 'avatar' | 'teams' | 'settings';
 export type SplitDirection = 'horizontal' | 'vertical';
 export type DropEdge = 'center' | 'left' | 'right' | 'top' | 'bottom';
 
@@ -10,6 +10,9 @@ export interface WorkspaceTab {
   sessionKey?: string;
   workflowId?: string;
   workflowName?: string;
+  /** kind==='teams' 일 때의 방 id / 표시 이름. */
+  roomId?: string;
+  roomName?: string;
 }
 
 export interface WorkspaceGroup {
@@ -47,7 +50,7 @@ function cleanTab(raw: unknown): WorkspaceTab | null {
   const tab = raw as Partial<WorkspaceTab>;
   if (
     typeof tab.id !== 'string' ||
-    !['chat', 'browser', 'avatar', 'settings'].includes(String(tab.kind))
+    !['chat', 'browser', 'avatar', 'teams', 'settings'].includes(String(tab.kind))
   ) {
     return null;
   }
@@ -57,6 +60,8 @@ function cleanTab(raw: unknown): WorkspaceTab | null {
     sessionKey: typeof tab.sessionKey === 'string' ? tab.sessionKey : undefined,
     workflowId: typeof tab.workflowId === 'string' ? tab.workflowId : undefined,
     workflowName: typeof tab.workflowName === 'string' ? tab.workflowName : undefined,
+    roomId: typeof tab.roomId === 'string' ? tab.roomId : undefined,
+    roomName: typeof tab.roomName === 'string' ? tab.roomName : undefined,
   };
 }
 
