@@ -33,6 +33,9 @@ function toRequestBody(req: ChatRequest): Record<string, unknown> {
     // 보내지 않으므로, 같은 사용자가 커넥터를 켜 둔 상태로 웹에서 대화해도
     // 로컬 도구는 절대 작동하지 않는다.
     client_surface: 'connector',
+    // 실행 환경 지시 — 로컬 실행 v2 폴백 턴은 'sandbox'(서버 sandbox 강제; 커넥터
+    // 로컬 워크스페이스를 원격 조작하는 중간 형태를 쓰지 않는다). 없으면 생략(auto).
+    ...(req.executionTarget ? { execution_target: req.executionTarget } : {}),
   };
 }
 
@@ -77,7 +80,10 @@ export function frameToChatEvent(
       return d ? { kind: 'tool', event: mapToolEvent(d) } : null;
     case 'node_status':
       return d
-        ? { kind: 'node_status', event: { nodeId: String(d.node_id ?? ''), status: String(d.status ?? ''), ...d } }
+        ? {
+            kind: 'node_status',
+            event: { nodeId: String(d.node_id ?? ''), status: String(d.status ?? ''), ...d },
+          }
         : null;
     case 'log':
       return { kind: 'log', data: d ?? rawData };

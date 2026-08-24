@@ -23,6 +23,20 @@ afterPack: build/afterPack.cjs
 files:
   - out/**
   - package.json
+# 에이전트 로컬 실행 런타임 — **앱에 내장**한다. scripts/bundle-python-sidecar.mjs
+# 가 prepackage 로 resources/python-sidecar/(이식형 CPython + xgen-agent-runtime,
+# 사이드카 포함)를 조립하고, 여기서 앱 resources/python 으로 복사한다.
+# resolveSidecarCommand 의 packaged 경로(<resources>/python/bin/python3 |
+# python\python.exe)와 정렬. 커넥터는 그 자체로 로컬 실행 환경을 갖춘다 —
+# 설정의 설치 버튼은 이후 업데이트/복구(userData 오버라이드)용이다.
+# ⚠ from 은 **python-sidecar/python** (안쪽 트리). electron-builder 는 from 디렉터리의
+# *내용물*을 to 로 복사하므로 from 을 python-sidecar 로 주면
+# resources/python/python/python.exe 로 한 단계 더 깊게 들어가 앱·인스톨러가 런타임을
+# 영영 못 찾는다 (v1.62~1.66 실기 "런타임 없음"의 진짜 원인 — 설치본 포렌식으로 확인).
+extraResources:
+  - from: resources/python-sidecar/python
+    to: python
+    filter: ['**/*']
 # Native .node addons (keytar) must be unpacked from the asar or they fail to
 # load at runtime ("cannot find module .node").
 asarUnpack:
@@ -95,6 +109,10 @@ win:
     - nsis
   artifactName: XGEN-Connector-Setup-${version}.${ext}
 nsis:
+  # 통합 데이터 폴더 선택 페이지(build/installer.nsh)를 보이려면 assisted 설치가
+  # 필요하다 — one-click 은 커스텀 페이지를 건너뛴다.
+  oneClick: false
+  allowToChangeInstallationDirectory: true
   # NSIS auto-selects installer UI language by OS locale among these.
   installerLanguages:
     - en_US

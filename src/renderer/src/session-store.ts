@@ -35,6 +35,10 @@ export interface ChatMsg {
   error?: boolean;
   /** 이 메시지와 함께 보낸 화면 캡처 — 무엇을 찍었는지(창 이름). */
   screenshot?: { sourceName: string; width: number; height: number };
+  /** 이 턴의 실행 환경(커넥터 전용 status 이벤트) — 이 PC / 서버 sandbox / 차단(blocked). */
+  surface?: 'connector_local' | 'server_sandbox' | 'blocked';
+  /** 서버 폴백 사유·차단 사유·로컬 안내(동기화 미완료 등) — 있으면 배지 옆에 표시. */
+  surfaceNote?: string;
 }
 
 /** Public, immutable-per-change snapshot of one open session. */
@@ -368,7 +372,17 @@ export class SessionStore {
       if (!last || last.role !== 'assistant') return s;
       const nl: ChatMsg = { ...last };
       if (ev.kind === 'text') nl.text = nl.text + ev.content;
-      else if (ev.kind === 'summary' && !nl.text) nl.text = ev.text;
+      else if (ev.kind === 'status') {
+        nl.surface = ev.surface;
+        // server_sandbox: 폴백 사유(reason 이 사람이 읽는 문장). blocked: 차단 메시지(detail).
+        // connector_local: 로컬 안내(detail — 동기화 미완료 등)만.
+        nl.surfaceNote =
+          ev.surface === 'server_sandbox'
+            ? (ev.reason ?? ev.detail)
+            : ev.surface === 'blocked'
+              ? (ev.detail ?? ev.reason)
+              : ev.detail;
+      } else if (ev.kind === 'summary' && !nl.text) nl.text = ev.text;
       else if (ev.kind === 'tool') {
         rt.tools = [...rt.tools, ev.event];
         nl.tools = rt.tools;

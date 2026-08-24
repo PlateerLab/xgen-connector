@@ -112,14 +112,21 @@ const IS_MAC = platform() === 'darwin';
 export function shellConfig(cfg: LocalShellConfig | undefined): Required<LocalShellConfig> {
   const c = cfg || {};
   const t = typeof c.timeoutMs === 'number' && c.timeoutMs > 0 ? c.timeoutMs : DEFAULT_TIMEOUT_MS;
+  const cwd = (c.cwd || '').trim();
+  const listed = Array.isArray(c.allowedRoots)
+    ? c.allowedRoots.map((r) => String(r).trim()).filter(Boolean)
+    : [];
+  // 기본 작업 폴더는 **항상** 파일 도구의 허용 범위에 든다 — 에이전트
+  // 워크스페이스가 그 아래로 동기화되는데(local-sync) 허용 폴더 목록이 홈이나
+  // 다른 곳만 가리키면, 에이전트는 자기 워크스페이스조차 못 읽는다. 목록이
+  // 비어 있으면 기본(홈)도 유지한다 — cwd 하나로 좁히면 홈이 막힌다.
+  const allowedRoots = cwd ? [...(listed.length ? listed : ['~']), cwd] : listed;
   return {
     enabled: c.enabled === true, // opt-in (default OFF) — 로컬 셸은 명시적으로 켜야 한다
-    cwd: (c.cwd || '').trim(),
+    cwd,
     timeoutMs: Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, Math.round(t))),
     blocked: Array.isArray(c.blocked) ? c.blocked.map((b) => String(b).trim()).filter(Boolean) : [],
-    allowedRoots: Array.isArray(c.allowedRoots)
-      ? c.allowedRoots.map((r) => String(r).trim()).filter(Boolean)
-      : [],
+    allowedRoots,
   };
 }
 
@@ -279,6 +286,20 @@ export function shapeResult(
   };
 }
 
+/**
+ * 동기화된 에이전트 워크스페이스 안내 — 도구 설명에 붙는 공통 문장.
+ *
+ * 커넥터 세션의 에이전트는 서버 sandbox 가 아니라 **이 PC 의 폴더**를 자기
+ * 워크스페이스로 쓴다(local-sync 가 서버 저장소와 맞춘다). 모델이 어느 도구를
+ * 고를지는 이 설명이 전부이므로, 여기서 명시적으로 알려야 로컬 도구를 쓴다.
+ */
+export const SYNCED_WORKSPACE_NOTE =
+  `\nAGENT WORKSPACE ON THIS COMPUTER: when connected through this desktop connector, ` +
+  `your own agent workspace is synced to a LOCAL folder — under the configured default ` +
+  `working folder, one subfolder per connected agent (named after the agent). PREFER ` +
+  `working there with these local tools; every change syncs back to your server ` +
+  `workspace automatically, so web sessions and the sandbox see the same files.`;
+
 /** The Shell tool schema advertised to the agent. */
 export function shellToolSchema(): LocalToolSchema {
   return {
@@ -287,7 +308,9 @@ export function shellToolSchema(): LocalToolSchema {
       `Run ONE command on the USER'S OWN COMPUTER (the local desktop where this connector runs), ` +
       `through its native shell (${nativeShellLabel()}), as the logged-in user. This is the ` +
       `physical machine — NOT the cloud workspace/sandbox. Use it to operate that computer: run ` +
-      `scripts, read/write local files, inspect the system, launch apps.\n` +
+      `scripts, read/write local files, inspect the system, launch apps.` +
+      SYNCED_WORKSPACE_NOTE +
+      `\n` +
       `IMPORTANT for reliability:\n` +
       `• Non-interactive only — stdin is closed, so REPLs/prompts (bash, python with no args, ` +
       `\`read\`, pagers) return immediately instead of hanging. Pass the full command each call.\n` +
@@ -579,7 +602,8 @@ export function readFileToolSchema(): LocalToolSchema {
     description:
       "Read a text file on the USER'S OWN COMPUTER (the local desktop), within the " +
       'allowed folders. Prefer this over `Shell cat` — it distinguishes “not found” ' +
-      'from “no permission” cleanly. Returns UTF-8 text (truncated at maxBytes).',
+      'from “no permission” cleanly. Returns UTF-8 text (truncated at maxBytes).' +
+      SYNCED_WORKSPACE_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
@@ -596,7 +620,8 @@ export function writeFileToolSchema(): LocalToolSchema {
     name: WRITE_FILE_TOOL,
     description:
       "Write (or append to) a text file on the USER'S OWN COMPUTER, within the allowed " +
-      'folders. Creates parent directories as needed. Prefer this over shell redirection.',
+      'folders. Creates parent directories as needed. Prefer this over shell redirection.' +
+      SYNCED_WORKSPACE_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
@@ -612,7 +637,9 @@ export function writeFileToolSchema(): LocalToolSchema {
 export function listDirToolSchema(): LocalToolSchema {
   return {
     name: LIST_DIR_TOOL,
-    description: "List a directory on the USER'S OWN COMPUTER (within allowed folders). Shows type/size/name.",
+    description:
+      "List a directory on the USER'S OWN COMPUTER (within allowed folders). Shows type/size/name." +
+      SYNCED_WORKSPACE_NOTE,
     inputSchema: {
       type: 'object',
       properties: { path: { type: 'string', description: 'Directory path (default: home).' } },
@@ -670,10 +697,17 @@ export function notifyToolSchema(): LocalToolSchema {
 export class LocalToolProvider {
   private cfg: Required<LocalShellConfig> = shellConfig(undefined);
   private delegate: LocalToolDelegate | null = null;
+  /** 서버 런타임이 이 PC 를 실행 환경으로 쓰는 내부 브리지 (workspace-bridge-tools). */
+  private workspaceBridge: LocalToolDelegate | null = null;
 
   configure(cfg: LocalShellConfig | undefined, delegate?: LocalToolDelegate): void {
     this.cfg = shellConfig(cfg);
     this.delegate = delegate ?? null;
+  }
+
+  /** 워크스페이스 브리지 배선 — 로컬 동기화 매니저가 준비된 뒤 한 번 건다. */
+  configureWorkspaceBridge(bridge: LocalToolDelegate | null): void {
+    this.workspaceBridge = bridge;
   }
 
   /** True iff this call frame belongs to a built-in tool (server === LOCAL_SERVER). */
@@ -696,12 +730,17 @@ export class LocalToolProvider {
           notifyToolSchema(),
         ]
       : [];
-    return [...shell, ...(this.delegate?.advertise() ?? [])];
+    // 워크스페이스 브리지(_Exec 등)는 로컬 도구와 같은 능력 등급이므로 같은
+    // 스위치에 묶인다. `_` 접두라 서버가 LLM 노출에서 걸러낸다 — 카탈로그에는
+    // 실려야 서버 어댑터가 존재를 확인한다.
+    const bridge = this.cfg.enabled ? (this.workspaceBridge?.advertise() ?? []) : [];
+    return [...shell, ...bridge, ...(this.delegate?.advertise() ?? [])];
   }
 
   async callTool(tool: string, args: unknown): Promise<LocalToolResult> {
     if (this.delegate?.owns(tool)) return this.delegate.callTool(tool, args);
     if (!this.cfg.enabled) throw new Error('로컬 도구 접근이 꺼져 있습니다 (설정 > 로컬 도구).');
+    if (this.workspaceBridge?.owns(tool)) return this.workspaceBridge.callTool(tool, args);
     if (tool === SHELL_TOOL) return this.shell(args);
     if (tool === SHELL_JOB_TOOL) return this.shellJob(args);
     if (tool === OPEN_TOOL) return this.open(args);

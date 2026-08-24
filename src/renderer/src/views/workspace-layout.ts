@@ -1,6 +1,6 @@
 /** Pure, persistence-safe model for the two-group workspace. */
 
-export type WorkspaceTabKind = 'chat' | 'browser' | 'avatar' | 'teams';
+export type WorkspaceTabKind = 'chat' | 'browser' | 'avatar' | 'teams' | 'settings';
 export type SplitDirection = 'horizontal' | 'vertical';
 export type DropEdge = 'center' | 'left' | 'right' | 'top' | 'bottom';
 
@@ -50,7 +50,7 @@ function cleanTab(raw: unknown): WorkspaceTab | null {
   const tab = raw as Partial<WorkspaceTab>;
   if (
     typeof tab.id !== 'string' ||
-    !['chat', 'browser', 'avatar', 'teams'].includes(String(tab.kind))
+    !['chat', 'browser', 'avatar', 'teams', 'settings'].includes(String(tab.kind))
   ) {
     return null;
   }

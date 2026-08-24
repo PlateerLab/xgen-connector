@@ -110,7 +110,9 @@ function getUpdater(): AppUpdater | null {
   if (!canSelfUpdate()) return null;
   if (updaterRef) return updaterRef;
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // 종료-시 자동 설치는 **silent 고정**이라 인스톨러(설치/데이터 폴더 페이지)가
+  // 절대 안 뜬다 — 설치는 항상 아래 명시 경로(quitAndInstall isSilent=false)로만.
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = {
     info: (m: unknown) => log('eu', m),
     warn: (m: unknown) => log('eu:warn', m),
@@ -152,15 +154,12 @@ function getUpdater(): AppUpdater | null {
     });
     if (res.response === 0) {
       appWillInstall(); // flips appQuitting so close-to-tray can't block the quit
-      // SILENT install (isSilent=true). In non-silent mode the NSIS installer
-      // pops its interactive "XGEN Connector cannot be closed — Retry" dialog,
-      // which RACES the app's own shutdown: the installer runs its app-running
-      // check within milliseconds, before app.quit() has finished tearing the
-      // windows down and exiting, so it wrongly reports the app as un-closable.
-      // Silent + isForceRunAfter=true swaps the files and relaunches without any
-      // dialog. (quitAndInstall also calls app.quit() itself.)
+      // 인스톨러 UI(설치 경로/데이터 폴더 페이지)가 보이게 isSilent=false.
+      // (과거 silent 였던 이유는 oneClick 설치자의 즉시 파일락 체크가 앱 종료와
+      // 레이스했기 때문 — 지금은 assisted 라 사용자가 페이지를 넘기는 사이 앱
+      // 종료가 끝난다. 아래 safety-net 이 잔류 프로세스도 정리한다.)
       try {
-        autoUpdater.quitAndInstall(true, true);
+        autoUpdater.quitAndInstall(false, true);
       } catch (e) {
         log('quitAndInstall', e);
       }

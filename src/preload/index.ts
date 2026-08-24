@@ -37,6 +37,65 @@ import type {
   BrowserState,
 } from '../core/browser';
 
+/** 로컬 실행 환경 상태(설정 화면) — 메인의 localRuntimeStatus 응답. */
+export interface LocalExecStatus {
+  enabled: boolean;
+  installed: boolean;
+  pythonPath: string;
+  version?: string;
+  sidecarOk?: boolean;
+  runtimeDir: string;
+  daemon: {
+    running: boolean;
+    pid?: number;
+    protocol?: number;
+    runtimeVersion?: string;
+    activeTurns: number;
+    lastError?: string;
+  };
+  cli: {
+    codex: { installed: boolean; path: string; version?: string };
+    claude: { installed: boolean; path: string; version?: string };
+  };
+  /** 서버가 알려준 목표 버전(없으면 서버 v1/미로그인). */
+  server: {
+    runtime?: string;
+    claude?: string | null;
+    codex?: string | null;
+    claudeEnabled?: boolean;
+    codexEnabled?: boolean;
+    /** 서버가 커넥터에 줄 수 있는 CLI 인증(서버 일원화): 'api_key' | 'setup_token' | 'credentials' | null(없음→서버 실행) */
+    claudeAuth?: { mode?: string; ready?: boolean; source?: string | null } | null;
+    codexAuth?: { mode?: string; ready?: boolean; source?: string | null } | null;
+    manifestAt?: number;
+  } | null;
+  converge: { running: boolean; lastRunAt?: number; lastError?: string; summary?: string };
+  /** 부팅 배선 단계 실패(있으면). */
+  bootErrors?: string[];
+  /** 앱 내장 번들 경로(<resources>/python) — 진단 표시용. */
+  bundlePath?: string | null;
+  isPackaged?: boolean;
+  /** 설치 로그 꼬리(인스톨러 + 앱) — 왜 실패했는지 화면에서 바로 본다. */
+  logs?: { path: string; lines: string[] }[];
+  /** 런타임 자가치유 사다리 상태 — 지금 어떤 런타임을 쓰는지(active) + 후보별 진단. */
+  ensure: {
+    phase: 'idle' | 'checking' | 'copying' | 'downloading' | 'ready' | 'failed';
+    message?: string;
+    lastError?: string;
+    lastRunAt?: number;
+    active?: { source: 'install' | 'bundle' | 'legacy'; python: string; version?: string };
+    candidates: {
+      source: 'install' | 'bundle' | 'legacy';
+      runtimeDir: string;
+      python: string;
+      exists: boolean;
+      healthy?: boolean;
+      version?: string;
+      error?: string;
+    }[];
+  };
+}
+
 /** 가상 드라이브 상태 (main workspace-manager.WorkspaceStatus 미러). */
 export interface WorkspaceStatusLike {
   supported: boolean;
@@ -77,6 +136,29 @@ export interface WorkspaceEntryLike {
   size: number;
   /** epoch ms. */
   mtime: number;
+}
+
+/** 로컬 동기화 상태 (main local-sync-manager.LocalSyncStatus 미러). */
+export interface LocalSyncStatusLike {
+  enabled: boolean;
+  reason?: 'disabled' | 'no-root' | 'logged-out';
+  root?: string;
+  agents: Array<{
+    workflowId: string;
+    label: string;
+    folder: string;
+    dir: string;
+    syncing: boolean;
+    lastSyncAt?: number;
+    lastError?: string;
+    last?: {
+      downloaded: number;
+      uploaded: number;
+      deletedLocal: number;
+      deletedRemote: number;
+      conflicts: number;
+    };
+  }>;
 }
 
 /** Local-MCP bridge status pushed to the settings UI. */
@@ -124,6 +206,9 @@ const api = {
     get: (): Promise<ConnectorConfig> => ipcRenderer.invoke(CHANNELS.configGet),
     set: (patch: Partial<ConnectorConfig>): Promise<ConnectorConfig> =>
       ipcRenderer.invoke(CHANNELS.configSet, patch),
+    /** 서버 주소 확정 — 스킴이 없으면 main 이 https → http 순으로 두드려 정한다. */
+    probeServer: (input: string): Promise<{ url: string } | { error: string }> =>
+      ipcRenderer.invoke(CHANNELS.configProbeServer, input),
     onChange: (cb: (c: ConnectorConfig) => void): (() => void) => {
       const h = (_e: unknown, c: ConnectorConfig) => cb(c);
       ipcRenderer.on(CHANNELS.configChanged, h);
@@ -136,8 +221,13 @@ const api = {
       email: string,
       password: string,
       remember?: boolean,
-    ): Promise<{ user: CurrentUser | null; tokenPersisted?: boolean; credsPersisted?: boolean }> =>
-      ipcRenderer.invoke(CHANNELS.authLogin, email, password, remember),
+    ): Promise<{
+      user: CurrentUser | null;
+      tokenPersisted?: boolean;
+      credsPersisted?: boolean;
+      /** 로그인 거절/실패 사유 — 있으면 user 는 null 이고 화면에 이 문장을 보인다. */
+      error?: string;
+    }> => ipcRenderer.invoke(CHANNELS.authLogin, email, password, remember),
     ssoLogin: (): Promise<{ user: CurrentUser; tokenPersisted: boolean }> =>
       ipcRenderer.invoke(CHANNELS.authSsoLogin),
     restore: (): Promise<{ user: CurrentUser | null; offline?: boolean }> =>
@@ -163,6 +253,38 @@ const api = {
   agents: {
     list: (query?: AgentListQuery): Promise<AgentListResult> =>
       ipcRenderer.invoke(CHANNELS.agentsList, query),
+  },
+
+  /**
+   * 로컬 실행 환경 — 설치 폴더의 Python 런타임(사이드카) + Claude Code / Codex CLI.
+   * 커넥터에서 시작한 Agent-XGeny 턴은 자동으로 이 환경에서 돈다(chatStart). 여기는
+   * 상태 표시·설치·서버 버전 수렴([설정 → 일반]).
+   */
+  localRuntime: {
+    status: (): Promise<LocalExecStatus> => ipcRenderer.invoke(CHANNELS.localRuntimeStatus),
+    install: (): Promise<{ ok: boolean; status?: unknown; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.localRuntimeInstall),
+    /** 서버 매니페스트 기준으로 런타임/CLI 를 서버와 같은 버전으로 맞춘다. */
+    sync: (): Promise<LocalExecStatus> => ipcRenderer.invoke(CHANNELS.localRuntimeSync),
+    /** 설치 로그(install.log)를 OS 기본 앱으로 연다. */
+    openLog: (): Promise<{ ok: boolean; path: string; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.localRuntimeOpenLog),
+    onProgress: (
+      cb: (p: { phase: string; message: string; tool?: string; fraction?: number }) => void,
+    ): (() => void) => {
+      const h = (_e: unknown, p: unknown) => cb(p as never);
+      ipcRenderer.on(CHANNELS.localRuntimeProgress, h);
+      return () => ipcRenderer.removeListener(CHANNELS.localRuntimeProgress, h);
+    },
+    /** CLI 바이너리(codex / Claude Code) — 공식 배포처에서 로컬 설치(서버 목표 버전). */
+    cliStatus: (): Promise<{
+      codex: { installed: boolean; path: string; version?: string };
+      claude: { installed: boolean; path: string; version?: string };
+    }> => ipcRenderer.invoke(CHANNELS.localCliStatus),
+    cliInstall: (
+      tool: 'codex' | 'claude',
+    ): Promise<{ ok: boolean; version?: string; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.localCliInstall, tool),
   },
 
   user: {
@@ -452,6 +574,11 @@ const api = {
       ipcRenderer.on(CHANNELS.openSettingsModal, h);
       return () => ipcRenderer.removeListener(CHANNELS.openSettingsModal, h);
     },
+    /** 네이티브 폴더 선택 다이얼로그 — 절대 경로 또는 null(취소). */
+    pickFolder: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.pickFolder),
+    /** 설치 폴더(생략 시) 또는 지정 폴더를 파일 관리자로 연다. */
+    openFolder: (path?: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.appOpenFolder, path),
     getAutostart: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.autostartGet),
     setAutostart: (enabled: boolean): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.autostartSet, enabled),
@@ -485,7 +612,7 @@ const api = {
     /** 연결된 에이전트 목록만 다시 읽는다 — 파일 캐시는 건드리지 않는다. */
     refreshAgents: (): Promise<WorkspaceStatusLike> =>
       ipcRenderer.invoke(CHANNELS.workspaceRefreshAgents),
-    /** 인앱 탐색기 — 드라이브 폴더(`/클라우드/…`, `/에이전트/<폴더>/…`) 직계 자식. */
+    /** 인앱 탐색기 — 드라이브(=클라우드 루트) 폴더의 직계 자식. */
     list: (path: string): Promise<WorkspaceEntryLike[]> =>
       ipcRenderer.invoke(CHANNELS.workspaceList, path),
     /** 드라이브 안 경로를 OS 파일 관리자/기본 앱으로 연다 (마운트 시에만). */
@@ -495,6 +622,25 @@ const api = {
       const h = (_e: unknown, s: WorkspaceStatusLike) => cb(s);
       ipcRenderer.on(CHANNELS.workspaceStatusEvent, h);
       return () => ipcRenderer.removeListener(CHANNELS.workspaceStatusEvent, h);
+    },
+  },
+
+  /** 로컬 동기화 — 에이전트 workspace 저장소 ↔ 로컬 도구 기본 작업 폴더. */
+  sync: {
+    status: (): Promise<LocalSyncStatusLike> => ipcRenderer.invoke(CHANNELS.syncStatus),
+    /** 지금 동기화 — workflowId 없으면 전부. */
+    now: (workflowId?: string): Promise<LocalSyncStatusLike> =>
+      ipcRenderer.invoke(CHANNELS.syncNow, workflowId),
+    /** 동기화된 에이전트 폴더의 직계 자식 (로컬 실파일). */
+    list: (workflowId: string, rel?: string): Promise<WorkspaceEntryLike[]> =>
+      ipcRenderer.invoke(CHANNELS.syncList, workflowId, rel ?? ''),
+    /** 동기화 폴더 안 경로를 OS 로 연다. */
+    openPath: (workflowId: string, rel?: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.syncOpenPath, workflowId, rel ?? ''),
+    onStatus: (cb: (s: LocalSyncStatusLike) => void): (() => void) => {
+      const h = (_e: unknown, s: LocalSyncStatusLike) => cb(s);
+      ipcRenderer.on(CHANNELS.syncStatusEvent, h);
+      return () => ipcRenderer.removeListener(CHANNELS.syncStatusEvent, h);
     },
   },
 

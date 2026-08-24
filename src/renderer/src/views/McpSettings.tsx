@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { xgen } from '../bridge';
 import type { McpServerConfig } from '../../../main/config';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
+import { Selector } from './Selector';
 import {
   McpImportError,
   parseMcpConfig,
@@ -229,24 +230,33 @@ const ExposedToolsPanel: React.FC<{
   const [showCalls, setShowCalls] = useState(false);
   const servers = status?.servers ?? [];
   const total = servers.reduce((n, s) => n + (s.connected ? s.tools.length : 0), 0);
-  const recentCalls = logs.filter((l) => l.kind === 'result').slice(-25).reverse();
+  const recentCalls = logs
+    .filter((l) => l.kind === 'result')
+    .slice(-25)
+    .reverse();
 
   return (
     <div className="mcp-exposed">
       <div className="mcp-exposed-head">
         <strong>에이전트에 노출된 도구 {total}개</strong>
         <span className="small muted">
-          {status?.connected ? '지금 세션 에이전트가 사용할 수 있습니다' : '연결되면 자동 주입됩니다'}
+          {status?.connected
+            ? '지금 세션 에이전트가 사용할 수 있습니다'
+            : '연결되면 자동 주입됩니다'}
         </span>
       </div>
       {servers.length === 0 ? (
-        <div className="small muted pad">노출된 도구가 없습니다. 로컬 도구를 켜거나 MCP 서버를 추가하세요.</div>
+        <div className="small muted pad">
+          노출된 도구가 없습니다. 로컬 도구를 켜거나 MCP 서버를 추가하세요.
+        </div>
       ) : (
         servers.map((s) => (
           <div key={s.name} className="mcp-exposed-group">
             <div className="mcp-exposed-server small muted">
               {s.name === 'local' ? '내 PC · 로컬 도구' : s.name}
-              {!s.connected && <span className="mcp-dot off" style={{ marginLeft: 6 }} title="연결 안 됨" />}
+              {!s.connected && (
+                <span className="mcp-dot off" style={{ marginLeft: 6 }} title="연결 안 됨" />
+              )}
               <span style={{ marginLeft: 6 }}>· {s.tools.length}</span>
             </div>
             <ul className="mcp-exposed-tools">
@@ -262,13 +272,17 @@ const ExposedToolsPanel: React.FC<{
                     >
                       <span className="mcp-exposed-tool-name">{t.name}</span>
                       {t.description && (
-                        <span className="small muted mcp-exposed-tool-desc">{firstLine(t.description)}</span>
+                        <span className="small muted mcp-exposed-tool-desc">
+                          {firstLine(t.description)}
+                        </span>
                       )}
                     </button>
                     {open && (
                       <pre className="mcp-exposed-schema">
                         {(t.description ? String(t.description).trim() + '\n\n' : '') +
-                          (t.inputSchema ? JSON.stringify(t.inputSchema, null, 2) : '(입력 스키마 없음)')}
+                          (t.inputSchema
+                            ? JSON.stringify(t.inputSchema, null, 2)
+                            : '(입력 스키마 없음)')}
                       </pre>
                     )}
                   </li>
@@ -278,7 +292,11 @@ const ExposedToolsPanel: React.FC<{
           </div>
         ))
       )}
-      <button className="link small" onClick={() => setShowCalls((v) => !v)} style={{ marginTop: 6 }}>
+      <button
+        className="link small"
+        onClick={() => setShowCalls((v) => !v)}
+        style={{ marginTop: 6 }}
+      >
         {showCalls ? '최근 호출 숨기기' : `최근 호출 보기 (${recentCalls.length})`}
       </button>
       {showCalls && (
@@ -288,8 +306,12 @@ const ExposedToolsPanel: React.FC<{
             <li key={l.id} className="small mcp-exposed-call">
               <span className={`mcp-dot ${l.ok === false ? 'off' : 'ok'}`} />
               <span className="mcp-exposed-call-tool">{l.tool || l.message}</span>
-              {l.server && <span className="muted"> · {l.server === 'local' ? '내 PC' : l.server}</span>}
-              {typeof l.durationMs === 'number' && <span className="muted"> · {l.durationMs}ms</span>}
+              {l.server && (
+                <span className="muted"> · {l.server === 'local' ? '내 PC' : l.server}</span>
+              )}
+              {typeof l.durationMs === 'number' && (
+                <span className="muted"> · {l.durationMs}ms</span>
+              )}
             </li>
           ))}
         </ul>
@@ -298,7 +320,10 @@ const ExposedToolsPanel: React.FC<{
   );
 };
 
-export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+export const McpSettings: React.FC<{ onClose: () => void; embedded?: boolean }> = ({
+  onClose,
+  embedded,
+}) => {
   const [enabled, setEnabled] = useState(false);
   const [servers, setServers] = useState<McpServerConfig[]>([]);
   const [status, setStatus] = useState<McpBridgeStatusLike | null>(null);
@@ -320,21 +345,38 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    xgen.mcp.getEnabled().then(setEnabled).catch(() => undefined);
-    xgen.mcp.listServers().then(setServers).catch(() => undefined);
-    xgen.mcp.status().then(setStatus).catch(() => undefined);
+    xgen.mcp
+      .getEnabled()
+      .then(setEnabled)
+      .catch(() => undefined);
+    xgen.mcp
+      .listServers()
+      .then(setServers)
+      .catch(() => undefined);
+    xgen.mcp
+      .status()
+      .then(setStatus)
+      .catch(() => undefined);
     // 화면을 열 때 다시 붙여 본다 — 런타임을 나중에 설치했는데 예전 실패
     // 문구가 계속 남아 있으면 안 된다.
-    xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+    xgen.mcp
+      .refresh()
+      .then(setStatus)
+      .catch(() => undefined);
     // 최근 도구 호출 로그 — G10 노출 도구 패널의 "최근 호출" 섹션.
-    xgen.mcp.runtimeLogs().then((rows) => setRuntimeLogs(rows.slice(-100))).catch(() => undefined);
+    xgen.mcp
+      .runtimeLogs()
+      .then((rows) => setRuntimeLogs(rows.slice(-100)))
+      .catch(() => undefined);
     const offLog = xgen.mcp.onRuntimeLog((entry) =>
       setRuntimeLogs((prev) => [...prev, entry].slice(-100)),
     );
     const offStatus = xgen.mcp.onStatus(setStatus);
     // 기동 중인 서버의 출력을 실시간으로 받아 '멈춘 게 아니다'를 보여준다.
     const offProgress = xgen.mcp.onTestProgress(({ name, lines }) => {
-      setRowTest((m) => (name && m[name]?.busy ? { ...m, [name]: { ...m[name], progress: lines } } : m));
+      setRowTest((m) =>
+        name && m[name]?.busy ? { ...m, [name]: { ...m[name], progress: lines } } : m,
+      );
       setTest((t) => (t?.busy ? { ...t, progress: lines } : t));
     });
     return () => {
@@ -381,7 +423,10 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     await persist(next);
     setEditing(null);
     // 저장하면 곧바로 붙여 결과(도구 수/오류)를 보여준다.
-    xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+    xgen.mcp
+      .refresh()
+      .then(setStatus)
+      .catch(() => undefined);
   };
 
   /** 붙여넣은 표준 JSON 을 서버 목록에 병합 (같은 이름은 덮어쓰기). */
@@ -402,7 +447,10 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     const replaced: string[] = [];
     const skippedReserved: string[] = [];
     for (const s of parsed.servers) {
-      if (s.name.toLowerCase() === 'local') { skippedReserved.push(s.name); continue; }
+      if (s.name.toLowerCase() === 'local') {
+        skippedReserved.push(s.name);
+        continue;
+      }
       const cfg: McpServerConfig = {
         name: s.name,
         transport: s.transport,
@@ -478,7 +526,11 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     setRowTest((m) => ({ ...m, [s.name]: r }));
     // 테스트가 되면 실제 연결도 되어야 한다 — 브릿지에 다시 붙여 도구가
     // 에이전트에게 실제로 광고되게 하고, 낡은 실패 문구를 지운다.
-    if (r.ok) xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+    if (r.ok)
+      xgen.mcp
+        .refresh()
+        .then(setStatus)
+        .catch(() => undefined);
   };
 
   /** OAuth 2.1 인가 — 브라우저 로그인 흐름을 시작한다. */
@@ -486,7 +538,10 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     // 미저장(new) 서버를 인가하면 토큰이 draft 이름으로 저장되는데, 저장 전 이름을
     // 바꾸면 토큰이 유실된다. 먼저 저장을 권장한다(막지는 않음).
     if (editing === 'new') {
-      setAuthMsg({ ok: false, text: '먼저 저장한 뒤 인가하세요 — 저장 전 이름을 바꾸면 인가 토큰이 유실됩니다.' });
+      setAuthMsg({
+        ok: false,
+        text: '먼저 저장한 뒤 인가하세요 — 저장 전 이름을 바꾸면 인가 토큰이 유실됩니다.',
+      });
       return;
     }
     setAuthBusy(true);
@@ -498,7 +553,11 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           ? { ok: true, text: '인가되었습니다 — 연결에 액세스 토큰이 자동 사용됩니다.' }
           : { ok: false, text: res.error || '인가에 실패했습니다.' },
       );
-      if (res.ok) xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+      if (res.ok)
+        xgen.mcp
+          .refresh()
+          .then(setStatus)
+          .catch(() => undefined);
     } catch (e) {
       setAuthMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -513,11 +572,19 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     if (!oauthServers.length) return;
     (async () => {
       const entries = await Promise.all(
-        oauthServers.map(async (n) => [n, (await xgen.mcp.oauthStatus(n).catch(() => ({ authorized: false }))).authorized] as const),
+        oauthServers.map(
+          async (n) =>
+            [
+              n,
+              (await xgen.mcp.oauthStatus(n).catch(() => ({ authorized: false }))).authorized,
+            ] as const,
+        ),
       );
       if (!cancelled) setOauthAuthorized(Object.fromEntries(entries));
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [servers]);
 
   /** 행에서 OAuth 인가(또는 재인가) 실행. */
@@ -525,10 +592,17 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     setRowAuthBusy((m) => ({ ...m, [s.name]: true }));
     try {
       const res = await xgen.mcp.authorize(s);
-      setRowTest((m) => ({ ...m, [s.name]: { ok: res.ok, msg: res.ok ? '인가되었습니다.' : (res.error || '인가 실패') } }));
+      setRowTest((m) => ({
+        ...m,
+        [s.name]: { ok: res.ok, msg: res.ok ? '인가되었습니다.' : res.error || '인가 실패' },
+      }));
       const st = await xgen.mcp.oauthStatus(s.name).catch(() => ({ authorized: false }));
       setOauthAuthorized((m) => ({ ...m, [s.name]: st.authorized }));
-      if (res.ok) xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+      if (res.ok)
+        xgen.mcp
+          .refresh()
+          .then(setStatus)
+          .catch(() => undefined);
     } finally {
       setRowAuthBusy((m) => ({ ...m, [s.name]: false }));
     }
@@ -538,9 +612,328 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const disconnectOauth = async (s: McpServerConfig) => {
     await xgen.mcp.clearOauth(s.name).catch(() => undefined);
     setOauthAuthorized((m) => ({ ...m, [s.name]: false }));
-    xgen.mcp.refresh().then(setStatus).catch(() => undefined);
+    xgen.mcp
+      .refresh()
+      .then(setStatus)
+      .catch(() => undefined);
   };
 
+  // 본문은 모달/임베드(설정 [MCP] 탭) 양쪽에서 같은 것을 쓴다 — SyncSettings 동형.
+  const body = (
+    <>
+      <p className="small muted" style={{ margin: '0 0 8px' }}>
+        내 PC에서 MCP 서버를 실행해, 선택된 세션의 에이전트가 그 도구를 사용하게 합니다. 로그인
+        상태에서만 연결됩니다.
+      </p>
+
+      <div className="field-row">
+        <span>
+          로컬 MCP 사용
+          {enabled && (
+            <span className="small muted" style={{ marginLeft: 8 }}>
+              {status?.connected ? `연결됨 · 도구 ${toolCount}개` : '연결 대기 중…'}
+              {status?.error ? ` · ${status.error}` : ''}
+            </span>
+          )}
+        </span>
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => {
+              setEnabled(e.target.checked);
+              void xgen.mcp.setEnabled(e.target.checked);
+            }}
+          />
+          <span className="track" />
+        </label>
+      </div>
+
+      {enabled && <ExposedToolsPanel status={status} logs={runtimeLogs} />}
+
+      <div className="mcp-list">
+        {servers.length === 0 && <div className="muted small pad">등록된 MCP 서버가 없습니다.</div>}
+        {servers.map((s, i) => {
+          const st = status?.servers?.find((x) => x.name === s.name);
+          return (
+            <div key={s.name + i} className="mcp-item">
+              <label
+                className="switch small-switch"
+                title={s.enabled === false ? '사용 안 함' : '사용'}
+              >
+                <input
+                  type="checkbox"
+                  checked={s.enabled !== false}
+                  onChange={() => void toggleServer(i)}
+                />
+                <span className="track" />
+              </label>
+              <div className="mcp-item-body">
+                <div className="mcp-item-name">
+                  {s.name}
+                  <span className="mcp-badge">{s.transport}</span>
+                  {st && (
+                    <span
+                      className={`mcp-dot ${st.connected ? 'ok' : 'off'}`}
+                      title={st.error || (st.connected ? '연결됨' : '연결 안 됨')}
+                    />
+                  )}
+                  {st?.connected && <span className="small muted">도구 {st.tools.length}</span>}
+                  {s.auth === 'oauth' && (
+                    <span
+                      className={`mcp-badge ${oauthAuthorized[s.name] ? 'notice-ok' : 'notice-warn'}`}
+                    >
+                      {oauthAuthorized[s.name] ? 'OAuth 인가됨' : 'OAuth 인가 필요'}
+                    </span>
+                  )}
+                </div>
+                <div className="mcp-item-cmd">
+                  {s.transport === 'stdio'
+                    ? toDisplayCommand(s.command ?? '', s.args ?? [])
+                    : s.url}
+                </div>
+                {/* 테스트 결과가 있으면 그것을, 없으면 자동 연결 실패 사유를
+                      그대로 보여준다 (툴팁에만 숨겨두면 아무도 못 본다). */}
+                {rowTest[s.name] ? (
+                  <TestResult state={rowTest[s.name]} />
+                ) : (
+                  st &&
+                  !st.connected &&
+                  st.error && <TestResult state={{ ok: false, msg: st.error }} />
+                )}
+              </div>
+              <div className="mcp-item-actions">
+                <button
+                  className="link"
+                  onClick={() => void runRowTest(s)}
+                  disabled={rowTest[s.name]?.busy}
+                >
+                  테스트
+                </button>
+                {s.auth === 'oauth' && (
+                  <button
+                    className="link"
+                    onClick={() => void authorizeRow(s)}
+                    disabled={rowAuthBusy[s.name]}
+                  >
+                    {rowAuthBusy[s.name] ? '인가 중…' : oauthAuthorized[s.name] ? '재인가' : '인가'}
+                  </button>
+                )}
+                {s.auth === 'oauth' && oauthAuthorized[s.name] && (
+                  <button className="link" onClick={() => void disconnectOauth(s)}>
+                    인가 해제
+                  </button>
+                )}
+                <button className="link" onClick={() => startEdit(i)}>
+                  편집
+                </button>
+                <button className="link" onClick={() => void remove(i)}>
+                  삭제
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {editing === null ? (
+        <>
+          <div className="row" style={{ marginTop: 8, gap: 6 }}>
+            <button className="secondary" onClick={() => startEdit('new')}>
+              + MCP 서버 추가
+            </button>
+            <button
+              className="secondary"
+              onClick={() => {
+                setImportOpen((v) => !v);
+                setImportMsg(null);
+              }}
+            >
+              {importOpen ? 'JSON 붙여넣기 닫기' : 'JSON 붙여넣기'}
+            </button>
+            {servers.length > 0 && (
+              <button
+                className="secondary"
+                onClick={() => void copyJson()}
+                title="현재 설정을 표준 JSON 으로 복사"
+              >
+                {copied ? '복사됨' : 'JSON 복사'}
+              </button>
+            )}
+          </div>
+
+          {importOpen && (
+            <div className="mcp-form">
+              <label className="field">
+                <span>표준 MCP 설정 JSON</span>
+                <textarea
+                  rows={10}
+                  className="mcp-textarea mcp-json"
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  spellCheck={false}
+                  placeholder={JSON_PLACEHOLDER}
+                />
+              </label>
+              <div className="small muted" style={{ marginTop: -2 }}>
+                Claude Desktop·Cursor 등에서 쓰는 <code>mcpServers</code> 블록을 그대로
+                붙여넣으세요. 같은 이름은 덮어씁니다.
+              </div>
+              {importMsg && (
+                <div className={`small ${importMsg.ok ? 'notice-ok' : 'notice-warn'}`}>
+                  {importMsg.text}
+                </div>
+              )}
+              <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+                <button
+                  className="link"
+                  onClick={() => {
+                    setImportOpen(false);
+                    setImportText('');
+                    setImportMsg(null);
+                  }}
+                >
+                  취소
+                </button>
+                <button
+                  className="primary"
+                  disabled={!importText.trim()}
+                  onClick={() => void importJson()}
+                >
+                  가져오기
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="mcp-form">
+          <label className="field">
+            <span>이름 (고유)</span>
+            <input
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              placeholder="filesystem"
+            />
+          </label>
+          <div className="field-row">
+            <span>전송 방식</span>
+            <div className="seg">
+              {(['stdio', 'http', 'sse'] as const).map((t) => (
+                <button
+                  key={t}
+                  className={draft.transport === t ? 'active' : ''}
+                  onClick={() => setDraft({ ...draft, transport: t })}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          {draft.transport === 'stdio' ? (
+            <>
+              <label className="field">
+                <span>실행 명령</span>
+                <input
+                  value={draft.command}
+                  onChange={(e) => setDraft({ ...draft, command: e.target.value })}
+                  placeholder="npx -y @modelcontextprotocol/server-filesystem /path"
+                />
+              </label>
+              <label className="field">
+                <span>환경변수 (KEY=VALUE, 한 줄에 하나)</span>
+                <textarea
+                  className="mcp-textarea"
+                  value={draft.envText}
+                  onChange={(e) => setDraft({ ...draft, envText: e.target.value })}
+                  placeholder={'API_TOKEN=xxxx'}
+                  rows={2}
+                />
+                <span className="small muted">
+                  값은 OS 키체인에 암호화 저장됩니다(설정 파일에 평문으로 남지 않음). 저장된 서버를
+                  다시 열면 값은 비어 보이며, 비워 두면 기존 값이 유지되고 새 값을 입력하면
+                  교체됩니다.
+                </span>
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="field">
+                <span>엔드포인트 URL (Streamable HTTP)</span>
+                <input
+                  value={draft.url}
+                  onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+                  placeholder="https://mcp.example.com/mcp"
+                />
+              </label>
+              <label className="field">
+                <span>헤더 (Key: Value, 한 줄에 하나)</span>
+                <textarea
+                  className="mcp-textarea"
+                  value={draft.headersText}
+                  onChange={(e) => setDraft({ ...draft, headersText: e.target.value })}
+                  placeholder={'Authorization: Bearer xxxx'}
+                  rows={2}
+                />
+                <span className="small muted">
+                  헤더 값은 OS 키체인에 암호화 저장됩니다. 저장된 서버를 다시 열면 값은 비어 보이며,
+                  비워 두면 기존 값이 유지되고 새 값을 입력하면 교체됩니다.
+                </span>
+              </label>
+              <div className="field">
+                <span>인증</span>
+                <Selector
+                  value={draft.auth}
+                  onChange={(v) => setDraft({ ...draft, auth: v as 'none' | 'oauth' })}
+                  options={[
+                    { value: 'none', label: '없음 (헤더/토큰 직접 입력)' },
+                    { value: 'oauth', label: 'OAuth 2.1 (브라우저 로그인)' },
+                  ]}
+                  ariaLabel="인증 방식 선택"
+                />
+              </div>
+              {draft.auth === 'oauth' && (
+                <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: -4 }}>
+                  <button
+                    className="secondary"
+                    onClick={() => void authorizeDraft()}
+                    disabled={authBusy || !draft.url.trim() || !draft.name.trim()}
+                  >
+                    {authBusy ? '인가 중… (브라우저 확인)' : '브라우저로 인가하기'}
+                  </button>
+                  {authMsg && (
+                    <span className={`small ${authMsg.ok ? 'notice-ok' : 'notice-warn'}`}>
+                      {authMsg.text}
+                    </span>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {test && <TestResult state={test} />}
+
+          <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
+            <button className="link" onClick={() => setEditing(null)}>
+              취소
+            </button>
+            <button className="secondary" onClick={() => void runTest()} disabled={test?.busy}>
+              테스트
+            </button>
+            <button
+              className="primary"
+              onClick={() => void saveDraft()}
+              disabled={!draft.name.trim()}
+            >
+              저장
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  if (embedded) return <div className="mcp-embed">{body}</div>;
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal mcp-modal" onClick={(e) => e.stopPropagation()}>
@@ -550,270 +943,7 @@ export const McpSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             닫기
           </button>
         </div>
-
-        <p className="small muted" style={{ margin: '0 0 8px' }}>
-          내 PC에서 MCP 서버를 실행해, 선택된 세션의 에이전트가 그 도구를 사용하게 합니다.
-          로그인 상태에서만 연결됩니다.
-        </p>
-
-        <div className="field-row">
-          <span>
-            로컬 MCP 사용
-            {enabled && (
-              <span className="small muted" style={{ marginLeft: 8 }}>
-                {status?.connected ? `연결됨 · 도구 ${toolCount}개` : '연결 대기 중…'}
-                {status?.error ? ` · ${status.error}` : ''}
-              </span>
-            )}
-          </span>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => {
-                setEnabled(e.target.checked);
-                void xgen.mcp.setEnabled(e.target.checked);
-              }}
-            />
-            <span className="track" />
-          </label>
-        </div>
-
-        {enabled && <ExposedToolsPanel status={status} logs={runtimeLogs} />}
-
-        <div className="mcp-list">
-          {servers.length === 0 && <div className="muted small pad">등록된 MCP 서버가 없습니다.</div>}
-          {servers.map((s, i) => {
-            const st = status?.servers?.find((x) => x.name === s.name);
-            return (
-              <div key={s.name + i} className="mcp-item">
-                <label className="switch small-switch" title={s.enabled === false ? '사용 안 함' : '사용'}>
-                  <input type="checkbox" checked={s.enabled !== false} onChange={() => void toggleServer(i)} />
-                  <span className="track" />
-                </label>
-                <div className="mcp-item-body">
-                  <div className="mcp-item-name">
-                    {s.name}
-                    <span className="mcp-badge">{s.transport}</span>
-                    {st && (
-                      <span className={`mcp-dot ${st.connected ? 'ok' : 'off'}`} title={st.error || (st.connected ? '연결됨' : '연결 안 됨')} />
-                    )}
-                    {st?.connected && <span className="small muted">도구 {st.tools.length}</span>}
-                    {s.auth === 'oauth' && (
-                      <span className={`mcp-badge ${oauthAuthorized[s.name] ? 'notice-ok' : 'notice-warn'}`}>
-                        {oauthAuthorized[s.name] ? 'OAuth 인가됨' : 'OAuth 인가 필요'}
-                      </span>
-                    )}
-                  </div>
-                  <div className="mcp-item-cmd">
-                    {s.transport === 'stdio'
-                      ? toDisplayCommand(s.command ?? '', s.args ?? [])
-                      : s.url}
-                  </div>
-                  {/* 테스트 결과가 있으면 그것을, 없으면 자동 연결 실패 사유를
-                      그대로 보여준다 (툴팁에만 숨겨두면 아무도 못 본다). */}
-                  {rowTest[s.name] ? (
-                    <TestResult state={rowTest[s.name]} />
-                  ) : (
-                    st &&
-                    !st.connected &&
-                    st.error && <TestResult state={{ ok: false, msg: st.error }} />
-                  )}
-                </div>
-                <div className="mcp-item-actions">
-                  <button
-                    className="link"
-                    onClick={() => void runRowTest(s)}
-                    disabled={rowTest[s.name]?.busy}
-                  >
-                    테스트
-                  </button>
-                  {s.auth === 'oauth' && (
-                    <button className="link" onClick={() => void authorizeRow(s)} disabled={rowAuthBusy[s.name]}>
-                      {rowAuthBusy[s.name] ? '인가 중…' : oauthAuthorized[s.name] ? '재인가' : '인가'}
-                    </button>
-                  )}
-                  {s.auth === 'oauth' && oauthAuthorized[s.name] && (
-                    <button className="link" onClick={() => void disconnectOauth(s)}>
-                      인가 해제
-                    </button>
-                  )}
-                  <button className="link" onClick={() => startEdit(i)}>
-                    편집
-                  </button>
-                  <button className="link" onClick={() => void remove(i)}>
-                    삭제
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {editing === null ? (
-          <>
-            <div className="row" style={{ marginTop: 8, gap: 6 }}>
-              <button className="secondary" onClick={() => startEdit('new')}>
-                + MCP 서버 추가
-              </button>
-              <button
-                className="secondary"
-                onClick={() => {
-                  setImportOpen((v) => !v);
-                  setImportMsg(null);
-                }}
-              >
-                {importOpen ? 'JSON 붙여넣기 닫기' : 'JSON 붙여넣기'}
-              </button>
-              {servers.length > 0 && (
-                <button className="secondary" onClick={() => void copyJson()} title="현재 설정을 표준 JSON 으로 복사">
-                  {copied ? '복사됨' : 'JSON 복사'}
-                </button>
-              )}
-            </div>
-
-            {importOpen && (
-              <div className="mcp-form">
-                <label className="field">
-                  <span>표준 MCP 설정 JSON</span>
-                  <textarea
-                    rows={10}
-                    className="mcp-textarea mcp-json"
-                    value={importText}
-                    onChange={(e) => setImportText(e.target.value)}
-                    spellCheck={false}
-                    placeholder={JSON_PLACEHOLDER}
-                  />
-                </label>
-                <div className="small muted" style={{ marginTop: -2 }}>
-                  Claude Desktop·Cursor 등에서 쓰는 <code>mcpServers</code> 블록을 그대로 붙여넣으세요.
-                  같은 이름은 덮어씁니다.
-                </div>
-                {importMsg && (
-                  <div className={`small ${importMsg.ok ? 'notice-ok' : 'notice-warn'}`}>{importMsg.text}</div>
-                )}
-                <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
-                  <button
-                    className="link"
-                    onClick={() => {
-                      setImportOpen(false);
-                      setImportText('');
-                      setImportMsg(null);
-                    }}
-                  >
-                    취소
-                  </button>
-                  <button className="primary" disabled={!importText.trim()} onClick={() => void importJson()}>
-                    가져오기
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="mcp-form">
-            <label className="field">
-              <span>이름 (고유)</span>
-              <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="filesystem" />
-            </label>
-            <div className="field-row">
-              <span>전송 방식</span>
-              <div className="seg">
-                {(['stdio', 'http', 'sse'] as const).map((t) => (
-                  <button key={t} className={draft.transport === t ? 'active' : ''} onClick={() => setDraft({ ...draft, transport: t })}>
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {draft.transport === 'stdio' ? (
-              <>
-                <label className="field">
-                  <span>실행 명령</span>
-                  <input
-                    value={draft.command}
-                    onChange={(e) => setDraft({ ...draft, command: e.target.value })}
-                    placeholder="npx -y @modelcontextprotocol/server-filesystem /path"
-                  />
-                </label>
-                <label className="field">
-                  <span>환경변수 (KEY=VALUE, 한 줄에 하나)</span>
-                  <textarea
-                    className="mcp-textarea"
-                    value={draft.envText}
-                    onChange={(e) => setDraft({ ...draft, envText: e.target.value })}
-                    placeholder={'API_TOKEN=xxxx'}
-                    rows={2}
-                  />
-                  <span className="small muted">
-                    값은 OS 키체인에 암호화 저장됩니다(설정 파일에 평문으로 남지 않음). 저장된 서버를
-                    다시 열면 값은 비어 보이며, 비워 두면 기존 값이 유지되고 새 값을 입력하면 교체됩니다.
-                  </span>
-                </label>
-              </>
-            ) : (
-              <>
-                <label className="field">
-                  <span>엔드포인트 URL (Streamable HTTP)</span>
-                  <input value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="https://mcp.example.com/mcp" />
-                </label>
-                <label className="field">
-                  <span>헤더 (Key: Value, 한 줄에 하나)</span>
-                  <textarea
-                    className="mcp-textarea"
-                    value={draft.headersText}
-                    onChange={(e) => setDraft({ ...draft, headersText: e.target.value })}
-                    placeholder={'Authorization: Bearer xxxx'}
-                    rows={2}
-                  />
-                  <span className="small muted">
-                    헤더 값은 OS 키체인에 암호화 저장됩니다. 저장된 서버를 다시 열면 값은 비어 보이며,
-                    비워 두면 기존 값이 유지되고 새 값을 입력하면 교체됩니다.
-                  </span>
-                </label>
-                <label className="field">
-                  <span>인증</span>
-                  <select
-                    className="mcp-select"
-                    value={draft.auth}
-                    onChange={(e) => setDraft({ ...draft, auth: e.target.value as 'none' | 'oauth' })}
-                  >
-                    <option value="none">없음 (헤더/토큰 직접 입력)</option>
-                    <option value="oauth">OAuth 2.1 (브라우저 로그인)</option>
-                  </select>
-                </label>
-                {draft.auth === 'oauth' && (
-                  <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: -4 }}>
-                    <button
-                      className="secondary"
-                      onClick={() => void authorizeDraft()}
-                      disabled={authBusy || !draft.url.trim() || !draft.name.trim()}
-                    >
-                      {authBusy ? '인가 중… (브라우저 확인)' : '브라우저로 인가하기'}
-                    </button>
-                    {authMsg && (
-                      <span className={`small ${authMsg.ok ? 'notice-ok' : 'notice-warn'}`}>{authMsg.text}</span>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-
-            {test && <TestResult state={test} />}
-
-            <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
-              <button className="link" onClick={() => setEditing(null)}>
-                취소
-              </button>
-              <button className="secondary" onClick={() => void runTest()} disabled={test?.busy}>
-                테스트
-              </button>
-              <button className="primary" onClick={() => void saveDraft()} disabled={!draft.name.trim()}>
-                저장
-              </button>
-            </div>
-          </div>
-        )}
+        {body}
       </div>
     </div>
   );

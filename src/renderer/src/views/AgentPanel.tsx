@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import { sessionStore, useSessions } from '../session';
-import { agentSessions, isKeepable, type SessionState } from '../session-store';
+import { agentSessions, isKeepable, openSessions, type SessionState } from '../session-store';
 import type { Agent, Conversation } from '../../../core/index';
 import type { ConnectorConfig } from '../../../main/config';
 import { BackIcon, ChatIcon, CloseIcon, HistoryIcon, PlusIcon, RefreshIcon } from '../brand/icons';
@@ -78,6 +78,8 @@ export const AgentPanel: React.FC<{ config: ConnectorConfig }> = ({ config }) =>
 
   const { sessions, activeKey } = useSessions();
   const activeSession = activeKey ? (sessions.find((s) => s.key === activeKey) ?? null) : null;
+  // 열린 세션(활성 에이전트) — 최근 활동순. 목록 상단에 항상 보여 준다.
+  const open = useMemo(() => openSessions(sessions), [sessions]);
 
   const load = useCallback(
     async (p: number) => {
@@ -166,14 +168,14 @@ export const AgentPanel: React.FC<{ config: ConnectorConfig }> = ({ config }) =>
       const agent = synthAgent(c, agents);
       rememberAgent(agent);
       sessionStore.openResume(agent, c.interactionId, c.workflowName);
-      setSelectedAgent(null);
+      // 드릴다운을 닫지 않는다 — 여기서 여러 대화를 연달아 열 수 있어야 한다.
+      // (탭은 메인 영역에 쌓이고, 이 목록은 계속 골라 담는 곳으로 남는다.)
     },
     [agents, rememberAgent],
   );
 
   const focusSession = useCallback((key: string) => {
     sessionStore.setActive(key);
-    setSelectedAgent(null);
   }, []);
 
   // 2단계(선택된 에이전트) 데이터.
@@ -290,6 +292,41 @@ export const AgentPanel: React.FC<{ config: ConnectorConfig }> = ({ config }) =>
         </>
       ) : (
         <>
+          {/* 활성 에이전트(열린 대화) — 어느 에이전트를 보다가도 지금 열려 있는
+              대화를 바로 되돌아갈 수 있게 목록 위에 고정한다. */}
+          {open.length > 0 && (
+            <div className="open-sessions">
+              <div className="list-label">진행 중인 대화</div>
+              {open.map((s) => (
+                <div
+                  key={s.key}
+                  className={`open-item ${activeKey === s.key ? 'active' : ''}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => focusSession(s.key)}
+                  onKeyDown={(e) => e.key === 'Enter' && focusSession(s.key)}
+                  title={sessionPreview(s)}
+                >
+                  <span className={`open-dot ${s.streaming ? 'live' : ''}`} />
+                  <span className="open-body">
+                    <div className="open-name">{s.agent.workflowName}</div>
+                    <div className="open-meta">{s.streaming ? '응답 중…' : sessionPreview(s)}</div>
+                  </span>
+                  <button
+                    className="conv-end"
+                    title="채팅 종료"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      sessionStore.endChat(s.key);
+                    }}
+                  >
+                    <CloseIcon size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="sidebar-search">
             <input
               className="search"
