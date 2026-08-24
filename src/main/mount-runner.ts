@@ -211,20 +211,46 @@ export function parseStaleWebdavTargets(netUseStdout: string): string[] {
 }
 
 export async function unmountStaleWindows(): Promise<number> {
-  const r = await run('cmd.exe', ['/d', '/s', '/c', 'net use']);
-  const targets = parseStaleWebdavTargets(r.stdout);
-  let cleaned = 0;
-  for (const target of targets) {
-    const del = await run('cmd.exe', ['/d', '/s', '/c', `net use "${target}" /delete /y`], {
-      timeoutMs: 15_000,
-    });
-    if (del.code === 0) {
-      cleaned++;
-      diag('mount', `스테일 WebDAV 마운트 정리: ${target}`);
-    }
-  }
-  if (cleaned) diag('mount', `스테일 WebDAV 마운트 ${cleaned}개 정리 완료`);
+  const scan = async () =>
+    parseStaleWebdavTargets((await run('cmd.exe', ['/d', '/s', '/c', 'net use'])).stdout);
+  const before = await scan();
+  if (before.length === 0) return 0;
+  // 1) 드라이브 문자 매핑은 **강제 제거**한다. `net use /delete` 는 이전 세션의 WebDAV
+  //    서버가 사라진 **죽은 마운트**에서 실패·행(hang)하는데(=무한 누적의 진짜 원인),
+  //    WScript.Network.RemoveNetworkDrive(force) 는 사용 중·연결 끊김도 걷어 낸다.
+  await forceRemoveStaleWindowsDrives().catch(() => undefined);
+  // 2) 남은 것(드라이브 문자 없는 끊긴 원격 + PS 미처리분)은 net use /delete 로 마저.
+  const remaining = await scan();
+  await Promise.all(
+    remaining.map((t) =>
+      run('cmd.exe', ['/d', '/s', '/c', `net use "${t}" /delete /y`], { timeoutMs: 10_000 }),
+    ),
+  );
+  const after = await scan();
+  const cleaned = Math.max(0, before.length - after.length);
+  if (cleaned) diag('mount', `스테일 WebDAV 마운트 ${cleaned}/${before.length}개 정리 완료`);
+  if (after.length)
+    diag('mount', `스테일 WebDAV ${after.length}개 잔존 — 재부팅 시 정리(persistent:no)`);
   return cleaned;
+}
+
+/**
+ * 127.0.0.1 WebDAV 드라이브 매핑을 **강제 제거** — 로케일 무관·죽은 서버도 걷힌다.
+ *
+ * `WScript.Network.RemoveNetworkDrive(name, force=true, updateProfile=true)` 는 연결
+ * 끊김·사용 중 매핑도 강제로 제거한다 (`net use /delete` 가 죽은 WebDAV 에서 실패·행하던
+ * 누적의 근본 원인을 우회). PS 안에서 `net use` 출력을 직접 훑어 `127.0.0.1@` 라인의
+ * 드라이브 문자만 뽑으므로 한국어 등 로케일 문자열에 의존하지 않는다. PS 부재/실패는
+ * 조용히 무시하고 호출부의 net use /delete 폴백에 맡긴다.
+ */
+async function forceRemoveStaleWindowsDrives(): Promise<void> {
+  const ps =
+    "$ErrorActionPreference='SilentlyContinue';" +
+    '$n=New-Object -ComObject WScript.Network;' +
+    "foreach($l in (net use)){if($l -match '127\\.0\\.0\\.1@' -and $l -match '\\b([A-Za-z]):'){try{$n.RemoveNetworkDrive($matches[1]+':',$true,$true)}catch{}}}";
+  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+    timeoutMs: 20_000,
+  });
 }
 
 export async function unmountWindows(drive: string): Promise<void> {
