@@ -1043,11 +1043,16 @@ export const Settings: React.FC<{
                   <MonitorIcon size={18} />
                 </span>
                 <div className="tool-card-text">
-                  <div className="tool-card-title">로컬 도구 접근 (셸 · 파일)</div>
+                  <div className="tool-card-title">
+                    로컬 도구 접근 (셸 · 파일) — 서버 실행 시 이 PC 프록시
+                  </div>
                   <div className="tool-card-desc">
-                    에이전트가 이 PC 의 셸(PowerShell/bash)로 명령을 실행하고, 파일
-                    읽기/쓰기·목록·검색·클립보드·알림 도구로 "내 컴퓨터"를 직접 다룰 수 있게 합니다.
-                    파일 도구는 아래 허용 폴더 범위로 제한됩니다.
+                    켜면, 에이전트가 <b>서버(웹)에서 실행되거나 로컬 실행이 서버로 폴백된 상황</b>
+                    에서도 이 PC 의 셸(PowerShell/bash)·파일 읽기/쓰기·목록·검색·클립보드·알림으로
+                    "내 컴퓨터"를 직접 조작할 수 있습니다 — 커넥터가 자동으로 프록시가 됩니다(MCP
+                    설정과 무관, 이 스위치만으로 동작). 커넥터에서 그대로 <b>로컬 실행</b>되는 기본
+                    경우엔 에이전트가 이미 이 PC 에서 자기 런타임 도구로 직접 조작하므로 이 도구들은
+                    쓰이지 않습니다. 파일 도구는 아래 허용 폴더로 제한됩니다.
                   </div>
                 </div>
                 <label className="switch">
