@@ -226,15 +226,22 @@ const ExposedToolsPanel: React.FC<{
 }> = ({ status, logs }) => {
   const [openTool, setOpenTool] = useState<string | null>(null);
   const [showCalls, setShowCalls] = useState(false);
+  // 커넥터 내장 도구('local' 서버 — Shell·파일·클립보드/브라우저/MCP 관리)는 기본 접힘.
+  // MCP 탭에서 정작 보고 싶은 건 내가 등록한 **MCP 서버**의 도구인데, 내장 도구를 다 펼치면
+  // "로컬 MCP 가 너무 많다"고 느껴진다(내장은 PC 컨트롤·브라우저 탭에서 관리). 요약만 보여주고
+  // 필요할 때 펼친다. 외부 MCP 서버는 그대로 펼친다.
+  const [builtinOpen, setBuiltinOpen] = useState(false);
   // 내부 도구(`_` 접두 — 서버가 LLM 노출에서 제외하는 실행 브리지 라우트, 예:
-  // _Exec/_WorkspaceInfo)는 "에이전트에 노출된 도구" 목록에 넣지 않는다. 모델이 부를 수
-  // 없는 내부 배관이라 사용자에게 불필요·혼란만 준다 (자동 관리되는 로컬/서버 실행 환경의 내부).
+  // _Exec/_WorkspaceInfo)는 목록에서 제외한다. 모델이 부를 수 없는 내부 배관이다.
   const isExposed = (name: string): boolean => !String(name || '').startsWith('_');
   const servers = (status?.servers ?? []).map((s) => ({
     ...s,
     tools: (s.tools ?? []).filter((t) => isExposed(t.name)),
   }));
   const total = servers.reduce((n, s) => n + (s.connected ? s.tools.length : 0), 0);
+  const builtin = servers.find((s) => s.name === 'local');
+  const externals = servers.filter((s) => s.name !== 'local');
+  const externalCount = externals.reduce((n, s) => n + (s.connected ? s.tools.length : 0), 0);
   const recentCalls = logs
     .filter((l) => l.kind === 'result')
     .slice(-25)
@@ -243,61 +250,132 @@ const ExposedToolsPanel: React.FC<{
   return (
     <div className="mcp-exposed">
       <div className="mcp-exposed-head">
-        <strong>에이전트에 노출된 도구 {total}개</strong>
+        <strong>
+          에이전트에 노출된 도구 {total}개
+          <span className="small muted" style={{ fontWeight: 400, marginLeft: 8 }}>
+            (내장 {builtin?.tools.length ?? 0} · MCP 서버 {externalCount})
+          </span>
+        </strong>
         <span className="small muted">
           {status?.connected
             ? '지금 세션 에이전트가 사용할 수 있습니다'
             : '연결되면 자동 주입됩니다'}
         </span>
       </div>
-      {servers.length === 0 ? (
+      {servers.length === 0 || (total === 0 && externals.length === 0 && !builtin) ? (
         <div className="small muted pad">
-          노출된 도구가 없습니다. 로컬 도구를 켜거나 MCP 서버를 추가하세요.
+          노출된 도구가 없습니다. 아래에서 MCP 서버를 추가하거나, PC 컨트롤 탭에서 로컬 도구를
+          켜세요.
         </div>
       ) : (
-        servers
-          .filter((s) => s.tools.length > 0 || !s.connected)
-          .map((s) => (
-            <div key={s.name} className="mcp-exposed-group">
-              <div className="mcp-exposed-server small muted">
-                {s.name === 'local' ? '내 PC · 로컬 도구' : s.name}
-                {!s.connected && (
-                  <span className="mcp-dot off" style={{ marginLeft: 6 }} title="연결 안 됨" />
-                )}
-                <span style={{ marginLeft: 6 }}>· {s.tools.length}</span>
-              </div>
-              <ul className="mcp-exposed-tools">
-                {s.tools.map((t) => {
-                  const key = `${s.name}/${t.name}`;
-                  const open = openTool === key;
-                  return (
-                    <li key={key} className="mcp-exposed-tool">
-                      <button
-                        className="mcp-exposed-tool-btn"
-                        onClick={() => setOpenTool(open ? null : key)}
-                        aria-expanded={open}
-                      >
-                        <span className="mcp-exposed-tool-name">{t.name}</span>
-                        {t.description && (
-                          <span className="small muted mcp-exposed-tool-desc">
-                            {firstLine(t.description)}
-                          </span>
+        <>
+          {/* 커넥터 내장 도구 — 접힘 요약(기본). Shell·파일·클립보드는 PC 컨트롤 탭,
+              브라우저는 브라우저 탭, McpAddServer 등 MCP 관리는 이 탭 스위치가 관리한다. */}
+          {builtin && builtin.tools.length > 0 && (
+            <div className="mcp-exposed-group">
+              <button
+                className="mcp-exposed-server small muted mcp-builtin-summary"
+                onClick={() => setBuiltinOpen((v) => !v)}
+                aria-expanded={builtinOpen}
+                style={{
+                  background: 'none',
+                  border: 0,
+                  cursor: 'pointer',
+                  padding: 0,
+                  textAlign: 'left',
+                }}
+              >
+                {builtinOpen ? '▾' : '▸'} 커넥터 내장 도구 · {builtin.tools.length}개
+                <span style={{ marginLeft: 6 }}>
+                  (PC 컨트롤·브라우저·MCP 관리 — 이 도구들은 각 탭에서 켜고 끕니다)
+                </span>
+              </button>
+              {builtinOpen && (
+                <ul className="mcp-exposed-tools">
+                  {builtin.tools.map((t) => {
+                    const key = `local/${t.name}`;
+                    const open = openTool === key;
+                    return (
+                      <li key={key} className="mcp-exposed-tool">
+                        <button
+                          className="mcp-exposed-tool-btn"
+                          onClick={() => setOpenTool(open ? null : key)}
+                          aria-expanded={open}
+                        >
+                          <span className="mcp-exposed-tool-name">{t.name}</span>
+                          {t.description && (
+                            <span className="small muted mcp-exposed-tool-desc">
+                              {firstLine(t.description)}
+                            </span>
+                          )}
+                        </button>
+                        {open && (
+                          <pre className="mcp-exposed-schema">
+                            {(t.description ? String(t.description).trim() + '\n\n' : '') +
+                              (t.inputSchema
+                                ? JSON.stringify(t.inputSchema, null, 2)
+                                : '(입력 스키마 없음)')}
+                          </pre>
                         )}
-                      </button>
-                      {open && (
-                        <pre className="mcp-exposed-schema">
-                          {(t.description ? String(t.description).trim() + '\n\n' : '') +
-                            (t.inputSchema
-                              ? JSON.stringify(t.inputSchema, null, 2)
-                              : '(입력 스키마 없음)')}
-                        </pre>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
-          ))
+          )}
+          {/* 외부 MCP 서버(내가 등록한 것) — 그대로 펼친다. 없으면 안내. */}
+          {externals.filter((s) => s.tools.length > 0 || !s.connected).length === 0 ? (
+            <div className="small muted pad">
+              등록된 MCP 서버의 도구가 여기 표시됩니다. 아직 없습니다 — 아래에서 추가하거나
+              에이전트에게 McpAddServer 로 요청하세요. (위 "커넥터 내장 도구"는 MCP 서버가 아닙니다)
+            </div>
+          ) : (
+            externals
+              .filter((s) => s.tools.length > 0 || !s.connected)
+              .map((s) => (
+                <div key={s.name} className="mcp-exposed-group">
+                  <div className="mcp-exposed-server small muted">
+                    {s.name}
+                    {!s.connected && (
+                      <span className="mcp-dot off" style={{ marginLeft: 6 }} title="연결 안 됨" />
+                    )}
+                    <span style={{ marginLeft: 6 }}>· {s.tools.length}</span>
+                  </div>
+                  <ul className="mcp-exposed-tools">
+                    {s.tools.map((t) => {
+                      const key = `${s.name}/${t.name}`;
+                      const open = openTool === key;
+                      return (
+                        <li key={key} className="mcp-exposed-tool">
+                          <button
+                            className="mcp-exposed-tool-btn"
+                            onClick={() => setOpenTool(open ? null : key)}
+                            aria-expanded={open}
+                          >
+                            <span className="mcp-exposed-tool-name">{t.name}</span>
+                            {t.description && (
+                              <span className="small muted mcp-exposed-tool-desc">
+                                {firstLine(t.description)}
+                              </span>
+                            )}
+                          </button>
+                          {open && (
+                            <pre className="mcp-exposed-schema">
+                              {(t.description ? String(t.description).trim() + '\n\n' : '') +
+                                (t.inputSchema
+                                  ? JSON.stringify(t.inputSchema, null, 2)
+                                  : '(입력 스키마 없음)')}
+                            </pre>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))
+          )}
+        </>
       )}
       <button
         className="link small"
