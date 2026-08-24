@@ -194,7 +194,10 @@ export const Workspace: React.FC<{
   useEffect(() => {
     teamsStore.reset();
     teamsContextStore.reset();
-    teamsStore.init(user.userId, config.teams?.lastReadAt);
+    teamsStore.init(user.userId, config.teams?.lastReadAt, {
+      mutedRooms: config.teams?.mutedRooms,
+      notifications: config.teams?.notifications,
+    });
   }, [user.userId]);
 
   /** 사이드바에서 방을 고르면 메인 영역에 탭으로 연다 (이미 있으면 그 탭 선택). */
@@ -212,6 +215,47 @@ export const Workspace: React.FC<{
     });
   }, []);
 
+  /**
+   * OS 알림을 눌렀다 → 그 방을 탭으로 연다.
+   * 알림을 눌렀는데 아무 일도 일어나지 않으면 알림이 아니라 소음이다.
+   */
+  useEffect(
+    () =>
+      xgen.teams.onNotificationClick((roomId) => {
+        const room = teamsStore.getSnapshot().rooms.find((r) => r.id === roomId);
+        if (!room) return;
+        setSideView('teams');
+        openRoomTab(room);
+      }),
+    [openRoomTab],
+  );
+
+  /**
+   * 방 탭의 제목을 살아 있는 방 이름과 맞춘다.
+   *
+   * 탭에 적힌 `roomName` 은 **열 때 박제된 값**이다(재시작 후 목록을 부르기 전에도
+   * 제목을 그리려고 저장한다). 그래서 이름을 바꾸면 헤더는 바뀌는데 탭만 옛
+   * 이름으로 남았다. 이름이 어디서 바뀌든(내가 바꿨든, 목록을 다시 불렀든)
+   * 여기 한 곳에서 따라간다.
+   */
+  useEffect(() => {
+    if (teams.rooms.length === 0) return;
+    setLayout((current) => {
+      let changed = false;
+      const groups = current.groups.map((group) => ({
+        ...group,
+        tabs: group.tabs.map((tab) => {
+          if (tab.kind !== 'teams' || !tab.roomId) return tab;
+          const live = teams.rooms.find((r) => r.id === tab.roomId);
+          if (!live || live.name === tab.roomName) return tab;
+          changed = true;
+          return { ...tab, roomName: live.name };
+        }),
+      }));
+      return changed ? { ...current, groups } : current;
+    });
+  }, [teams.rooms]);
+
   /** 열린 방 탭 중 지금 보고 있는 방 (사이드바 활성 표시용). */
   const activeRoomId = useMemo(() => {
     for (const group of layout.groups) {
@@ -220,21 +264,6 @@ export const Workspace: React.FC<{
     }
     return null;
   }, [layout]);
-
-  /**
-   * "지금 보고 있는 Teams 방" 을 Agent 쪽에 알린다 — Slack 의 `app_context_changed`
-   * 에 해당한다. 사용자가 방을 보다가 Agent 탭으로 넘어가면 그 방이 문맥으로
-   * 따라붙고, 사용자는 "이거 요약해줘" 라고만 하면 된다.
-   *
-   * 방을 **떠날 때는 알리지 않는다**(null 을 보내지 않는다). Agent 탭으로 가는
-   * 순간 activeRoomId 는 null 이 되는데, 그때 지워 버리면 이 기능을 쓰려는 바로
-   * 그 순간에 문맥이 사라진다.
-   */
-  useEffect(() => {
-    if (!activeRoomId) return;
-    const room = teams.rooms.find((item) => item.id === activeRoomId);
-    if (room) teamsContextStore.setViewedRoom(room);
-  }, [activeRoomId, teams.rooms]);
 
   /**
    * 공유된 산출물의 [원본 대화 보기] — 그 에이전트 대화를 탭으로 되살린다.
@@ -282,7 +311,7 @@ export const Workspace: React.FC<{
     [sessions],
   );
 
-  /** 방을 나갔다 — 그 방을 띄우고 있던 탭을 닫는다. */
+  /** 방을 나갔거나 삭제했다 — 그 방을 띄우고 있던 탭을 닫는다. */
   const closeRoomTabs = useCallback((roomId: string) => {
     setLayout((current) => removeWorkspaceTab(current, `teams:${roomId}`));
   }, []);

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useModalDismiss } from './use-modal-dismiss';
 import { xgen, copyText } from '../bridge';
 import {
   BROWSER_SEARCH_PROVIDERS,
@@ -60,6 +61,8 @@ export const Settings: React.FC<{
   /** true 면 모달이 아니라 메인 영역의 [설정] 탭 본문으로 렌더링된다. */
   embedded?: boolean;
 }> = ({ config, onClose, onChanged, embedded }) => {
+  // 탭으로 박혀 있을 때(embedded)는 Esc 로 닫을 대상이 아니다.
+  useModalDismiss(onClose, !embedded);
   const [tab, setTab] = useState<Tab>('connection');
   const [serverUrl, setServerUrl] = useState(config.serverUrl);
   const [allowPrivateCertificate, setAllowPrivateCertificate] = useState(
@@ -1264,6 +1267,7 @@ const InstallLogModal: React.FC<{
   onRefresh: () => void;
   setMsg: (m: string | null) => void;
 }> = ({ status, onClose, onRefresh, setMsg }) => {
+  useModalDismiss(onClose);
   const logs = status?.logs ?? [];
   return (
     <div className="modal-backdrop" onClick={onClose}>

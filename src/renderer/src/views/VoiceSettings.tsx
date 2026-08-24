@@ -6,10 +6,13 @@
  * 비밀(base_url/api_key)은 서버에만 있으며 여기로 오지 않는다.
  */
 import React, { useEffect, useState } from 'react';
+import { useModalDismiss } from './use-modal-dismiss';
 import { xgen } from '../bridge';
 import type { VoiceConfig } from '../../../core/index';
 
 export const VoiceSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  // Esc 로도 닫힌다 (바깥 클릭은 backdrop 이 처리).
+  useModalDismiss(onClose);
   const [cfg, setCfg] = useState<VoiceConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);

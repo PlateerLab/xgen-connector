@@ -13,6 +13,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Notification,
   shell,
   nativeTheme,
   screen,
@@ -1966,6 +1967,52 @@ ipcMain.handle(CHANNELS.teamsCreateRoom, (_e, name: string, description?: string
 ipcMain.handle(CHANNELS.teamsOpenDm, (_e, userId: number, username?: string) =>
   getClient().teams.openDirectMessage(userId, username),
 );
+ipcMain.handle(
+  CHANNELS.teamsUpdateRoom,
+  (_e, roomId: string, patch: { name?: string; description?: string | null }) =>
+    getClient().teams.updateRoom(roomId, patch),
+);
+ipcMain.handle(CHANNELS.teamsDeleteRoom, async (_e, roomId: string) => {
+  await getClient().teams.deleteRoom(roomId);
+  // 지운 방의 소켓을 그대로 두면 서버가 거절할 때까지 재연결을 시도한다.
+  teamsHub.closeRoom(roomId);
+  return true;
+});
+
+/**
+ * 새 메시지 OS 알림.
+ *
+ * **판정은 렌더러가 한다.** "지금 그 방을 보고 있는가 / 음소거인가" 는 렌더러만
+ * 아는 상태이고, main 이 그걸 다시 들고 있으면 두 곳이 어긋난다. main 은
+ * 창 포커스 여부만 더 얹고(포커스 상태에서 보고 있지 않은 방은 알릴 가치가 있다)
+ * 실제 표시와 클릭 처리를 맡는다.
+ *
+ * 클릭하면 창을 띄우고 렌더러에 방을 열라고 알린다 — 알림을 눌렀는데 아무 일도
+ * 일어나지 않으면 알림이 아니라 소음이다.
+ */
+ipcMain.handle(
+  CHANNELS.teamsNotify,
+  (_e, payload: { roomId: string; roomName: string; sender: string; body: string }) => {
+    if (!Notification.isSupported()) return false;
+    const n = new Notification({
+      title: payload.roomName || 'XGEN Teams',
+      body: `${payload.sender}: ${payload.body}`.slice(0, 300),
+      silent: false,
+    });
+    n.on('click', () => {
+      const win = mainWindow;
+      if (win) {
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      }
+      safeSend(win, CHANNELS.teamsNotificationClick, payload.roomId);
+    });
+    n.show();
+    return true;
+  },
+);
+
 ipcMain.handle(CHANNELS.teamsLeaveRoom, async (_e, roomId: string) => {
   await getClient().teams.leaveRoom(roomId);
   // 나간 방의 소켓을 그대로 두면 서버가 거절할 때까지 재연결을 시도한다.

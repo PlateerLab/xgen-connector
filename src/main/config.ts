@@ -157,6 +157,13 @@ export interface ConnectorConfig {
    */
   teams?: {
     lastReadAt?: Record<string, string>;
+    /**
+     * 알림을 끈 방 id 목록. **서버에 per-room 음소거 API 가 없어서**
+     * (웹 Teams 도 마찬가지) 이 PC 가 기억한다 — lastReadAt 과 같은 이유.
+     */
+    mutedRooms?: string[];
+    /** 새 메시지 OS 알림 전체 스위치. 미설정 = 켜짐. */
+    notifications?: boolean;
   };
 }
 

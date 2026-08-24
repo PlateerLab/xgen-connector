@@ -19,10 +19,12 @@ import type {
   TeamsMessage,
   TeamsRoom,
 } from '../../core/index';
+import { shareBodyOf } from '../../core/teams-bridge';
 import {
   PENDING_PREFIX,
   applyEdit,
   applyReactions,
+  messagePreview,
   dropPending,
   mergeMessages,
   settlePending,
@@ -76,6 +78,8 @@ export interface TeamsSnapshot {
   byRoom: Record<string, RoomState>;
   /** 방별 안 읽은 메시지 수 — 서버가 세지 않아 여기서 계산한다. */
   unread: Record<string, number>;
+  /** 알림을 끈 방 id. 서버에 음소거 API 가 없어 이 PC 설정이다. */
+  mutedRooms: string[];
 }
 
 const PAGE_SIZE = 50;
@@ -101,10 +105,15 @@ class TeamsLiveStore {
     roomsError: '',
     byRoom: {},
     unread: {},
+    mutedRooms: [],
   };
 
   private listeners = new Set<() => void>();
   private lastReadAt: Record<string, string> = {};
+  /** 알림을 끈 방. 서버에 음소거 API 가 없어 이 PC 가 기억한다. */
+  private muted = new Set<string>();
+  /** 새 메시지 OS 알림 전체 스위치. */
+  private notificationsOn = true;
   private myUserId = '';
   /** 화면에 떠 있는(= 읽고 있는) 방. 이 방의 메시지는 안 읽음으로 세지 않는다. */
   private activeRoomId: string | null = null;
@@ -145,9 +154,16 @@ class TeamsLiveStore {
    * 로그인 직후 1회. 사용자 id 와 저장된 열람 시각을 넘겨받고 실시간 구독을 건다.
    * 여러 번 불려도 구독은 한 번만 걸린다 (React StrictMode 이중 마운트 대비).
    */
-  init(myUserId: string, lastReadAt: Record<string, string> | undefined): void {
+  init(
+    myUserId: string,
+    lastReadAt: Record<string, string> | undefined,
+    prefs?: { mutedRooms?: string[]; notifications?: boolean },
+  ): void {
     this.myUserId = myUserId;
     if (lastReadAt) this.lastReadAt = { ...lastReadAt };
+    this.muted = new Set(prefs?.mutedRooms ?? []);
+    this.notificationsOn = prefs?.notifications !== false;
+    this.emit({ mutedRooms: [...this.muted] });
     if (this.wired) return;
     this.wired = true;
     xgen.teams.onEvent((event) => this.onEvent(event));
@@ -159,7 +175,15 @@ class TeamsLiveStore {
     this.typingTimers.clear();
     this.activeRoomId = null;
     this.lastReadAt = {};
-    this.emit({ rooms: [], loadingRooms: false, roomsError: '', byRoom: {}, unread: {} });
+    this.muted = new Set();
+    this.emit({
+      rooms: [],
+      loadingRooms: false,
+      roomsError: '',
+      byRoom: {},
+      unread: {},
+      mutedRooms: [],
+    });
   }
 
   async loadRooms(): Promise<void> {
@@ -378,14 +402,29 @@ class TeamsLiveStore {
       });
       return false;
     }
+    this.forget(roomId);
+    return true;
+  }
+
+  /**
+   * 방을 목록·캐시·안 읽음에서 **완전히** 지운다 (나가기/삭제 공통).
+   * 남겨 두면 더 이상 멤버가 아닌 방의 옛 메시지가 화면에 남고 배지까지 계속 센다.
+   */
+  private forget(roomId: string): void {
     if (this.activeRoomId === roomId) this.activeRoomId = null;
     delete this.lastReadAt[roomId];
+    this.muted.delete(roomId);
+    const mutedRooms = [...this.muted];
     const byRoom = { ...this.snapshot.byRoom };
     delete byRoom[roomId];
     const unread = { ...this.snapshot.unread };
     delete unread[roomId];
-    this.emit({ rooms: this.snapshot.rooms.filter((r) => r.id !== roomId), byRoom, unread });
-    return true;
+    this.emit({
+      rooms: this.snapshot.rooms.filter((r) => r.id !== roomId),
+      byRoom,
+      unread,
+      mutedRooms,
+    });
   }
 
   /** 파일 고르기 → 업로드. 경로는 메인에만 있고 여기로 넘어오지 않는다. */
@@ -398,6 +437,89 @@ class TeamsLiveStore {
       });
       return [];
     }
+  }
+
+  /**
+   * 새 메시지 OS 알림을 띄울지 판정한다.
+   *
+   * 판정을 렌더러가 하는 이유: "지금 그 방을 보고 있는가" 와 "음소거인가" 는
+   * 여기에만 있는 상태다. main 이 따로 들고 있으면 두 곳이 어긋난다.
+   *
+   * 알리지 않는 경우:
+   *   · 전체 스위치가 꺼짐 / 이 방이 음소거
+   *   · **내가 보낸 메시지** — 내 말에 내가 알림을 받을 이유가 없다
+   *   · 시스템 안내(입장/퇴장)
+   *   · 지금 그 방을 보고 있음 (화면에 이미 떠 있다)
+   *
+   * `message` 이벤트가 아니라 `notify`(사용자 소켓)에서만 부른다. 방 소켓의
+   * `message` 는 그 방을 열어 둔 경우에만 오므로 알릴 대상이 아니다.
+   */
+  private maybeNotify(roomId: string, message: TeamsMessage): void {
+    if (!this.notificationsOn || this.muted.has(roomId)) return;
+    if (message.senderType === 'system') return;
+    if (message.senderType === 'user' && message.senderId === this.myUserId) return;
+    if (this.activeRoomId === roomId && document.hasFocus()) return;
+    const room = this.snapshot.rooms.find((r) => r.id === roomId);
+    const body = shareBodyOf(message.content).trim() || messagePreview(message);
+    void xgen.teams
+      .notify({
+        roomId,
+        roomName: room?.name || '대화',
+        sender: message.senderName,
+        body: body || '(첨부)',
+      })
+      .catch(() => undefined);
+  }
+
+  /** 이 방의 알림이 꺼져 있는가. */
+  isMuted(roomId: string): boolean {
+    return this.muted.has(roomId);
+  }
+
+  /** 방 알림 켜기/끄기. 서버에 API 가 없어 이 PC 설정으로만 남는다. */
+  toggleMute(roomId: string): void {
+    if (this.muted.has(roomId)) this.muted.delete(roomId);
+    else this.muted.add(roomId);
+    const mutedRooms = [...this.muted];
+    void xgen.config.set({ teams: { mutedRooms } });
+    this.emit({ mutedRooms });
+  }
+
+  /** 방 이름 바꾸기. 성공하면 목록과 열린 탭 제목이 함께 갱신된다. */
+  async rename(roomId: string, name: string): Promise<boolean> {
+    const next = name.trim();
+    if (!next) return false;
+    try {
+      await xgen.teams.updateRoom(roomId, { name: next });
+    } catch (e) {
+      this.patchRoom(roomId, {
+        error: e instanceof Error ? e.message : '이름을 바꾸지 못했습니다.',
+      });
+      return false;
+    }
+    this.emit({
+      rooms: sortRooms(
+        this.snapshot.rooms.map((r) => (r.id === roomId ? { ...r, name: next } : r)),
+      ),
+    });
+    return true;
+  }
+
+  /**
+   * 방 삭제 (방장만). 나가기와 같은 정리를 하되, 실패는 화면에 남긴다 —
+   * 권한이 없으면 서버가 403 을 주므로 그 사유가 보여야 한다.
+   */
+  async remove(roomId: string): Promise<boolean> {
+    try {
+      await xgen.teams.deleteRoom(roomId);
+    } catch (e) {
+      this.patchRoom(roomId, {
+        error: e instanceof Error ? e.message : '대화방을 삭제하지 못했습니다.',
+      });
+      return false;
+    }
+    this.forget(roomId);
+    return true;
   }
 
   async toggleReaction(roomId: string, messageId: string, emoji: string): Promise<void> {
@@ -470,6 +592,7 @@ class TeamsLiveStore {
         this.recount(event.roomId);
         // 목록에 없는 방에서 알림이 왔다 = 방금 초대됐다 — 목록을 다시 부른다.
         if (!this.snapshot.rooms.some((r) => r.id === event.roomId)) void this.loadRooms();
+        this.maybeNotify(event.roomId, event.message);
         return;
       }
       case 'message_edited': {

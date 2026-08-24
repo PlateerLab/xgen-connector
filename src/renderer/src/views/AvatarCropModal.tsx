@@ -4,6 +4,7 @@
  * "보이는 그대로" 잘린다. 휠 확대/축소 + 드래그 이동, 균일 스케일만 사용.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useModalDismiss } from './use-modal-dismiss';
 
 const FRAME_W = 300; // CSS px
 const FRAME_H = 380; // portrait — avatars read best tall
@@ -14,6 +15,8 @@ export const AvatarCropModal: React.FC<{
   onCrop: (cropped: File) => void;
   onClose: () => void;
 }> = ({ file, onCrop, onClose }) => {
+  // Esc 로도 닫힌다 (바깥 클릭은 backdrop 이 처리).
+  useModalDismiss(onClose);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const view = useRef({ scale: 1, x: 0, y: 0 });

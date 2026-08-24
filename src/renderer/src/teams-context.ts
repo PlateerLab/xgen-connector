@@ -2,18 +2,20 @@
  * teams-context — [Agent] 탭이 지금 **어느 Teams 방을 보고 있었는지** 기억하고,
  * 그 방의 대화를 프롬프트 봉투로 만들어 넘기는 곳.
  *
- * 왜 자동인가 (버튼이 아니라)
+ * 왜 자동 추적을 쓰지 않는가
  * ─────────────────────────
- * Slack 의 에이전트는 `app_context_changed` 로 **사용자가 지금 보고 있는 채널**을
- * 항상 알고 있다. 그래서 사용자가 "이거 요약해줘" 라고만 해도 "이거" 가 무엇인지
- * 안다. 방마다 [요약하기] 버튼을 다는 설계는 그보다 한 단계 뒤다 — 사용자가
- * 매번 "무엇에 대해" 를 다시 말해야 하기 때문이다.
+ * 처음에는 Slack 의 `app_context_changed` 를 본떠 **마지막으로 본 방**이 저절로
+ * 따라붙게 했다. 쓰다 보니 그 편의보다 문제가 컸다:
+ *   · 방을 잠깐 들여다본 것만으로 그 방이 문맥이 된다. 사용자는 고른 적이 없다.
+ *   · 여러 방을 오가면 칩이 계속 바뀌어, 정작 보낼 때 어느 방이 붙어 있는지
+ *     매번 확인해야 한다.
+ *   · 남이 쓴 글이 나가는 기능이 **기본 켜짐**이 된다.
  *
- * 커넥터는 이걸 Slack 보다 쉽게 할 수 있다. Slack 은 클라이언트 상태를 서버로
- * 이벤트를 쏴서 알려야 하지만, 커넥터의 "지금 보고 있는 방" 은 이미 렌더러
- * 한 프로세스 안에 있다(`Workspace` 의 activeRoomId). IPC 도 서버도 필요 없다.
+ * 그래서 지금은 **사용자가 방을 명시적으로 고를 때만** 붙는다. 고르기 전에는
+ * 칩이 없고, 아무것도 나가지 않는다. 고른 뒤에는 그 방이 그대로 유지된다 —
+ * 다른 방을 봐도 바뀌지 않는다.
  *
- * 대신 자동이기 때문에 **끌 수 있어야 하고, 나갈 때 알려야 한다**:
+ * 붙어 있는 동안의 규칙은 그대로다:
  *   · 칩으로 항상 보인다 — 화면 캡처 토글과 같은 원칙이다. 켜 둔 것을 잊고
  *     남의 대화를 흘려보내는 것이 이 기능의 유일한 위험이다.
  *   · 처음 보낼 때 몇 건이 나가는지 확인을 받는다. 같은 (세션·방·범위) 조합은
@@ -50,8 +52,6 @@ interface ContextRoom {
 interface SessionContext {
   room: ContextRoom | null;
   limit: number;
-  /** 사용자가 직접 방을 골랐다 — 이후 "보고 있는 방" 을 따라가지 않는다. */
-  pinned: boolean;
   /** 사용자가 껐다 — 다시 켜기 전에는 자동으로 붙지 않는다. */
   dismissed: boolean;
   /** 승인한 조합 (`roomId:limit`). 방이나 범위가 바뀌면 다시 묻는다. */
@@ -75,13 +75,6 @@ function approvalKey(roomId: string, limit: number): string {
 }
 
 class TeamsContextStore {
-  /**
-   * 가장 최근에 연 Teams 방. **탭을 떠나도 지우지 않는다** — Slack 의 thread
-   * context 처럼, 다른 방을 열기 전까지는 그 방이 계속 문맥이다. 여기서 지우면
-   * Teams 를 보다가 Agent 탭으로 간 순간(= 이 기능을 쓰는 바로 그 순간) 칩이
-   * 사라진다.
-   */
-  private viewed: ContextRoom | null = null;
   private bySession = new Map<string, SessionContext>();
   /** 전송 직전에 만들어 두는 일회용 봉투. 붙이면 즉시 버린다. */
   private pending = new Map<string, string>();
@@ -101,17 +94,8 @@ class TeamsContextStore {
     for (const listener of this.listeners) listener();
   }
 
-  /** Teams 방 탭이 활성화될 때 Workspace 가 알려 준다. */
-  setViewedRoom(room: TeamsRoom | null): void {
-    if (!room) return;
-    if (this.viewed?.id === room.id && this.viewed.name === room.name) return;
-    this.viewed = { id: room.id, name: room.name, isDirect: room.isDirect };
-    this.emit();
-  }
-
   /** 로그아웃 / 계정 전환 — 남의 방이 다음 계정의 프롬프트에 실리면 안 된다. */
   reset(): void {
-    this.viewed = null;
     this.bySession.clear();
     this.pending.clear();
     this.emit();
@@ -124,11 +108,14 @@ class TeamsContextStore {
     if (had || pending) this.emit();
   }
 
-  /** 이 세션에 지금 붙어 있는 칩. 없으면 null. */
+  /**
+   * 이 세션에 지금 붙어 있는 칩. **사용자가 방을 고른 적이 없으면 null** 이다.
+   * 저절로 붙는 경로는 없다.
+   */
   chipFor(sessionKey: string): ContextChip | null {
     const ctx = this.bySession.get(sessionKey);
-    if (ctx?.dismissed) return null;
-    const room = ctx?.pinned ? ctx.room : (this.viewed ?? ctx?.room ?? null);
+    if (!ctx || ctx.dismissed) return null;
+    const room = ctx.room;
     if (!room) return null;
     const limit = ctx?.limit ?? DEFAULT_CONTEXT_LIMIT;
     return {
@@ -141,13 +128,9 @@ class TeamsContextStore {
     };
   }
 
-  /**
-   * 붙일 방이 하나라도 있는가 — 칩을 껐을 때 "다시 붙이기" 를 보여줄지 판단한다.
-   * Teams 를 한 번도 안 연 사용자에게는 그 버튼조차 뜨지 않아야 한다.
-   */
-  canAttach(sessionKey: string): boolean {
-    const ctx = this.bySession.get(sessionKey);
-    return Boolean(ctx?.room ?? this.viewed);
+  /** 이 세션이 마지막으로 고른 방 (칩을 껐어도 기억한다 — 다시 켤 때 그 방으로). */
+  lastPicked(sessionKey: string): ContextRoom | null {
+    return this.bySession.get(sessionKey)?.room ?? null;
   }
 
   /** 지금 캐시에 있는, 봉투에 실을 수 있는 메시지 수. */
@@ -168,7 +151,6 @@ class TeamsContextStore {
     const current = this.bySession.get(sessionKey) ?? {
       room: null,
       limit: DEFAULT_CONTEXT_LIMIT,
-      pinned: false,
       dismissed: false,
       approvedFor: '',
     };
@@ -185,16 +167,16 @@ class TeamsContextStore {
     this.patch(sessionKey, { dismissed: true, approvedFor: '' });
   }
 
-  /** 칩 다시 켜기 (자동 추적으로 복귀). */
+  /** 껐던 칩을 마지막에 고른 방으로 되살린다. 고른 적이 없으면 아무 일도 없다. */
   restore(sessionKey: string): void {
-    this.patch(sessionKey, { dismissed: false, pinned: false, room: null });
+    if (!this.bySession.get(sessionKey)?.room) return;
+    this.patch(sessionKey, { dismissed: false, approvedFor: '' });
   }
 
-  /** 사용자가 방을 직접 골랐다 — 이후 자동 추적을 멈춘다. */
-  pinRoom(sessionKey: string, room: TeamsRoom): void {
+  /** 사용자가 방을 골랐다 — 칩이 붙는 **유일한** 경로다. */
+  pickRoom(sessionKey: string, room: TeamsRoom): void {
     this.patch(sessionKey, {
       room: { id: room.id, name: room.name, isDirect: room.isDirect },
-      pinned: true,
       dismissed: false,
       approvedFor: '',
     });

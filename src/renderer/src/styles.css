@@ -942,6 +942,11 @@ button {
   flex: 1;
 }
 .agent-name {
+  /* 블록으로 고정한다. 이 자리에 <div>(AgentPanel)와 <span>(Teams 목록)이 섞여
+     쓰이는데, span 이면 인라인으로 흘러 이름과 설명이 한 줄에 뭉친다
+     ("test방그룹 대화 · 9시간 전"). button 안에서는 div 를 못 쓰므로 마크업이
+     아니라 여기서 맞춘다. */
+  display: block;
   font-weight: 600;
   font-size: 13px;
   white-space: nowrap;
@@ -949,6 +954,7 @@ button {
   text-overflow: ellipsis;
 }
 .agent-meta {
+  display: block;
   margin-top: 1px;
   font-size: 11px;
   color: var(--muted);
@@ -4311,6 +4317,27 @@ button {
   gap: 8px;
   margin-top: 4px;
 }
+
+/**
+ * 모달 하단 버튼 줄.
+ *
+ * 스타일이 아예 없어서 버튼들이 왼쪽에 흘러 붙고 간격도 없었다. 아바타 모달이
+ * 쓰던 `.avset-modal-actions` 와 같은 규칙을 공용 이름으로 둔다 — 모달마다
+ * 다른 이름으로 같은 것을 반복하지 않는다.
+ */
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+/* 버튼 높이를 서로 맞춘다. .primary/.secondary/.danger 의 padding 이 1px 씩
+   달라(10/9/9) 나란히 두면 위아래가 어긋나 보인다. */
+.modal-actions > button {
+  min-height: 38px;
+  font-size: 14px;
+}
 .avset-crop-frame {
   margin: 0 auto 4px;
   border-radius: 12px;
@@ -5520,4 +5547,37 @@ button.sm {
 .teams-image figcaption button:hover:not(:disabled) {
   color: var(--text);
   background: var(--border-soft);
+}
+
+/* ── 모달 하단 안내 — "닫기" 버튼을 없앤 자리에 닫는 법을 알려 준다 ───── */
+.modal-hint {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: right;
+}
+.modal-hint kbd {
+  font-size: 10.5px;
+}
+
+/* 방 메뉴 구분선 — 파괴적 항목(나가기/삭제)을 위쪽과 갈라 놓는다. */
+.teams-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+/* 칩의 [변경] — 다른 대화로 갈아끼우기 */
+.teams-ctx-change {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--primary-soft-border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  color: var(--primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.teams-ctx-change:hover {
+  background: var(--primary-soft);
 }
