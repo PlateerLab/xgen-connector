@@ -87,7 +87,7 @@ export const Settings: React.FC<{
   const ls = config.localShell ?? {};
   const [shellOn, setShellOn] = useState(ls.enabled === true);
   const [shellCwd, setShellCwd] = useState(ls.cwd ?? '');
-  const [shellTimeoutS, setShellTimeoutS] = useState(Math.round((ls.timeoutMs ?? 120_000) / 1000));
+  const [shellTimeoutS, setShellTimeoutS] = useState(Math.round((ls.timeoutMs ?? 600_000) / 1000));
   // 차단 명령 — 칩 목록 + 프리셋(누르면 추가) + 직접 입력. 첫 단어 기준 매칭.
   const [shellBlocked, setShellBlocked] = useState<string[]>(
     (ls.blocked ?? []).map((b) => String(b).trim()).filter(Boolean),
