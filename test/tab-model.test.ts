@@ -28,6 +28,7 @@ function session(partial: Partial<SessionState> & { key: string }): SessionState
     messages: [],
     streaming: false,
     error: null,
+    unseen: false,
     createdAt: 0,
     updatedAt: 0,
     ...partial,

@@ -87,10 +87,14 @@ function fallbackBrowserAgent(connection: BrowserConnectionEvent): Agent {
   };
 }
 
-function layoutWithLiveSessions(
+// 살아있는 세션 목록과 탭을 구조적으로만 맞춘다(추가/제거) — 절대 여기서 activeTabId 를
+// 건드리지 않는다. sessions 는 스트리밍 토큰 하나마다 새 배열 참조로 바뀌므로(session-store
+// emit), 여기서 탭을 선택해버리면 사용자가 다른 탭(설정/브라우저 등)을 보고 있어도 백그라운드
+// 채팅이 갱신될 때마다 그 탭으로 강제 전환되는 버그가 난다(신규 세션 추가는 예외 — 새로 여는
+// 대화는 포커스되어야 자연스러우며, addWorkspaceTab 자체가 새로 만든 탭을 활성화한다).
+export function layoutWithLiveSessions(
   current: WorkspaceLayout,
   sessions: ReturnType<typeof chatTabs>,
-  activeKey: string | null,
 ): WorkspaceLayout {
   const liveIds = new Set(sessions.map((session) => `chat:${session.key}`));
   let next = current;
@@ -103,11 +107,20 @@ function layoutWithLiveSessions(
     const tab = chatTab(session);
     if (!findTab(next, tab.id)) next = addWorkspaceTab(next, next.focusedGroupId, tab);
   }
-  if (activeKey) {
-    const found = findTab(next, `chat:${activeKey}`);
-    if (found) next = selectWorkspaceTab(next, found.group.id, found.tab.id);
-  }
   return next;
+}
+
+// activeKey 가 실제로 바뀔 때만(사이드바에서 새 대화를 열거나 기존 대화를 "이어보기"할 때)
+// 그 탭에 포커스를 옮긴다 — session-store 의 스트리밍 이벤트 파이프라인은 activeKey 를
+// 절대 건드리지 않으므로, 이 값에만 의존하면 백그라운드 갱신으로 강제 전환되는 일이 없다.
+export function layoutWithActiveSession(
+  current: WorkspaceLayout,
+  activeKey: string | null,
+): WorkspaceLayout {
+  if (!activeKey) return current;
+  const found = findTab(current, `chat:${activeKey}`);
+  if (!found) return current;
+  return selectWorkspaceTab(current, found.group.id, found.tab.id);
 }
 
 export const Workspace: React.FC<{
@@ -335,8 +348,12 @@ export const Workspace: React.FC<{
   );
 
   useEffect(() => {
-    setLayout((current) => layoutWithLiveSessions(current, visibleSessions, activeKey));
-  }, [visibleSessions, activeKey]);
+    setLayout((current) => layoutWithLiveSessions(current, visibleSessions));
+  }, [visibleSessions]);
+
+  useEffect(() => {
+    setLayout((current) => layoutWithActiveSession(current, activeKey));
+  }, [activeKey]);
 
   // An agent may explicitly create a shared page through BrowserTabs. Surface
   // it in the workspace exactly once, using the currently focused group.

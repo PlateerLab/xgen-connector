@@ -89,7 +89,11 @@ const ToolActivity: React.FC<{ events: ToolEvent[]; streaming: boolean }> = ({
   }, [steps.length, idx]);
 
   // 표시 대상 갱신 — 같은 단계의 상태 변화(⚙→✓)는 제자리, 단계가 바뀌면 크로스페이드.
+  // streaming 이 아니면(탭 전환으로 이미 끝난 메시지에 새로 마운트된 경우) 아무것도
+  // 켜지 않는다 — 켰다가 바로 아래 이펙트가 꺼버리면 옛 도구 칩이 한 프레임 번쩍이고
+  // 사라지는 걸로 보인다(탭 전환 시 "이전 Tool 로그가 잠깐 다시 나타났다 사라짐" 버그).
   useEffect(() => {
+    if (!streaming) return;
     const target = steps[Math.min(idx, steps.length - 1)];
     if (!target) return;
     setCur((prev) => {
@@ -99,7 +103,7 @@ const ToolActivity: React.FC<{ events: ToolEvent[]; streaming: boolean }> = ({
       if (prev) setOut(prev); // 이전 칩은 나가는 레이어로
       return { key: idx, ev: target };
     });
-  }, [idx, steps]);
+  }, [idx, steps, streaming]);
 
   // 나가는 레이어 정리 (애니메이션이 끝난 뒤 언마운트).
   useEffect(() => {
