@@ -1632,7 +1632,8 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 닫기 ✕ — 스트리밍 중엔 라이브 점이 대신 앉고, 올리면 ✕ 로 바뀐다. */
+/* 닫기 ✕ — 스트리밍 중/완료·오류 미확인 상태엔 점이 대신 앉고, 올리면 ✕ 로 바뀐다.
+   탭을 강제로 전환하지 않는 대신, 배경 탭이 끝났음을 여기 점 하나로만 알린다. */
 .tab-close {
   position: relative;
   width: 20px;
@@ -1655,10 +1656,12 @@ button {
 .tab-close-x {
   display: flex;
 }
-.tab-close.live .tab-close-x {
+.tab-close.live .tab-close-x,
+.tab-close.unseen .tab-close-x {
   display: none;
 }
-.tab-close.live:hover .tab-close-x {
+.tab-close.live:hover .tab-close-x,
+.tab-close.unseen:hover .tab-close-x {
   display: flex;
 }
 .tab-live-dot {
@@ -1668,7 +1671,18 @@ button {
   background: var(--success);
   animation: livePulse 1.4s ease-in-out infinite;
 }
-.tab-close.live:hover .tab-live-dot {
+/* 완료(초록)·오류(빨강) — 진행 중이 아니므로 깜빡이지 않는 고정 점. */
+.tab-live-dot.done {
+  animation: none;
+}
+.tab-live-dot.done.success {
+  background: var(--success);
+}
+.tab-live-dot.done.error {
+  background: var(--error);
+}
+.tab-close.live:hover .tab-live-dot,
+.tab-close.unseen:hover .tab-live-dot {
   display: none;
 }
 .tab-new {

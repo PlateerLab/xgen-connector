@@ -212,6 +212,53 @@ test('getSnapshot 은 변화가 없으면 같은 참조를 돌려준다', () => 
   assert.equal(snap1, snap2, '동일 참조 (useSyncExternalStore 요건)')
 })
 
+test('unseen: 백그라운드에서 끝난 턴은 unseen 이 서고, 포그라운드에서 끝나면 안 선다', () => {
+  const { store, streams } = makeStore()
+  const kA = store.openNew(agent('A'))
+  store.send(kA, 'q')
+  const kB = store.openNew(agent('B')) // A 는 백그라운드로
+  streams[0].onEvent({ kind: 'end' })
+  assert.equal(store.get(kA)!.unseen, true, '백그라운드에서 끝나면 unseen')
+  assert.equal(store.get(kB)!.unseen, false, '지금 보고 있는 세션은 아직 아무 턴도 안 끝남')
+
+  store.send(kB, 'q2')
+  streams[1].onEvent({ kind: 'end' })
+  assert.equal(store.get(kB)!.unseen, false, '포그라운드에서 끝나면 unseen 이 안 선다')
+})
+
+test('unseen: 오류로 끝나도 백그라운드면 선다(빨간 점 재료)', () => {
+  const { store, streams } = makeStore()
+  const kA = store.openNew(agent('A'))
+  store.send(kA, 'q')
+  store.openNew(agent('B'))
+  streams[0].onEvent({ kind: 'error', detail: '실패' })
+  const a = store.get(kA)!
+  assert.equal(a.unseen, true)
+  assert.equal(a.error, '실패')
+})
+
+test('unseen: setActive 로 그 탭을 보면 꺼진다', () => {
+  const { store, streams } = makeStore()
+  const kA = store.openNew(agent('A'))
+  store.send(kA, 'q')
+  store.openNew(agent('B'))
+  streams[0].onEvent({ kind: 'end' })
+  assert.equal(store.get(kA)!.unseen, true)
+  store.setActive(kA)
+  assert.equal(store.get(kA)!.unseen, false)
+})
+
+test('unseen: 새 턴을 보내면 이전 unseen 은 초기화된다', () => {
+  const { store, streams } = makeStore()
+  const kA = store.openNew(agent('A'))
+  store.send(kA, 'q1')
+  store.openNew(agent('B'))
+  streams[0].onEvent({ kind: 'end' })
+  assert.equal(store.get(kA)!.unseen, true)
+  store.send(kA, 'q2') // 백그라운드에서 바로 다음 턴 시작
+  assert.equal(store.get(kA)!.unseen, false, '진행 중인 턴은 unseen 결과가 아니다(스트리밍 점이 대신 뜬다)')
+})
+
 test('helpers: isKeepable / openSessions / agentSessions', () => {
   const { store, streams } = makeStore()
   const kA = store.openNew(agent('A'))

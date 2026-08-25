@@ -65,7 +65,7 @@ export const TabBar: React.FC<{
             </span>
             <span className="tab-label">{label(tab, sessions)}</span>
             <button
-              className={`tab-close ${session?.streaming ? 'live' : ''}`}
+              className={`tab-close ${session?.streaming ? 'live' : ''} ${session?.unseen ? 'unseen' : ''}`}
               title={tab.kind === 'chat' ? '채팅 종료' : '닫기'}
               aria-label={tab.kind === 'chat' ? '채팅 종료' : '탭 닫기'}
               onPointerDown={(event) => event.stopPropagation()}
@@ -77,7 +77,14 @@ export const TabBar: React.FC<{
               <span className="tab-close-x">
                 <CloseIcon size={12} />
               </span>
-              {session?.streaming && <span className="tab-live-dot" />}
+              {session?.streaming ? (
+                <span className="tab-live-dot" title="진행 중" />
+              ) : session?.unseen ? (
+                <span
+                  className={`tab-live-dot done ${session.error ? 'error' : 'success'}`}
+                  title={session.error ? '오류로 종료됨' : '완료됨'}
+                />
+              ) : null}
             </button>
           </div>
         );

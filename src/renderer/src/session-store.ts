@@ -56,6 +56,12 @@ export interface SessionState {
   /** A turn is actively streaming (the connector is live). */
   streaming: boolean;
   error: string | null;
+  /**
+   * A turn finished (성공/에러) while this session was **not** the focused tab,
+   * and the user hasn't looked at it since — drives the tab-bar dot (탭 강제
+   * 전환 대신 상태만 표시). Cleared by setActive(key). Never true while streaming.
+   */
+  unseen: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -204,6 +210,7 @@ export class SessionStore {
       messages: [],
       streaming: false,
       error: null,
+      unseen: false,
       createdAt: t,
       updatedAt: t,
     });
@@ -234,6 +241,7 @@ export class SessionStore {
       messages: [],
       streaming: false,
       error: null,
+      unseen: false,
       createdAt: t,
       updatedAt: t,
     });
@@ -291,6 +299,7 @@ export class SessionStore {
     if (this._active === key) return;
     const prev = this._active;
     this._active = key;
+    if (key) this.patch(key, (s) => (s.unseen ? { ...s, unseen: false } : s));
     if (prev && prev !== key) this.gcIfEmpty(prev);
     this.emit();
   }
@@ -343,6 +352,7 @@ export class SessionStore {
       messages: [...st.messages, userMsg, asst],
       streaming: true,
       error: null,
+      unseen: false,
       updatedAt: this.now(),
     }));
     this.emit();
@@ -395,13 +405,17 @@ export class SessionStore {
       }
       let streaming = s.streaming;
       let error = s.error;
+      let unseen = s.unseen;
       if (ev.kind === 'end' || ev.kind === 'error') {
         streaming = false;
         nl.streaming = false;
         if (ev.kind === 'error') error = ev.detail;
+        // 이 세션이 지금 포커스된 탭이 아니면 결과를 아직 못 본 것 — 탭 강제 전환 대신
+        // 점(dot)으로만 알린다. 포그라운드에서 끝났으면 이미 화면에 보이므로 표시 안 함.
+        unseen = this._active !== key;
       }
       messages[messages.length - 1] = nl;
-      return { ...s, messages, streaming, error, updatedAt: this.now() };
+      return { ...s, messages, streaming, error, unseen, updatedAt: this.now() };
     });
     if (ev.kind === 'end' || ev.kind === 'error') rt.cancel = null;
     this.emit();
