@@ -12,7 +12,7 @@ import assert from 'assert'
 import { test } from 'node:test'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { WorkspaceDavBackend, type WorkspaceApi } from '../src/main/workspace-backend'
-import { SyncConflictError } from '../src/main/sync-protocol'
+import { ApprovalPendingError, SyncConflictError } from '../src/main/sync-protocol'
 
 interface Rec {
   path: string
@@ -203,6 +203,23 @@ test('루트 직속 파일 쓰기는 거부한다 (클라우드는 폴더 단위
   // 루트 자체는 만들거나 지울 수 없다.
   await assert.rejects(() => be.remove('/'), /루트는 지울 수 없습니다/)
   await assert.rejects(() => be.mkdir('/'), /루트는 만들 수 없습니다/)
+})
+
+test('회귀: 새 폴더 생성이 관리자 승인 대기로 미뤄지면 성공으로 위장하지 않는다', async () => {
+  // 새 최상위 폴더는 RAG 통제가 켜져 있으면 서버가 실제로는 아무것도 만들지
+  // 않고 pending_approval 을 던진다(HTTP 는 200) — transport 가 이걸 그냥
+  // 삼키면 드라이브엔 폴더가 "생긴 것"처럼 보이는데 서버엔 없는 유령 폴더가
+  // 된다. api.mkdir 이 이 신호를 에러로 던지면 백엔드는 그대로 전파해야 한다
+  // (dirs 에 추가하거나 성공한 것처럼 캐시를 무효화하면 안 된다).
+  const { be, user } = setup()
+  const originalMkdir = user.mkdir.bind(user)
+  user.mkdir = async (path: string) => {
+    user.calls.push(`mkdir:${path}`)
+    throw new ApprovalPendingError(7, path) // 서버가 pending 을 돌려준 상황을 흉내
+  }
+  await assert.rejects(() => be.mkdir('/새저장소'), ApprovalPendingError)
+  assert.ok(!user.dirs.has('새저장소'), '승인 대기인데 로컬 캐시에 폴더가 생겼다')
+  user.mkdir = originalMkdir
 })
 
 test('루트 파일 거부 시 이 PC 의 폴더를 정확히 안내한다', async () => {

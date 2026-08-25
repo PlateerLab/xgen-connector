@@ -435,7 +435,14 @@ export async function startDavServer(
 
     if (method === 'MKCOL') {
       if (await backend.stat(path)) return send(res, 405);
-      await backend.mkdir(path);
+      try {
+        await backend.mkdir(path);
+      } catch (e) {
+        // PUT 과 같은 이유로 본문에 사유를 싣는다 — 안 실으면 승인 대기
+        // 안내("관리자 승인이 필요합니다…")가 여기서 소멸하고 사용자에게는
+        // 원인 없는 "폴더를 만들 수 없음"만 남는다.
+        return send(res, 500, String((e as Error).message ?? e));
+      }
       return send(res, 201);
     }
 

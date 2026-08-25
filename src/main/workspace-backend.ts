@@ -401,7 +401,12 @@ export class WorkspaceDavBackend implements WebdavBackend {
     const [space, rel] = this.resolve(p)
     if (!space) throw new Error('클라우드 스토리지가 연결되어 있지 않습니다')
     if (!rel) throw new Error('루트는 만들 수 없습니다')
-    await space.api.mkdir(rel)
+    try {
+      await space.api.mkdir(rel)
+    } catch (e) {
+      diag('dav', `폴더 생성 실패 ${p}: ${(e as Error).message}`)
+      throw e
+    }
     this.invalidate(space)
   }
 

@@ -19,7 +19,7 @@ import { dirname, join } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import WebSocket from 'ws'
-import { ChangesResponse, SyncConflictError, Transport } from './sync-protocol'
+import { ApprovalPendingError, ChangesResponse, SyncConflictError, Transport } from './sync-protocol'
 import { xgenWebSocketTlsOptions } from './connection-security'
 
 export type NetworkFetch = (input: string | Request, init?: RequestInit) => Promise<Response>
@@ -374,6 +374,15 @@ export class HttpSyncTransport implements Transport {
     })
     if (res.status === 409) return // already exists — fine
     if (!res.ok) throw await httpError('mkdir', res)
+    // ⚠ 200 인데도 아무것도 안 만들어졌을 수 있다 — 새 최상위 폴더(=새 저장소)는
+    // RAG 통제가 켜져 있으면 관리자 승인 대기로 미뤄지고, 서버는 그 사실을
+    // 여전히 `{ok:true, status:"pending_approval"}` 로 돌려준다(폴더는 없다).
+    // 여기서 안 걸러내면 드라이브엔 폴더가 "생긴 것"처럼 보이고 실제로는
+    // 서버·다른 기기 어디에도 없는 유령 폴더가 된다.
+    const body = await res.json().catch(() => null as { status?: string; request_id?: number } | null)
+    if (body?.status === 'pending_approval') {
+      throw new ApprovalPendingError(body.request_id, path)
+    }
   }
 }
 
