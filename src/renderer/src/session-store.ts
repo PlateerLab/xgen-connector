@@ -24,6 +24,7 @@
 import type { Agent, ChatEvent, ChatRequest, Citation, ToolEvent } from '../../core/index';
 import { stripBrowserContext } from '../../core/browser';
 import { stripTeamsContext } from '../../core/teams-bridge';
+import { xgen } from './bridge';
 
 /** One rendered chat message (mirrors the old Chat.Msg shape). */
 export interface ChatMsg {
@@ -422,6 +423,17 @@ export class SessionStore {
 
   /** 채팅 종료 — cancel any stream and forget the session entirely. */
   endChat(key: string): void {
+    // '진행 중 대화' 삭제 → 서버 세션 RAM(executor + 라우팅)을 완전 정리(evict). best-effort:
+    // 서버 응답을 기다리지 않고, 미도달/미인증이어도 로컬 삭제는 계속한다. 이력은 보존
+    // (지난 대화는 '이전 대화'에 남는다). 로컬 데몬은 공유라 여기서 내리지 않는다(30분 idle).
+    const s = this.map.get(key);
+    if (s?.agent?.workflowId && s.interactionId) {
+      try {
+        void xgen?.chat?.endSession?.(s.agent.workflowId, s.interactionId);
+      } catch {
+        /* 서버 미도달 — 로컬 삭제는 계속 */
+      }
+    }
     this.rt.get(key)?.cancel?.();
     this.rt.delete(key);
     this.map.delete(key);

@@ -141,6 +141,8 @@ export interface RuntimeManifest {
 export interface ServerClient {
   fetchLocalTurnContext(workflowId: string, interactionId: string): Promise<LocalTurnContext>;
   reportTurnResult(workflowId: string, interactionId: string, result: TurnReport): Promise<void>;
+  /** '진행 중 대화' 삭제 시 서버 세션 RAM(executor + 라우팅)을 완전 정리. 이력은 보존. */
+  endSession(workflowId: string, interactionId: string): Promise<void>;
   fetchRuntimeManifest(): Promise<RuntimeManifest>;
 }
 
@@ -220,6 +222,13 @@ export function makeServerClient(deps: ServerClientDeps): ServerClient {
           duration_ms: result.durationMs ?? null,
           device_name: result.deviceName ?? '',
         }),
+      });
+    },
+
+    async endSession(workflowId: string, interactionId: string): Promise<void> {
+      await authed(`/api/agentflow/geny-agent/${encodeURIComponent(workflowId)}/end-session`, {
+        method: 'POST',
+        body: JSON.stringify({ interaction_id: interactionId }),
       });
     },
 

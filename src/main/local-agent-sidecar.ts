@@ -376,7 +376,9 @@ export class SidecarDaemon {
 
   private armIdle(): void {
     this.clearIdle();
-    const ms = this.opts.idleMs ?? 15 * 60_000;
+    // 세션 idle 정리 기본 30분 — 진행 중 턴(pending>0)이 없을 때만 무장하고, 만료되면
+    // 상주 데몬 전체(로컬 런타임 RAM)를 내린다. 다음 턴에 ensure() 로 재가동. 0=끄기.
+    const ms = this.opts.idleMs ?? 30 * 60_000;
     if (ms <= 0 || this.pending.size > 0) return;
     this.idleTimer = setTimeout(() => {
       if (this.pending.size === 0) {
