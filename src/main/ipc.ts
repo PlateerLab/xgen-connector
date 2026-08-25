@@ -83,6 +83,8 @@ export const CHANNELS = {
   chatStart: 'chat:start',
   chatCancel: 'chat:cancel',
   chatEvent: 'chat:event',
+  //: '진행 중 대화' 삭제 시 서버 세션 RAM 을 완전 정리(evict). 이력은 보존.
+  chatEndSession: 'chat:end-session',
 
   // Sandboxed browser pages + stable main-process runtime.
   browserState: 'browser:state',

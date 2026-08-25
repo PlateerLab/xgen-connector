@@ -2201,6 +2201,27 @@ ipcMain.handle(CHANNELS.chatCancel, (_e, streamId: string) => {
   return true;
 });
 
+// '진행 중 대화' 삭제 → 서버 세션 RAM(executor + 라우팅)을 완전 정리한다. 로컬 데몬은
+// 공유 자원이라 여기서 내리지 않는다(다른 세션이 쓰며, 30분 idle 로 회수). 이력은 보존.
+// best-effort — 서버 미도달/미인증이어도 로컬 삭제 UX 는 막지 않는다.
+ipcMain.handle(CHANNELS.chatEndSession, async (_e, workflowId: string, interactionId: string) => {
+  if (!workflowId || !interactionId) return false;
+  try {
+    const client = makeLocalExecServerClient({
+      serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
+      token: () => liveAccessToken(),
+      fetch: mcpHttpFetch as unknown as NetworkFetch,
+    });
+    await client.endSession(workflowId, interactionId);
+    return true;
+  } catch (err) {
+    void import('./diag-log').then(({ diag }) =>
+      diag('local-exec', `end-session 서버 정리 실패(무시): ${(err as Error).message}`),
+    );
+    return false;
+  }
+});
+
 // ── IPC: browser runtime ─────────────────────────────────────────
 ipcMain.handle(CHANNELS.browserState, () => getBrowserRuntime().state());
 ipcMain.handle(CHANNELS.browserCreate, (_e, request) => getBrowserRuntime().create(request));
