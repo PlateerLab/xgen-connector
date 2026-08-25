@@ -57,6 +57,7 @@ function fakeServer(over: Partial<ServerClient> = {}): ServerClient & { reports:
     reportTurnResult: async (_wf, _iid, r) => {
       reports.push(r);
     },
+    endSession: async () => {},
     fetchRuntimeManifest: async () => ({
       protocol: 2,
       runtime: { version: '3.7.0', wheel_url: 'u' },
@@ -1003,4 +1004,40 @@ test('defaultSidecarCommand: runtimeDir 의 python 이 있으면 그걸 쓰고 P
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('[LOCAL MCP] deps.connectorMcpServers → context.connector_mcp_servers 전달, 없으면 미포함', async () => {
+  const ignore = (_e: ChatEvent) => {};
+  const runner = fakeRunner((_r, emit) => {
+    emit({ type: 'done', text: 'x' });
+    return 'done';
+  });
+  const servers = [
+    { name: 'atlassian', transport: 'stdio', command: 'uvx', args: ['mcp-atlassian'] },
+  ];
+  await runLocalChatTurn(
+    REQ,
+    baseDeps({ runner, connectorMcpServers: async () => servers }),
+    ignore,
+  );
+  assert.deepEqual(
+    (runner.seen[0].context as Record<string, unknown>)?.connector_mcp_servers,
+    servers,
+    '외부 MCP 서버 설정이 context 로 전달돼야 한다',
+  );
+
+  const r2 = fakeRunner((_r, emit) => {
+    emit({ type: 'done', text: 'x' });
+    return 'done';
+  });
+  await runLocalChatTurn(
+    REQ,
+    baseDeps({ runner: r2, connectorMcpServers: async () => [] }),
+    ignore,
+  );
+  assert.equal(
+    (r2.seen[0].context as Record<string, unknown>)?.connector_mcp_servers,
+    undefined,
+    '서버가 없으면 connector_mcp_servers 키를 넣지 않는다',
+  );
 });

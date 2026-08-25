@@ -392,6 +392,9 @@ const api = {
         },
       };
     },
+    /** '진행 중 대화' 삭제 시 서버 세션 RAM 을 완전 정리(evict). best-effort. */
+    endSession: (workflowId: string, interactionId: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.chatEndSession, workflowId, interactionId),
   },
 
   /** 클립보드 — main 경유. 렌더러 navigator.clipboard 는 조용히 실패할 수 있다. */

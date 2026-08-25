@@ -27,18 +27,18 @@ test('bundle script 는 resources/python-sidecar/python 아래에 python 실행�
   assert.match(src, /mkdirSync\(PY_DIR, \{ recursive: true \}\)/);
 });
 
-test('bundle script 의 RELEASED_RUNTIME_VERSION 은 앱의 RUNTIME_WHEEL_VERSION 과 같다(3.8.3)', () => {
+test('bundle script 의 RELEASED_RUNTIME_VERSION 은 앱의 RUNTIME_WHEEL_VERSION 과 같다(3.8.7)', () => {
   // .mjs 는 TS 상수를 import 할 수 없다 — 두 핀이 어긋나면 번들과 네트워크 설치본의 버전이 갈린다.
   const src = readFileSync(join(__dirname, '..', 'scripts', 'bundle-python-sidecar.mjs'), 'utf-8');
   const m = /const RELEASED_RUNTIME_VERSION = '([^']+)'/.exec(src);
   assert.ok(m, 'RELEASED_RUNTIME_VERSION 상수');
   assert.equal(m![1], RUNTIME_WHEEL_VERSION);
-  assert.equal(m![1], '3.8.3');
+  assert.equal(m![1], '3.8.7');
   assert.match(
     src,
     /releases\/download\/v\$\{RELEASED_RUNTIME_VERSION\}\/xgen_agent_runtime-\$\{RELEASED_RUNTIME_VERSION\}-py3-none-any\.whl/,
   );
-  assert.match(DEFAULT_RUNTIME_WHEEL, /\/v3\.8\.3\/xgen_agent_runtime-3\.8\.3-py3-none-any\.whl$/);
+  assert.match(DEFAULT_RUNTIME_WHEEL, /\/v3\.8\.7\/xgen_agent_runtime-3\.8\.7-py3-none-any\.whl$/);
 });
 
 test('NSIS 는 resources\\python 을 <dataRoot>\\local-runtime 으로 복사하고 install.log 를 남긴다', () => {

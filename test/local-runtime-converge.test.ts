@@ -36,6 +36,7 @@ function server(impl: () => Promise<RuntimeManifest>): ServerClient {
   return {
     fetchLocalTurnContext: async () => assert.fail('미사용'),
     reportTurnResult: async () => {},
+    endSession: async () => {},
     fetchRuntimeManifest: impl,
   };
 }
