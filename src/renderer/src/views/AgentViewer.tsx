@@ -10,7 +10,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { xgen, copyText } from '../bridge';
-import { BotIcon, CloseIcon, CopyIcon, FolderIcon, FolderOpenIcon, DocIcon } from '../brand/icons';
+import { BotIcon, CopyIcon, FolderIcon, FolderOpenIcon, DocIcon } from '../brand/icons';
 import type { AgentViewerSub } from './workspace-layout';
 import type {
   Span,
@@ -28,7 +28,8 @@ interface Props {
   workflowId: string;
   workflowName?: string;
   initialSub?: AgentViewerSub;
-  onClose: () => void;
+  /** 닫기 — 지금은 탭 X 가 담당하므로 미사용(호환용 optional). */
+  onClose?: () => void;
 }
 
 const SUBS: [AgentViewerSub, string][] = [
@@ -770,32 +771,29 @@ const StorageView: React.FC<{ workflowId: string }> = ({ workflowId }) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-export const AgentViewer: React.FC<Props> = ({ workflowId, workflowName, initialSub, onClose }) => {
+export const AgentViewer: React.FC<Props> = ({ workflowId, workflowName, initialSub }) => {
   const [sub, setSub] = useState<AgentViewerSub>(initialSub ?? 'fulllog');
   return (
     <div className="agent-viewer">
+      {/* 한 줄 헤더 — [아이콘 이름] ──────── [탭]. 닫기(X)는 탭에 이미 있으므로 생략. */}
       <div className="viewer-header">
         <div className="viewer-title">
           <BotIcon size={16} />
           <strong>{workflowName || '에이전트'}</strong>
-          <span className="viewer-sub">읽기 전용 뷰어</span>
         </div>
-        <button className="viewer-btn icon" onClick={onClose} title="닫기" aria-label="닫기">
-          <CloseIcon size={14} />
-        </button>
-      </div>
-      <div className="viewer-subtabs" role="tablist">
-        {SUBS.map(([s, label]) => (
-          <button
-            key={s}
-            role="tab"
-            aria-selected={sub === s}
-            className={`viewer-subtab ${sub === s ? 'active' : ''}`}
-            onClick={() => setSub(s)}
-          >
-            {label}
-          </button>
-        ))}
+        <div className="viewer-subtabs" role="tablist">
+          {SUBS.map(([s, label]) => (
+            <button
+              key={s}
+              role="tab"
+              aria-selected={sub === s}
+              className={`viewer-subtab ${sub === s ? 'active' : ''}`}
+              onClick={() => setSub(s)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="viewer-content">
         {sub === 'fulllog' && <FullLogView workflowId={workflowId} />}

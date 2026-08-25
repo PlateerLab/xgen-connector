@@ -35,8 +35,6 @@ import {
   DocIcon,
   MicIcon,
   MonitorIcon,
-  MoreIcon,
-  PlusIcon,
   SendIcon,
   ShareIcon,
   SpeakerIcon,
@@ -204,7 +202,6 @@ export const Chat: React.FC<{
   const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
   const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
   const [mcpLogsOpen, setMcpLogsOpen] = useState(false);
-  const [viewerMenuOpen, setViewerMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -291,11 +288,6 @@ export const Chat: React.FC<{
     ta.style.height = 'auto';
     ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`;
   }, [input]);
-
-  const newConversation = useCallback(() => {
-    sessionStore.openNew(agent);
-    void xgen.config.set({ lastWorkflowId: agent.workflowId });
-  }, [agent]);
 
   const endChat = useCallback(() => {
     sessionStore.endChat(session.key);
@@ -481,7 +473,6 @@ export const Chat: React.FC<{
   // 문맥 확인창도 Esc 로 취소된다 — 취소는 사용자의 문장을 입력창에 돌려준다.
   useModalDismiss(cancelContext, !!ctxConfirm);
   useModalDismiss(() => setCtxPicker(false), ctxPicker);
-  useModalDismiss(() => setViewerMenuOpen(false), viewerMenuOpen);
 
   const stop = useCallback(() => {
     // 사용자가 멈추면 소리도 멈춘다 — 아직 안 읽은 문장을 마저 읽지 않는다.
@@ -715,55 +706,24 @@ export const Chat: React.FC<{
               {muted ? <SpeakerOffIcon size={15} /> : <SpeakerIcon size={15} />}
             </button>
           )}
+          {/* 상단 탭은 [상세보기] [대화 종료] 둘만. 상세보기는 이 에이전트의 메모리·작업·
+              도구·스토리지·전체로그를 새 탭으로 연다(에이전트 관측 뷰어). '새 대화'는
+              에이전트를 다시 선택해 여는 흐름과 중복이라 제거. */}
           {onOpenViewer && (
-            <div className="teams-menu-wrap">
-              <button
-                className="secondary"
-                onClick={() => setViewerMenuOpen((open) => !open)}
-                title="에이전트 뷰어 열기"
-                aria-label="에이전트 뷰어 열기"
-                aria-expanded={viewerMenuOpen}
-              >
-                <MoreIcon size={16} />
-              </button>
-              {viewerMenuOpen && (
-                <>
-                  <div className="teams-menu-scrim" onClick={() => setViewerMenuOpen(false)} />
-                  <div className="teams-menu" role="menu">
-                    {(
-                      [
-                        ['memory', '메모리'],
-                        ['tasks', '작업'],
-                        ['tools', '도구'],
-                        ['storage', '스토리지'],
-                        ['fulllog', '전체로그'],
-                      ] as [AgentViewerSub, string][]
-                    ).map(([sub, label]) => (
-                      <button
-                        key={sub}
-                        role="menuitem"
-                        onClick={() => {
-                          setViewerMenuOpen(false);
-                          onOpenViewer(sub);
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+            <button
+              className="secondary"
+              onClick={() => onOpenViewer('memory')}
+              title="이 에이전트의 메모리·작업·도구·스토리지·전체로그를 새 탭으로 봅니다"
+            >
+              상세보기
+            </button>
           )}
           <button
             className="secondary end-chat"
             onClick={endChat}
             title="이 대화를 종료하고 목록으로 돌아갑니다"
           >
-            <CloseIcon size={14} /> 채팅 종료
-          </button>
-          <button className="secondary" onClick={newConversation}>
-            <PlusIcon size={15} /> 새 대화
+            <CloseIcon size={14} /> 대화 종료
           </button>
         </div>
       </div>

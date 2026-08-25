@@ -216,17 +216,25 @@
     Pop $1
   FunctionEnd
   
-  ; ── 설치 진행(INSTFILES) 페이지: 상세 로그를 **처음부터** 보이고, 끝나도 자동으로 넘어가지 않는다 ──
+  ; ── 설치 진행(INSTFILES) 페이지: 상세 로그를 **처음부터** 보인다 ──────────
   ; 템플릿은 ShowInstDetails nevershow + 섹션 시작 SetDetailsPrint none 이라 로그가 숨겨지고,
   ; customInstall(앱 파일 추출 **후**)에서야 켜진다. 런타임을 재사용(같은 버전 → 복사 생략)하는
   ; 설치/업데이트에서는 그 구간이 1~2초라 페이지가 바로 넘어가 사용자는 로그를 전혀 못 본다
   ; (v1.71.0 실기: "로그 기능이 사라졌다"). INSTFILES SHOW 콜백은 섹션보다 먼저 돌므로 여기서
-  ; 상세 뷰를 켜고(SetDetailsView), 자동 닫힘을 끈다(SetAutoClose false → [다음] 을 눌러야 진행).
-  ; 이 define 은 바로 뒤의 MUI_PAGE_INSTFILES(템플릿 assistedInstaller.nsh)가 소비한다.
+  ; 상세 뷰를 켠다(SetDetailsView). 이 define 은 바로 뒤의 MUI_PAGE_INSTFILES(템플릿
+  ; assistedInstaller.nsh)가 소비한다.
+  ;
+  ; ⚠ SetAutoClose 는 절대 여기서 false 로 두지 않는다. MUI_PAGE_FINISH(뒤에 이어지는
+  ; 표준 마침 페이지 — customFinishPage 미정의라 템플릿 기본값)는 .onGUIInit(MUI_FINISHPAGE_GUIINIT)
+  ; 에서 SetAutoClose true 를 스스로 건다 — 그래야 INSTFILES 가 끝나자마자 자동으로 마침 페이지로
+  ; 넘어간다. 여기서 false 로 덮으면 설치는 끝나지만 페이지가 넘어가지 않고 "[닫기]" 버튼만
+  ; 조용히 활성화된다 — 사용자에게는 그냥 멈춘 것으로 보인다(실기: v1.71.1, 첫 설치·Windows에서
+  ; "log 파일 관련 화면에서 멈추고 안 넘어간다" — 마지막으로 보이는 줄이 install.log 안내라 로그
+  ; 자체가 원인처럼 보이지만, 실제로는 이 자동 전환 억제가 원인이다). 로그는 SetDetailsView 만으로
+  ; 이미 설치 시작부터 끝까지 보인다 — 자동 전환을 막을 이유가 없다.
   !define MUI_PAGE_CUSTOMFUNCTION_SHOW XgenInstFilesShow
   Function XgenInstFilesShow
     SetDetailsView show
-    SetAutoClose false
     SetDetailsPrint both
     DetailPrint "XGEN Connector ${VERSION} 설치를 시작합니다."
     DetailPrint "1/3 앱 파일 압축 해제 — 진행 막대를 확인하세요 (이 단계는 줄 단위 로그가 없습니다)."
@@ -422,7 +430,7 @@
   DetailPrint "Codex / Claude Code CLI 는 앱 첫 실행 시 자동 설치·서버 버전 수렴됩니다(설정 → 설치 에서 확인)."
   DetailPrint "설치 완료."
   !insertmacro XgenLog "==== install end ===="
-  DetailPrint "3/3 설치 완료 — [다음] 을 누르면 마칩니다."
+  DetailPrint "3/3 설치 완료 — 마침 화면으로 넘어갑니다."
   ${If} $installMode == "all"
     SetShellVarContext all
   ${EndIf}
