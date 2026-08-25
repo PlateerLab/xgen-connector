@@ -10,7 +10,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import { sessionStore, useSessions } from '../session';
-import { agentSessions, isKeepable, openSessions, type SessionState } from '../session-store';
+import {
+  agentSessions,
+  isKeepable,
+  openSessions,
+  sessionDotState,
+  type SessionState,
+} from '../session-store';
 import type { Agent, Conversation } from '../../../core/index';
 import type { ConnectorConfig } from '../../../main/config';
 import { BackIcon, ChatIcon, CloseIcon, HistoryIcon, PlusIcon, RefreshIcon } from '../brand/icons';
@@ -80,6 +86,14 @@ export const AgentPanel: React.FC<{ config: ConnectorConfig }> = ({ config }) =>
   const activeSession = activeKey ? (sessions.find((s) => s.key === activeKey) ?? null) : null;
   // 열린 세션(활성 에이전트) — 최근 활동순. 목록 상단에 항상 보여 준다.
   const open = useMemo(() => openSessions(sessions), [sessions]);
+
+  // idle 상태 점(회색=삭제 예정)이 시간 경과에 따라 갱신되도록 now 를 주기적으로
+  // 올린다 — 스트리밍/메시지 없이도 idle 임계를 넘기면 색이 바뀌어야 하기 때문.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const load = useCallback(
     async (p: number) => {
@@ -241,7 +255,9 @@ export const AgentPanel: React.FC<{ config: ConnectorConfig }> = ({ config }) =>
                     </span>
                     <span className="conv-body">
                       <div className="conv-name">
-                        {s.streaming && <span className="live-dot" />}
+                        <span
+                          className={`live-dot ${sessionDotState(s, now)}${s.streaming ? ' live' : ''}`}
+                        />
                         {sessionPreview(s)}
                       </div>
                       <div className="conv-meta">{s.streaming ? '응답 중…' : '열려 있음'}</div>
@@ -307,7 +323,16 @@ export const AgentPanel: React.FC<{ config: ConnectorConfig }> = ({ config }) =>
                   onKeyDown={(e) => e.key === 'Enter' && focusSession(s.key)}
                   title={sessionPreview(s)}
                 >
-                  <span className={`open-dot ${s.streaming ? 'live' : ''}`} />
+                  <span
+                    className={`open-dot ${sessionDotState(s, now)}${s.streaming ? ' live' : ''}`}
+                    title={
+                      sessionDotState(s, now) === 'error'
+                        ? '오류로 끝난 대화'
+                        : sessionDotState(s, now) === 'idle'
+                          ? 'idle — 곧 정리됩니다'
+                          : '활성 대화'
+                    }
+                  />
                   <span className="open-body">
                     <div className="open-name">{s.agent.workflowName}</div>
                     <div className="open-meta">{s.streaming ? '응답 중…' : sessionPreview(s)}</div>

@@ -1095,8 +1095,18 @@ button {
   background: var(--gray-300, #cbd2dc);
   flex-shrink: 0;
 }
-.open-dot.live {
+/* 상태 색: 초록=활성 / 빨강=에러 / 회색=idle(삭제 예정). 색은 상태 클래스가 정하고,
+   .live 는 스트리밍 중일 때 펄스만 얹는다(활성일 때만 함께 붙는다). */
+.open-dot.active {
   background: var(--success);
+}
+.open-dot.error {
+  background: var(--error);
+}
+.open-dot.idle {
+  background: var(--gray-300, #cbd2dc);
+}
+.open-dot.live {
   animation: livePulse 1.4s ease-in-out infinite;
 }
 .open-item:hover .conv-end {
@@ -1145,15 +1155,27 @@ button {
   color: #fff;
 }
 
-/* Streaming/open marker (live-dot inside a name, agent-live on the agent row). */
+/* Session-state marker (live-dot inside a name, agent-live on the agent row).
+   초록=활성 / 빨강=에러 / 회색=idle(삭제 예정). 색은 상태 클래스, .live 는 펄스만. */
 .live-dot {
   display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: var(--success);
+  background: var(--gray-300, #cbd2dc);
   margin-right: 6px;
   vertical-align: middle;
+}
+.live-dot.active {
+  background: var(--success);
+}
+.live-dot.error {
+  background: var(--error);
+}
+.live-dot.idle {
+  background: var(--gray-300, #cbd2dc);
+}
+.live-dot.live {
   animation: livePulse 1.4s ease-in-out infinite;
 }
 .agent-live {

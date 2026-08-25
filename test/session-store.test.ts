@@ -6,6 +6,9 @@ import {
   isKeepable,
   openSessions,
   agentSessions,
+  sessionDotState,
+  CONNECTOR_SESSION_IDLE_MS,
+  type SessionState,
   type SessionTransport,
 } from '../src/renderer/src/session-store'
 import type { Agent, ChatEvent } from '../src/core/index'
@@ -271,4 +274,44 @@ test('helpers: isKeepable / openSessions / agentSessions', () => {
   assert.equal(openSessions(all).length, 1)
   assert.equal(agentSessions(all, 'A').length, 1)
   assert.equal(agentSessions(all, 'B').length, 0)
+})
+
+// ── 상태 점 색(진행 중인 대화): 초록=활성 / 빨강=에러 / 회색=idle(삭제 예정) ──
+function mkSession(over: Partial<SessionState>): SessionState {
+  return {
+    key: 'k',
+    agent: agent('wf'),
+    interactionId: 'i',
+    resume: false,
+    loadingHistory: false,
+    historyLoaded: true,
+    messages: [],
+    streaming: false,
+    error: null,
+    unseen: false,
+    createdAt: 0,
+    updatedAt: 0,
+    ...over,
+  }
+}
+
+test('sessionDotState: 에러가 있으면 빨강(error) — 최우선', () => {
+  const now = 1_000_000
+  // idle 임계를 넘겼어도, 스트리밍 중이어도 에러가 이긴다.
+  assert.equal(sessionDotState(mkSession({ error: 'boom', updatedAt: 0 }), now), 'error')
+  assert.equal(sessionDotState(mkSession({ error: 'boom', streaming: true, updatedAt: now }), now), 'error')
+})
+
+test('sessionDotState: 스트리밍/최근 활동은 초록(active)', () => {
+  const now = 1_000_000
+  assert.equal(sessionDotState(mkSession({ streaming: true, updatedAt: 0 }), now), 'active')
+  assert.equal(sessionDotState(mkSession({ updatedAt: now }), now), 'active')
+  // 임계 직전(1분 여유)도 active
+  assert.equal(sessionDotState(mkSession({ updatedAt: now - CONNECTOR_SESSION_IDLE_MS + 60_000 }), now), 'active')
+})
+
+test('sessionDotState: idle 임계를 넘기면 회색(idle) — 삭제 예정', () => {
+  const now = 100 * 60_000
+  assert.equal(sessionDotState(mkSession({ updatedAt: now - CONNECTOR_SESSION_IDLE_MS }), now), 'idle')
+  assert.equal(sessionDotState(mkSession({ updatedAt: 0 }), now), 'idle')
 })
