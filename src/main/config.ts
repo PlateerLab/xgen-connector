@@ -181,12 +181,13 @@ export interface WorkspaceLayoutPersistConfig {
     id: string;
     tabs: Array<{
       id: string;
-      kind: 'chat' | 'browser' | 'avatar' | 'teams' | 'settings';
+      kind: 'chat' | 'browser' | 'avatar' | 'teams' | 'settings' | 'agent-viewer';
       sessionKey?: string;
       workflowId?: string;
       workflowName?: string;
       roomId?: string;
       roomName?: string;
+      viewerSub?: 'memory' | 'tasks' | 'tools' | 'storage' | 'fulllog';
     }>;
     activeTabId: string | null;
   }>;

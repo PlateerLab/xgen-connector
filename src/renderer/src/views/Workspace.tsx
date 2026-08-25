@@ -15,6 +15,7 @@ import type { ConnectorConfig } from '../../../main/config';
 import { Chat } from './Chat';
 import { Settings } from './Settings';
 import { AvatarSettings } from './AvatarSettings';
+import { AgentViewer } from './AgentViewer';
 import { ActivityBar, type SideView } from './ActivityBar';
 import { AgentPanel } from './AgentPanel';
 import { ExplorerPanel } from './ExplorerPanel';
@@ -39,6 +40,7 @@ import {
   type WorkspaceGroup,
   type WorkspaceLayout,
   type WorkspaceTab,
+  type AgentViewerSub,
 } from './workspace-layout';
 
 const MIN_SIDEBAR = 200;
@@ -421,6 +423,22 @@ export const Workspace: React.FC<{
   // 트레이/오버레이의 "설정 열기"도 이제 탭을 연다.
   useEffect(() => xgen.appctl.onOpenSettings(openSettings), [openSettings]);
 
+  /** 채팅 헤더 [...] → 에이전트 뷰어 탭을 연다 (에이전트당 하나, 하위 탭만 바뀐다). */
+  const openAgentViewer = useCallback(
+    (workflowId: string, workflowName: string | undefined, sub: AgentViewerSub) => {
+      setLayout((current) =>
+        addWorkspaceTab(current, current.focusedGroupId, {
+          id: `viewer:${workflowId}`,
+          kind: 'agent-viewer',
+          workflowId,
+          workflowName,
+          viewerSub: sub,
+        }),
+      );
+    },
+    [],
+  );
+
   const selectTab = useCallback((groupId: string, tabId: string) => {
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
@@ -692,6 +710,13 @@ export const Workspace: React.FC<{
             session={chat}
             myName={user.username || '나'}
             mcpDebug={config.mcpDebug === true}
+            onOpenViewer={(sub) =>
+              openAgentViewer(
+                active.workflowId || chat.agent.workflowId,
+                active.workflowName || chat.agent.workflowName,
+                sub,
+              )
+            }
           />
         );
     }
@@ -748,6 +773,17 @@ export const Workspace: React.FC<{
             onBack={() => closeTab(active)}
           />
         </div>
+      );
+    }
+    if (active?.kind === 'agent-viewer' && active.workflowId) {
+      return (
+        <AgentViewer
+          key={active.id}
+          workflowId={active.workflowId}
+          workflowName={active.workflowName}
+          initialSub={active.viewerSub}
+          onClose={() => closeTab(active)}
+        />
       );
     }
     return (

@@ -1955,6 +1955,33 @@ ipcMain.handle(
 );
 ipcMain.handle(CHANNELS.historyConversations, () => getClient().history.conversations());
 
+// ── IPC: Agent Viewer (읽기 전용 관측 데이터) ───────────────────────
+ipcMain.handle(CHANNELS.agentTraceList, (_e, wf: string) => getClient().agentData.traceList(wf));
+ipcMain.handle(CHANNELS.agentTraceDetail, (_e, traceId: string) =>
+  getClient().agentData.traceDetail(traceId),
+);
+ipcMain.handle(CHANNELS.agentMemoryList, (_e, wf: string) => getClient().agentData.memoryList(wf));
+ipcMain.handle(CHANNELS.agentMemoryRead, (_e, wf: string, path: string) =>
+  getClient().agentData.memoryRead(wf, path),
+);
+ipcMain.handle(CHANNELS.agentTasksList, (_e, wf: string) => getClient().agentData.tasksList(wf));
+ipcMain.handle(CHANNELS.agentTaskRuns, (_e, wf: string, sessionId?: string) =>
+  getClient().agentData.taskRuns(wf, sessionId),
+);
+ipcMain.handle(CHANNELS.agentTaskOutput, (_e, wf: string, runId: string) =>
+  getClient().agentData.taskOutput(wf, runId),
+);
+ipcMain.handle(CHANNELS.agentToolsList, (_e, wf: string) => getClient().agentData.toolsList(wf));
+ipcMain.handle(CHANNELS.agentToolGet, (_e, wf: string, functionId: string) =>
+  getClient().agentData.toolGet(wf, functionId),
+);
+ipcMain.handle(CHANNELS.agentWsTree, (_e, wf: string, path?: string) =>
+  getClient().agentData.workspaceTree(wf, path),
+);
+ipcMain.handle(CHANNELS.agentWsFile, (_e, wf: string, path: string) =>
+  getClient().agentData.workspaceFile(wf, path),
+);
+
 // ── IPC: Teams (사람 사이의 대화) ────────────────────────────────
 // REST 는 전부 core 의 TeamsApi 에 위임한다 — 이 파일에는 매핑 로직이 없다.
 // 실시간은 teamsHub 가 CHANNELS.teamsEvent 로 렌더러에 밀어 준다.

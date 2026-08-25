@@ -1,6 +1,15 @@
 /** Pure, persistence-safe model for the two-group workspace. */
 
-export type WorkspaceTabKind = 'chat' | 'browser' | 'avatar' | 'teams' | 'settings';
+export type WorkspaceTabKind =
+  | 'chat'
+  | 'browser'
+  | 'avatar'
+  | 'teams'
+  | 'settings'
+  | 'agent-viewer';
+
+/** 에이전트 뷰어가 처음 열 하위 탭. */
+export type AgentViewerSub = 'memory' | 'tasks' | 'tools' | 'storage' | 'fulllog';
 export type SplitDirection = 'horizontal' | 'vertical';
 export type DropEdge = 'center' | 'left' | 'right' | 'top' | 'bottom';
 
@@ -13,6 +22,8 @@ export interface WorkspaceTab {
   /** kind==='teams' 일 때의 방 id / 표시 이름. */
   roomId?: string;
   roomName?: string;
+  /** kind==='agent-viewer' 일 때 처음 열 하위 탭. */
+  viewerSub?: AgentViewerSub;
 }
 
 export interface WorkspaceGroup {
@@ -50,10 +61,11 @@ function cleanTab(raw: unknown): WorkspaceTab | null {
   const tab = raw as Partial<WorkspaceTab>;
   if (
     typeof tab.id !== 'string' ||
-    !['chat', 'browser', 'avatar', 'teams', 'settings'].includes(String(tab.kind))
+    !['chat', 'browser', 'avatar', 'teams', 'settings', 'agent-viewer'].includes(String(tab.kind))
   ) {
     return null;
   }
+  const viewerSubs = ['memory', 'tasks', 'tools', 'storage', 'fulllog'];
   return {
     id: tab.id,
     kind: tab.kind as WorkspaceTabKind,
@@ -62,6 +74,9 @@ function cleanTab(raw: unknown): WorkspaceTab | null {
     workflowName: typeof tab.workflowName === 'string' ? tab.workflowName : undefined,
     roomId: typeof tab.roomId === 'string' ? tab.roomId : undefined,
     roomName: typeof tab.roomName === 'string' ? tab.roomName : undefined,
+    viewerSub: viewerSubs.includes(String(tab.viewerSub))
+      ? (tab.viewerSub as AgentViewerSub)
+      : undefined,
   };
 }
 

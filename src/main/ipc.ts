@@ -80,6 +80,20 @@ export const CHANNELS = {
   historyTurns: 'history:turns',
   historyConversations: 'history:conversations',
 
+  // Agent Viewer — 한 에이전트의 읽기 전용 관측 데이터 (메모리/작업/도구/스토리지/전체로그).
+  // 전부 core 의 AgentDataApi(GET only) 에 위임한다.
+  agentTraceList: 'agent:traceList',
+  agentTraceDetail: 'agent:traceDetail',
+  agentMemoryList: 'agent:memoryList',
+  agentMemoryRead: 'agent:memoryRead',
+  agentTasksList: 'agent:tasksList',
+  agentTaskRuns: 'agent:taskRuns',
+  agentTaskOutput: 'agent:taskOutput',
+  agentToolsList: 'agent:toolsList',
+  agentToolGet: 'agent:toolGet',
+  agentWsTree: 'agent:wsTree',
+  agentWsFile: 'agent:wsFile',
+
   chatStart: 'chat:start',
   chatCancel: 'chat:cancel',
   chatEvent: 'chat:event',
