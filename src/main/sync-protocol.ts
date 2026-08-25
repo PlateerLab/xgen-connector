@@ -51,6 +51,23 @@ export interface Transport {
   mkdir(path: string): Promise<void>
 }
 
+/**
+ * 서버가 새 최상위 폴더(=새 저장소) 생성을 관리자 승인 대기로 돌린 것 — HTTP 는
+ * 200 이지만(`{ok:true, status:"pending_approval", request_id, path}`) 실제로는
+ * **아무것도 만들어지지 않았다**. 이 신호를 무시하고 성공으로 취급하면(예전 버그)
+ * 사용자 드라이브에는 폴더가 있는 것처럼 보이는데 서버·다른 기기·다른 사용자에게는
+ * 존재하지 않는 유령 폴더가 생긴다.
+ */
+export class ApprovalPendingError extends Error {
+  readonly requestId?: number
+  readonly path?: string
+  constructor(requestId?: number, path?: string) {
+    super('새 최상위 폴더 생성은 관리자 승인이 필요합니다 — 승인 후 다시 시도해 주세요.')
+    this.requestId = requestId
+    this.path = path
+  }
+}
+
 export class SyncConflictError extends Error {
   currentSha?: string
   /**
