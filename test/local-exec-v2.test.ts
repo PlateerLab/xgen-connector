@@ -57,6 +57,7 @@ function fakeServer(over: Partial<ServerClient> = {}): ServerClient & { reports:
     reportTurnResult: async (_wf, _iid, r) => {
       reports.push(r);
     },
+    endSession: async () => {},
     fetchRuntimeManifest: async () => ({
       protocol: 2,
       runtime: { version: '3.7.0', wheel_url: 'u' },
