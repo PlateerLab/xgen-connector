@@ -66,6 +66,28 @@ export interface SessionState {
   updatedAt: number;
 }
 
+/**
+ * 커넥터 로컬 세션의 idle 임계 — 이 시간(30분) 넘게 활동이 없으면 로컬 데몬이
+ * 세션을 정리(evict)한다(사이드카 armIdle 기본값과 동일). 넘으면 '삭제 예정'.
+ */
+export const CONNECTOR_SESSION_IDLE_MS = 30 * 60_000;
+
+export type SessionDotState = 'active' | 'idle' | 'error';
+
+/**
+ * '진행 중인 대화' 상태 점 색을 정하는 단일 판정:
+ *   - error(빨강): 마지막 턴이 실패로 끝난 세션(새 턴 시작 전까지 유지).
+ *   - active(초록): 스트리밍 중이거나 최근 활동이 있어 데몬에 살아 있는 세션.
+ *   - idle(회색): 활동이 없어 idle 임계를 넘긴 세션 — 곧 정리(삭제) 대상.
+ * ``now`` 를 인자로 받아(테스트 가능) idle 경과를 계산한다.
+ */
+export function sessionDotState(s: SessionState, now: number): SessionDotState {
+  if (s.error) return 'error';
+  if (s.streaming) return 'active';
+  if (now - s.updatedAt >= CONNECTOR_SESSION_IDLE_MS) return 'idle';
+  return 'active';
+}
+
 /** The whole store as one immutable snapshot for useSyncExternalStore. */
 export interface StoreSnapshot {
   /** Insertion order. */
