@@ -5618,16 +5618,14 @@ button.sm {
   font-size: 11px;
   color: var(--text-dim, #8a8f98);
 }
+/* 헤더 한 줄 안에서 [이름] ──── [탭] 로 우측에 붙는다(독립 행 아님). */
 .viewer-subtabs {
   display: flex;
   gap: 2px;
-  padding: 4px 10px 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
   flex-shrink: 0;
 }
 .viewer-subtab {
-  padding: 7px 12px;
+  padding: 6px 12px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: none;
