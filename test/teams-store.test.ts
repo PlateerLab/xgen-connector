@@ -12,6 +12,7 @@ import {
   messageTime,
   settlePending,
   sortRooms,
+  MAX_ROOM_MESSAGES,
   applyEdit,
   formatBytes,
   isPreviewableImage,
@@ -292,4 +293,31 @@ test('applyEdit: 빈 본문은 프레임 누락이므로 기존 본문을 지우
 test('applyEdit: 대상이 없으면 배열을 그대로 돌려준다 (불필요한 리렌더 방지)', () => {
   const list = [msg('m1', '2026-08-24T10:00:00')];
   assert.strictEqual(applyEdit(list, 'nope', '무엇이든'), list);
+});
+
+// ── 메모리: 한 방이 무한히 커지지 않는다 ─────────────────────────
+
+test('mergeMessages: 상한을 넘으면 오래된 것부터 버린다', () => {
+  // 위로 스크롤하면 계속 불러오고 실시간 메시지도 계속 쌓인다. 상한이 없으면
+  // 오래 켜 둔 방이 무한히 커진다.
+  // 시각은 **단조 증가**여야 한다. 순환시키면 정렬 순서가 생성 순서와 달라져
+  // 테스트가 엉뚱한 것을 검증하게 된다.
+  const stamp = (i: number): string => {
+    const h = String(Math.floor(i / 3600) % 24).padStart(2, '0');
+    const m = String(Math.floor(i / 60) % 60).padStart(2, '0');
+    const sec = String(i % 60).padStart(2, '0');
+    return `2026-08-25T${h}:${m}:${sec}`;
+  };
+  const many = Array.from({ length: MAX_ROOM_MESSAGES + 50 }, (_, i) =>
+    msg(`m${String(i).padStart(4, '0')}`, stamp(i)),
+  );
+  const merged = mergeMessages([], many);
+  assert.strictEqual(merged.length, MAX_ROOM_MESSAGES);
+  // 남은 것은 뒤쪽(최근)이어야 한다 — 최근이 대화이고 과거는 스크롤로 다시 온다.
+  assert.strictEqual(merged[merged.length - 1]?.id, many[many.length - 1]?.id);
+});
+
+test('mergeMessages: 상한 이하면 그대로 둔다', () => {
+  const few = [msg('a', '2026-08-25T10:00:00'), msg('b', '2026-08-25T10:01:00')];
+  assert.strictEqual(mergeMessages([], few).length, 2);
 });

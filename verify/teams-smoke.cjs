@@ -310,13 +310,20 @@ app
     await sleep(250);
     ok('[알림 끄기] 를 누른다', await js(`window.__click('.teams-menu button', '알림 끄기')`));
     await sleep(400);
+    // config.set 이 아니라 teams.savePrefs 로 가야 한다 — config.set 은 최상위
+    // 얕은 병합이라 같은 teams 안의 lastReadAt 을 통째로 날린다.
     const muteSave = (await calls()).find(
-      (c) => c.name === 'config.set' && c.args && c.args.teams && c.args.teams.mutedRooms,
+      (c) => c.name === 'teams.savePrefs' && c.args && c.args.mutedRooms,
     );
     ok(
-      '음소거가 설정에 저장된다',
-      muteSave && muteSave.args.teams.mutedRooms.includes('room-1'),
+      '음소거가 부분 갱신으로 저장된다',
+      muteSave && muteSave.args.mutedRooms.includes('room-1'),
       muteSave && muteSave.args,
+    );
+    ok(
+      'teams 설정을 통째로 덮어쓰지 않는다',
+      !(await calls()).some((c) => c.name === 'config.set' && c.args && c.args.teams),
+      (await calls()).filter((c) => c.name === 'config.set').map((c) => c.args),
     );
     ok(
       '메뉴를 다시 열면 [알림 켜기] 로 바뀐다',

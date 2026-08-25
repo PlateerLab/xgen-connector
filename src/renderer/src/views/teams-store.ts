@@ -38,17 +38,31 @@ function sortKey(m: TeamsMessage): string {
  * 문자열로 나란히 정렬하면 방금 보낸 말이 대화 맨 위로 튀어 오른다. 시각 표기를
  * 맞추려 애쓰는 대신 "아직 서버가 모르는 메시지는 마지막" 이라는 사실을 그대로 쓴다.
  */
+/**
+ * 한 방이 메모리에 들고 있을 메시지 상한.
+ *
+ * 위로 스크롤하면 계속 불러오고 실시간 메시지는 계속 쌓이므로, 두지 않으면
+ * 오래 켜 둔 방이 무한히 커진다. 넘치면 **가장 오래된 것부터** 버린다 —
+ * 버려도 위로 스크롤하면 서버에서 다시 불러온다(hasMore/커서 그대로 동작).
+ *
+ * 화면에 보이는 것보다 넉넉해야 스크롤이 끊기지 않으므로 한 페이지(50)의
+ * 여러 배로 잡는다.
+ */
+export const MAX_ROOM_MESSAGES = 400;
+
 export function mergeMessages(current: TeamsMessage[], incoming: TeamsMessage[]): TeamsMessage[] {
   if (incoming.length === 0) return current;
   const byId = new Map<string, TeamsMessage>();
   for (const m of current) byId.set(m.id, m);
   for (const m of incoming) byId.set(m.id, m);
-  return [...byId.values()].sort((a, b) => {
+  const sorted = [...byId.values()].sort((a, b) => {
     const ap = isPending(a);
     const bp = isPending(b);
     if (ap !== bp) return ap ? 1 : -1;
     return sortKey(a) < sortKey(b) ? -1 : 1;
   });
+  // 상한을 넘으면 앞(과거)부터 버린다. 최근이 대화이고, 과거는 스크롤로 다시 온다.
+  return sorted.length > MAX_ROOM_MESSAGES ? sorted.slice(-MAX_ROOM_MESSAGES) : sorted;
 }
 
 /**

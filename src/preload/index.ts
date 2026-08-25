@@ -414,6 +414,11 @@ const api = {
       ipcRenderer.invoke(CHANNELS.teamsOpenDm, userId, username),
     leaveRoom: (roomId: string): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.teamsLeaveRoom, roomId),
+    /** teams 로컬 설정 부분 갱신 (config:set 은 teams 를 통째로 덮어쓴다). */
+    savePrefs: (patch: {
+      lastReadAt?: Record<string, string>;
+      mutedRooms?: string[];
+    }): Promise<boolean> => ipcRenderer.invoke(CHANNELS.teamsSavePrefs, patch),
     /** 방 이름·설명 수정. 서버는 멤버 전원에게 허용한다. */
     updateRoom: (
       roomId: string,
