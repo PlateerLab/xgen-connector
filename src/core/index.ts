@@ -19,6 +19,7 @@
  * agent_harness agents. The class holds tokens in memory only — persistence
  * (keychain) and base-URL config are the host's concern (Electron main).
  */
+import { AgentDataApi } from './agent-data';
 import { AgentsApi } from './agents';
 import { AuthApi } from './auth';
 import { AvatarsApi } from './avatars';
@@ -55,6 +56,7 @@ export class XgenClient {
   readonly teams: TeamsApi;
   readonly avatars: AvatarsApi;
   readonly voice: VoiceApi;
+  readonly agentData: AgentDataApi;
 
   private refreshToken?: string;
   private readonly onTokensRotated?: (accessToken: string, refreshToken?: string) => void;
@@ -79,6 +81,7 @@ export class XgenClient {
     this.teams = new TeamsApi(this.http);
     this.avatars = new AvatarsApi(this.http);
     this.voice = new VoiceApi(this.http);
+    this.agentData = new AgentDataApi(this.http);
   }
 
   setBaseUrl(baseUrl: string): void {
@@ -228,6 +231,7 @@ export class XgenClient {
 }
 
 export * from './types';
+export * from './agent-data';
 export { ApiError } from './client';
 export { SseParser } from './sse';
 export { frameToChatEvent } from './chat';

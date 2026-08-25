@@ -35,6 +35,7 @@ import {
   DocIcon,
   MicIcon,
   MonitorIcon,
+  MoreIcon,
   PlusIcon,
   SendIcon,
   ShareIcon,
@@ -43,6 +44,7 @@ import {
   StopIcon,
   TeamsIcon,
 } from '../brand/icons';
+import type { AgentViewerSub } from './workspace-layout';
 
 /** 도구 활동 표시 — **한 번에 하나**만 보여주고 다음 것으로 스르륵 교체된다.
  *
@@ -172,7 +174,9 @@ export const Chat: React.FC<{
   /** 로그인 사용자 표시 이름 — Teams 로 공유할 때 낙관적 렌더에 쓴다. */
   myName: string;
   mcpDebug?: boolean;
-}> = ({ session, myName, mcpDebug = false }) => {
+  /** 헤더 [...] 메뉴 → 에이전트 뷰어 탭을 연다 (메모리/작업/도구/스토리지/전체로그). */
+  onOpenViewer?: (sub: AgentViewerSub) => void;
+}> = ({ session, myName, mcpDebug = false, onOpenViewer }) => {
   const { agent } = session;
   const messages = session.messages;
   const streaming = session.streaming;
@@ -200,6 +204,7 @@ export const Chat: React.FC<{
   const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
   const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
   const [mcpLogsOpen, setMcpLogsOpen] = useState(false);
+  const [viewerMenuOpen, setViewerMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -476,6 +481,7 @@ export const Chat: React.FC<{
   // 문맥 확인창도 Esc 로 취소된다 — 취소는 사용자의 문장을 입력창에 돌려준다.
   useModalDismiss(cancelContext, !!ctxConfirm);
   useModalDismiss(() => setCtxPicker(false), ctxPicker);
+  useModalDismiss(() => setViewerMenuOpen(false), viewerMenuOpen);
 
   const stop = useCallback(() => {
     // 사용자가 멈추면 소리도 멈춘다 — 아직 안 읽은 문장을 마저 읽지 않는다.
@@ -708,6 +714,46 @@ export const Chat: React.FC<{
             >
               {muted ? <SpeakerOffIcon size={15} /> : <SpeakerIcon size={15} />}
             </button>
+          )}
+          {onOpenViewer && (
+            <div className="teams-menu-wrap">
+              <button
+                className="secondary"
+                onClick={() => setViewerMenuOpen((open) => !open)}
+                title="에이전트 뷰어 열기"
+                aria-label="에이전트 뷰어 열기"
+                aria-expanded={viewerMenuOpen}
+              >
+                <MoreIcon size={16} />
+              </button>
+              {viewerMenuOpen && (
+                <>
+                  <div className="teams-menu-scrim" onClick={() => setViewerMenuOpen(false)} />
+                  <div className="teams-menu" role="menu">
+                    {(
+                      [
+                        ['memory', '메모리'],
+                        ['tasks', '작업'],
+                        ['tools', '도구'],
+                        ['storage', '스토리지'],
+                        ['fulllog', '전체로그'],
+                      ] as [AgentViewerSub, string][]
+                    ).map(([sub, label]) => (
+                      <button
+                        key={sub}
+                        role="menuitem"
+                        onClick={() => {
+                          setViewerMenuOpen(false);
+                          onOpenViewer(sub);
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
           <button
             className="secondary end-chat"

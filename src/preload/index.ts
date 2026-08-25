@@ -24,6 +24,17 @@ import type {
   Conversation,
   VoiceConfig,
   TtsSpeakOptions,
+  TraceListResult,
+  TraceDetail,
+  MemoryListResult,
+  MemoryDetail,
+  TasksResult,
+  JobRunsResult,
+  TaskOutput,
+  ToolsResult,
+  ForgedTool,
+  WorkspaceListResult,
+  WorkspaceFile,
 } from '../core/index';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
@@ -340,6 +351,32 @@ const api = {
     turns: (workflowId: string, interactionId: string, name?: string): Promise<HistoryTurn[]> =>
       ipcRenderer.invoke(CHANNELS.historyTurns, workflowId, interactionId, name),
     conversations: (): Promise<Conversation[]> => ipcRenderer.invoke(CHANNELS.historyConversations),
+  },
+
+  // 에이전트 뷰어 — 읽기 전용 관측 데이터. 전부 GET, 변경 경로 없음.
+  agentData: {
+    traceList: (wf: string): Promise<TraceListResult> =>
+      ipcRenderer.invoke(CHANNELS.agentTraceList, wf),
+    traceDetail: (traceId: string): Promise<TraceDetail> =>
+      ipcRenderer.invoke(CHANNELS.agentTraceDetail, traceId),
+    memoryList: (wf: string): Promise<MemoryListResult> =>
+      ipcRenderer.invoke(CHANNELS.agentMemoryList, wf),
+    memoryRead: (wf: string, path: string): Promise<MemoryDetail> =>
+      ipcRenderer.invoke(CHANNELS.agentMemoryRead, wf, path),
+    tasksList: (wf: string): Promise<TasksResult> =>
+      ipcRenderer.invoke(CHANNELS.agentTasksList, wf),
+    taskRuns: (wf: string, sessionId?: string): Promise<JobRunsResult> =>
+      ipcRenderer.invoke(CHANNELS.agentTaskRuns, wf, sessionId),
+    taskOutput: (wf: string, runId: string): Promise<TaskOutput> =>
+      ipcRenderer.invoke(CHANNELS.agentTaskOutput, wf, runId),
+    toolsList: (wf: string): Promise<ToolsResult> =>
+      ipcRenderer.invoke(CHANNELS.agentToolsList, wf),
+    toolGet: (wf: string, functionId: string): Promise<ForgedTool> =>
+      ipcRenderer.invoke(CHANNELS.agentToolGet, wf, functionId),
+    workspaceTree: (wf: string, path?: string): Promise<WorkspaceListResult> =>
+      ipcRenderer.invoke(CHANNELS.agentWsTree, wf, path),
+    workspaceFile: (wf: string, path: string): Promise<WorkspaceFile> =>
+      ipcRenderer.invoke(CHANNELS.agentWsFile, wf, path),
   },
 
   browser: {

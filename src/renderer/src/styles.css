@@ -5581,3 +5581,500 @@ button.sm {
 .teams-ctx-change:hover {
   background: var(--primary-soft);
 }
+
+/* ── 에이전트 뷰어 (읽기 전용) ─────────────────────────────────────
+   채팅 헤더 [...] → 새 탭. 다섯 하위 뷰가 서버 관측 데이터를 상세 뷰처럼
+   보여 준다. ToolLogModal 의 배지·펼침 행 언어를 그대로 따른다. */
+.agent-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg, var(--panel));
+}
+.viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+.viewer-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.viewer-title strong {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-title .viewer-sub {
+  font-size: 11px;
+  color: var(--text-dim, #8a8f98);
+}
+.viewer-subtabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 10px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+.viewer-subtab {
+  padding: 7px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.viewer-subtab:hover {
+  color: var(--text);
+}
+.viewer-subtab.active {
+  color: var(--text);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+.viewer-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.viewer-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.viewer-filters {
+  display: inline-flex;
+  gap: 4px;
+}
+.viewer-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.viewer-chip.active {
+  background: var(--primary-soft);
+  border-color: var(--primary-soft-border);
+  color: var(--text);
+  font-weight: 600;
+}
+.viewer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.viewer-btn:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+.viewer-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.viewer-btn.sm {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.viewer-btn.icon {
+  padding: 4px 6px;
+}
+.viewer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+}
+.viewer-split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+}
+.viewer-list {
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  padding: 6px;
+}
+.viewer-list.tree {
+  padding: 4px;
+}
+.viewer-list-section {
+  padding: 8px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim, #8a8f98);
+}
+.viewer-listitem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 9px;
+  margin-bottom: 3px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+}
+.viewer-listitem:hover {
+  background: var(--panel-2);
+}
+.viewer-listitem.active {
+  background: var(--primary-soft);
+  border-color: var(--primary-soft-border);
+}
+.viewer-listitem-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-listitem-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim, #8a8f98);
+}
+.viewer-detail {
+  overflow: auto;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.viewer-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.viewer-detail-head strong {
+  font-size: 13.5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-path {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.viewer-sub {
+  font-size: 11.5px;
+  color: var(--text-dim, #8a8f98);
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+.viewer-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 6px 0;
+  font-size: 11.5px;
+  color: var(--text);
+}
+.viewer-kv b {
+  color: var(--text-dim, #8a8f98);
+  font-weight: 600;
+  margin-right: 6px;
+}
+.viewer-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.viewer-tag {
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.viewer-note {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-dim, #8a8f98);
+  font-size: 12.5px;
+}
+.viewer-note.sm {
+  padding: 10px;
+  text-align: left;
+}
+.viewer-note.err {
+  color: #b91c1c;
+}
+.viewer-label {
+  margin: 8px 0 3px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim, #8a8f98);
+}
+.viewer-label.err {
+  color: #b91c1c;
+}
+.viewer-body,
+.viewer-detail pre {
+  margin: 0 0 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+.viewer-body.code {
+  white-space: pre;
+}
+.viewer-detail pre.err {
+  border-color: color-mix(in srgb, #ef4444 40%, var(--border));
+  color: #b91c1c;
+}
+/* ── 배지(span_type / status) ── */
+.viewer-badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.viewer-badge.blue {
+  background: color-mix(in srgb, #3b82f6 16%, transparent);
+  color: #1d4ed8;
+}
+.viewer-badge.red {
+  background: color-mix(in srgb, #ef4444 16%, transparent);
+  color: #b91c1c;
+}
+.viewer-badge.amber {
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  color: #b45309;
+}
+.viewer-badge.slate {
+  background: color-mix(in srgb, #64748b 18%, transparent);
+  color: #475569;
+}
+.viewer-badge.emerald {
+  background: color-mix(in srgb, #10b981 16%, transparent);
+  color: #047857;
+}
+.viewer-badge.violet {
+  background: color-mix(in srgb, #8b5cf6 16%, transparent);
+  color: #6d28d9;
+}
+.viewer-badge.gray {
+  background: var(--panel-2);
+  color: var(--text-dim, #8a8f98);
+}
+/* ── 전체로그 트레이스 카드 / 스팬 ── */
+.viewer-trace {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.viewer-trace.err {
+  border-color: color-mix(in srgb, #ef4444 40%, var(--border));
+}
+.viewer-trace-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.viewer-trace-head:hover {
+  background: var(--panel-2);
+}
+.viewer-trace-model {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.viewer-trace-meta {
+  font-size: 11px;
+  color: var(--text-dim, #8a8f98);
+}
+.viewer-when {
+  font-size: 11px;
+  color: var(--text-dim, #8a8f98);
+  white-space: nowrap;
+}
+.viewer-trace-err {
+  padding: 6px 11px;
+  font-size: 11.5px;
+  color: #b91c1c;
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+}
+.viewer-span-list {
+  padding: 6px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.viewer-span {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin-bottom: 4px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.viewer-span.err {
+  border-color: color-mix(in srgb, #ef4444 40%, var(--border));
+}
+.viewer-span-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.viewer-span-row:hover {
+  background: var(--panel-2);
+}
+.viewer-span-name {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+.viewer-spacer {
+  flex: 1;
+}
+.viewer-idx {
+  flex: none;
+  min-width: 18px;
+  color: var(--text-dim, #8a8f98);
+  font-variant-numeric: tabular-nums;
+}
+.viewer-ms {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-dim, #8a8f98);
+  font-variant-numeric: tabular-nums;
+}
+.viewer-caret {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--text-dim, #8a8f98);
+}
+.viewer-span-detail {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.viewer-run {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+.viewer-run.err {
+  border-color: color-mix(in srgb, #ef4444 40%, var(--border));
+}
+.viewer-run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+/* ── 스토리지 트리 ── */
+.viewer-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.viewer-tree-row:hover {
+  background: var(--panel-2);
+}
+.viewer-tree-row.active {
+  background: var(--primary-soft);
+}
+.viewer-tree-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--muted);
+}
+.viewer-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-tree-size {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-dim, #8a8f98);
+  font-variant-numeric: tabular-nums;
+}
