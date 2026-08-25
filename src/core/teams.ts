@@ -121,6 +121,13 @@ function mapAttachment(raw: unknown): TeamsAttachment {
 /**
  * 첨부 목록은 JSONB 컬럼이라 배열로도, JSON 문자열로도 도착한다 (드라이버/경로에
  * 따라 다름). 양쪽 모두 받아 준다.
+ *
+ * **추출 본문(extractedText)은 여기서 버린다.** 서버는 문서에서 뽑은 본문을
+ * 첨부 메타에 실어 보내는데(상한 50만 자), 그건 **보낼 때** 서버로 되돌려주기
+ * 위한 값이지 화면이 쓰는 값이 아니다. 받은 메시지마다 들고 있으면 문서가 몇 개만
+ * 붙어도 방 하나가 수 MB 를 물고 앉아 있게 되고, 그 방을 닫기 전까지 놓지 않는다.
+ * 업로드 응답 경로(`uploadAttachment`)는 `mapAttachment` 를 직접 쓰므로 그쪽은
+ * 그대로 유지된다.
  */
 function mapAttachments(raw: unknown): TeamsAttachment[] | undefined {
   let arr: unknown[] = [];
@@ -134,7 +141,10 @@ function mapAttachments(raw: unknown): TeamsAttachment[] | undefined {
     }
   }
   if (arr.length === 0) return undefined;
-  return arr.map(mapAttachment);
+  return arr.map((item) => {
+    const { extractedText: _drop, ...meta } = mapAttachment(item);
+    return meta;
+  });
 }
 
 /**

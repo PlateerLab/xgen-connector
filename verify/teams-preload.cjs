@@ -189,6 +189,10 @@ const api = {
       record('teams.shareWorkspaceFile', { roomId, drivePath });
       return UPLOADED;
     },
+    savePrefs: async (patch) => {
+      record('teams.savePrefs', patch);
+      return true;
+    },
     updateRoom: async (roomId, patch) => {
       record('teams.updateRoom', { roomId, patch });
       return { ...ROOM, ...patch };

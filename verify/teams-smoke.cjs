@@ -141,6 +141,38 @@ app
     ok('방 목록에 방 이름이 뜬다', /3팀 개발방/.test(roomList || ''), roomList);
     await snap('01-teams-panel.png');
 
+    // ── 1b. 사이드바 인라인 폼도 바깥 클릭/Esc 로 닫힌다 ─────────
+    section('1b. 사이드바 폼 닫기');
+    ok('[1:1 대화 시작] 을 누른다', await js(`window.__click('.icon-btn', '1:1 대화 시작')`));
+    await sleep(400);
+    ok('폼이 펼쳐진다', (await js(`window.__count('.teams-form')`)) === 1);
+    ok(
+      '[닫기] 버튼은 없어졌다',
+      !(await js(
+        `(()=>{const f=window.__vis('.teams-form')[0];return f?[...f.querySelectorAll('button')].some(b=>(b.textContent||'').trim()==='닫기'):false;})()`,
+      )),
+    );
+    ok('닫는 법을 안내한다', /Esc/.test((await js(`window.__text('.teams-form')`)) || ''));
+    await js(
+      `(()=>{document.querySelector('.agent-list').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));})()`,
+    );
+    await sleep(350);
+    ok('바깥을 누르면 닫힌다', (await js(`window.__count('.teams-form')`)) === 0);
+
+    ok('다시 연다', await js(`window.__click('.icon-btn', '1:1 대화 시작')`));
+    await sleep(350);
+    ok('열렸다', (await js(`window.__count('.teams-form')`)) === 1);
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    await sleep(300);
+    ok('Esc 로도 닫힌다', (await js(`window.__count('.teams-form')`)) === 0);
+
+    // 여는 버튼이 '바깥' 으로 잡히면 한 번 눌러서는 절대 안 열린다 — 그 회귀를 막는다.
+    ok('토글 버튼은 한 번에 열린다', await js(`window.__click('.icon-btn', '새 대화 만들기')`));
+    await sleep(350);
+    ok('새 대화 폼이 열렸다', (await js(`window.__count('.teams-form')`)) === 1);
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    await sleep(300);
+
     // ── 2. 방을 탭으로 열고 메시지를 그린다 ───────────────────────
     section('2. 방 탭 · 메시지 렌더');
     ok(
@@ -278,13 +310,20 @@ app
     await sleep(250);
     ok('[알림 끄기] 를 누른다', await js(`window.__click('.teams-menu button', '알림 끄기')`));
     await sleep(400);
+    // config.set 이 아니라 teams.savePrefs 로 가야 한다 — config.set 은 최상위
+    // 얕은 병합이라 같은 teams 안의 lastReadAt 을 통째로 날린다.
     const muteSave = (await calls()).find(
-      (c) => c.name === 'config.set' && c.args && c.args.teams && c.args.teams.mutedRooms,
+      (c) => c.name === 'teams.savePrefs' && c.args && c.args.mutedRooms,
     );
     ok(
-      '음소거가 설정에 저장된다',
-      muteSave && muteSave.args.teams.mutedRooms.includes('room-1'),
+      '음소거가 부분 갱신으로 저장된다',
+      muteSave && muteSave.args.mutedRooms.includes('room-1'),
       muteSave && muteSave.args,
+    );
+    ok(
+      'teams 설정을 통째로 덮어쓰지 않는다',
+      !(await calls()).some((c) => c.name === 'config.set' && c.args && c.args.teams),
+      (await calls()).filter((c) => c.name === 'config.set').map((c) => c.args),
     );
     ok(
       '메뉴를 다시 열면 [알림 켜기] 로 바뀐다',

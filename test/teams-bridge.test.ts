@@ -22,6 +22,7 @@ import {
   type TeamsShareRef,
 } from '../src/core/teams-bridge';
 import { stripBrowserContext } from '../src/core/browser';
+import { mapMessage } from '../src/core/teams';
 import type { TeamsMessage } from '../src/core/index';
 
 const ROOM = { id: 'r1', name: '3팀 개발방', isDirect: false };
@@ -215,4 +216,40 @@ test('shareBodyOf: 표식을 걷어낸 본문만 돌려준다 (목록 미리보�
   const shared = buildSharedMessage(AGENT_REF, '요약 결과');
   assert.strictEqual(shareBodyOf(shared), '요약 결과');
   assert.strictEqual(shareBodyOf('평범한 글'), '평범한 글');
+});
+
+// ── 메모리: 받은 메시지가 추출 본문을 물고 있지 않아야 한다 ──────
+
+test('mapMessage: 첨부의 추출 본문은 렌더러로 넘기지 않는다', () => {
+  // 서버는 문서 본문을 최대 50만 자까지 첨부 메타에 실어 보낸다. 그건 보낼 때
+  // 되돌려주기 위한 값이지 화면이 쓰는 값이 아니다 — 받은 메시지마다 들고
+  // 있으면 방 하나가 수 MB 를 물고 앉는다.
+  const mapped = mapMessage({
+    id: 'm1',
+    room_id: 'r1',
+    sender_type: 'user',
+    sender_id: '2',
+    sender_name: '김철수',
+    content: '보고서 올립니다',
+    created_at: '2026-08-25T10:00:00',
+    attachments: [
+      {
+        id: 'a1',
+        filename: '보고서.pdf',
+        mime: 'application/pdf',
+        size: 1024,
+        storage_key: 'a1.pdf',
+        extracted_text: '가'.repeat(100_000),
+        truncated: true,
+      },
+    ],
+  });
+  const att = mapped.attachments?.[0];
+  assert.ok(att, '첨부 자체는 남아야 한다');
+  assert.strictEqual(att.filename, '보고서.pdf');
+  assert.strictEqual(att.size, 1024);
+  assert.strictEqual(att.truncated, true);
+  assert.strictEqual(att.extractedText, undefined, '추출 본문이 그대로 실려 왔다');
+  // 통째로 직렬화해도 본문 크기가 딸려오지 않아야 한다.
+  assert.ok(JSON.stringify(mapped).length < 1_000);
 });

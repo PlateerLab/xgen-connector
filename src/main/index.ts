@@ -1994,6 +1994,23 @@ ipcMain.handle(CHANNELS.teamsCreateRoom, (_e, name: string, description?: string
 ipcMain.handle(CHANNELS.teamsOpenDm, (_e, userId: number, username?: string) =>
   getClient().teams.openDirectMessage(userId, username),
 );
+/**
+ * teams 로컬 설정을 **필드 단위로** 갱신한다.
+ *
+ * `config:set` 은 `{...loadConfig(), ...patch}` 라 최상위만 얕게 병합한다.
+ * 그래서 `{teams:{lastReadAt}}` 를 보내면 같은 `teams` 안의 `mutedRooms` 가
+ * 통째로 사라진다 — 방을 음소거해 두고 메시지를 읽으면 음소거가 풀리고,
+ * 그 반대도 마찬가지였다. 여기서 기존 teams 를 읽어 덮어쓸 필드만 얹는다.
+ */
+ipcMain.handle(
+  CHANNELS.teamsSavePrefs,
+  (_e, patch: { lastReadAt?: Record<string, string>; mutedRooms?: string[] }) => {
+    const teams = { ...(loadConfig().teams ?? {}), ...patch };
+    saveConfig({ teams });
+    return true;
+  },
+);
+
 ipcMain.handle(
   CHANNELS.teamsUpdateRoom,
   (_e, roomId: string, patch: { name?: string; description?: string | null }) =>

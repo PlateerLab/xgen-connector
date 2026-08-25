@@ -13,11 +13,12 @@
  * 여기서 만드는 방은 항상 **사람끼리만**(router_mode='chat') 이다. 에이전트를
  * 붙이는 것은 후속 단계이고 서버가 이미 지원한다.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import { teamsStore, useTeams } from '../teams';
 import type { TeamsMessage, TeamsRoom, TeamsUser } from '../../../core/index';
 import { badgeText, filterRooms, messagePreview, roomTime } from './teams-store';
+import { useModalDismiss, useOutsideDismiss } from './use-modal-dismiss';
 import { ChatIcon, PlusIcon, RefreshIcon, TeamsIcon, UserPlusIcon } from '../brand/icons';
 
 type Mode = 'list' | 'newRoom' | 'newDm';
@@ -38,6 +39,10 @@ export const TeamsPanel: React.FC<{
   const [userQuery, setUserQuery] = useState('');
   const [users, setUsers] = useState<TeamsUser[]>([]);
   const [searching, setSearching] = useState(false);
+
+  /** 펼쳐진 폼과 그것을 여는 버튼들 — 바깥 클릭 판정의 '안쪽' 범위. */
+  const formRef = useRef<HTMLDivElement | null>(null);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     void teamsStore.loadRooms();
@@ -77,6 +82,12 @@ export const TeamsPanel: React.FC<{
     setUsers([]);
     setError('');
   }, []);
+
+  // 인라인 폼에는 모달의 backdrop 이 없다. 바깥 클릭과 Esc 로 같은 감각을 만든다.
+  // 여는 버튼을 '안쪽' 에 포함해야 토글이 정상 동작한다(안 그러면 닫기와 열기가
+  // 같이 일어나 한 번 눌러서는 열리지 않는다).
+  useOutsideDismiss([formRef, actionsRef], resetForms, mode !== 'list');
+  useModalDismiss(resetForms, mode !== 'list');
 
   const createRoom = useCallback(async () => {
     const name = draftName.trim();
@@ -118,7 +129,7 @@ export const TeamsPanel: React.FC<{
     <>
       <div className="sidebar-title">
         <span className="sidebar-title-text">Teams</span>
-        <div className="sidebar-title-actions">
+        <div className="sidebar-title-actions" ref={actionsRef}>
           <button
             className="icon-btn sm"
             title="새 대화 만들기"
@@ -147,7 +158,7 @@ export const TeamsPanel: React.FC<{
       </div>
 
       {mode === 'newRoom' && (
-        <div className="teams-form">
+        <div className="teams-form" ref={formRef}>
           <input
             className="input"
             autoFocus
@@ -176,7 +187,7 @@ export const TeamsPanel: React.FC<{
       )}
 
       {mode === 'newDm' && (
-        <div className="teams-form">
+        <div className="teams-form" ref={formRef}>
           <input
             className="input"
             autoFocus
@@ -205,11 +216,9 @@ export const TeamsPanel: React.FC<{
               </button>
             ))}
           </div>
-          <div className="teams-form-row">
-            <button className="secondary sm" onClick={resetForms}>
-              닫기
-            </button>
-          </div>
+          <span className="teams-form-hint">
+            바깥을 클릭하거나 <kbd>Esc</kbd> 를 누르면 닫힙니다.
+          </span>
         </div>
       )}
 

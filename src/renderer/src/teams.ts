@@ -173,6 +173,11 @@ class TeamsLiveStore {
   reset(): void {
     for (const timer of this.typingTimers.values()) clearTimeout(timer);
     this.typingTimers.clear();
+    // ⚠ 저장 디바운스도 반드시 끈다. 남겨 두면 계정을 바꾼 직후 **비워진**
+    // lastReadAt 이 800ms 뒤에 저장되어, 이전 계정의 열람 기록이 통째로
+    // 지워진다 (로그아웃 직전에 방을 봤다면 재현된다).
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = null;
     this.activeRoomId = null;
     this.lastReadAt = {};
     this.muted = new Set();
@@ -481,7 +486,7 @@ class TeamsLiveStore {
     if (this.muted.has(roomId)) this.muted.delete(roomId);
     else this.muted.add(roomId);
     const mutedRooms = [...this.muted];
-    void xgen.config.set({ teams: { mutedRooms } });
+    void xgen.teams.savePrefs({ mutedRooms });
     this.emit({ mutedRooms });
   }
 
@@ -554,7 +559,7 @@ class TeamsLiveStore {
     if (this.persistTimer) clearTimeout(this.persistTimer);
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
-      void xgen.config.set({ teams: { lastReadAt: { ...this.lastReadAt } } });
+      void xgen.teams.savePrefs({ lastReadAt: { ...this.lastReadAt } });
     }, 800);
   }
 

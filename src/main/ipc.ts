@@ -46,6 +46,11 @@ export const CHANNELS = {
   teamsRooms: 'teams:rooms',
   teamsCreateRoom: 'teams:createRoom',
   teamsOpenDm: 'teams:openDm',
+  /**
+   * teams 로컬 설정의 **부분** 갱신. `config:set` 은 최상위 얕은 병합이라
+   * `{teams:{lastReadAt}}` 를 보내면 `mutedRooms` 가 통째로 날아간다.
+   */
+  teamsSavePrefs: 'teams:savePrefs',
   teamsUpdateRoom: 'teams:updateRoom',
   teamsDeleteRoom: 'teams:deleteRoom',
   teamsLeaveRoom: 'teams:leaveRoom',
