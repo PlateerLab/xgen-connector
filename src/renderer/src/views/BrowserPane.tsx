@@ -3,6 +3,7 @@ import {
   resolveBrowserAddress,
   type BrowserAddressSearchConfig,
   type BrowserPageInfo,
+  type BrowserPopupDecision,
 } from '../../../core/browser';
 import { xgen } from '../bridge';
 import { useBrowserState } from '../browser-state';
@@ -11,6 +12,7 @@ import {
   BrowserIcon,
   CloseIcon,
   ForwardIcon,
+  PopupBlockedIcon,
   PlusIcon,
   RefreshIcon,
   StopIcon,
@@ -38,7 +40,15 @@ export const BrowserPane: React.FC<{
   const active = pages.find((page) => page.pageId === preferred) ?? pages[0] ?? null;
   const [address, setAddress] = useState(active?.url ?? '');
   const [navigationError, setNavigationError] = useState('');
+  const [popupExpanded, setPopupExpanded] = useState(false);
+  const [popupBusy, setPopupBusy] = useState<BrowserPopupDecision | null>(null);
+  const [popupError, setPopupError] = useState('');
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const popupRequests = useMemo(
+    () => state.popupRequests.filter((request) => request.pageId === active?.pageId),
+    [active?.pageId, state.popupRequests],
+  );
+  const popupRequest = popupRequests[0] ?? null;
 
   useEffect(() => {
     if (!state.enabled || pages.length) return;
@@ -48,7 +58,15 @@ export const BrowserPane: React.FC<{
   useEffect(() => {
     setAddress(active?.url ?? '');
     setNavigationError('');
+    setPopupExpanded(false);
+    setPopupError('');
   }, [active?.pageId, active?.url]);
+
+  useEffect(() => {
+    if (popupRequest) return;
+    setPopupExpanded(false);
+    setPopupError('');
+  }, [popupRequest]);
 
   useEffect(() => {
     const element = surfaceRef.current;
@@ -99,6 +117,27 @@ export const BrowserPane: React.FC<{
       if (pages.length === 1) await xgen.browser.ensureShared(workflowId, workflowName);
     },
     [pages.length, workflowId, workflowName],
+  );
+
+  const resolvePopup = useCallback(
+    async (decision: BrowserPopupDecision) => {
+      if (!popupRequest || popupBusy) return;
+      setPopupBusy(decision);
+      setPopupError('');
+      try {
+        const handled = await xgen.browser.resolvePopup({
+          requestId: popupRequest.requestId,
+          decision,
+        });
+        if (!handled) setPopupError('팝업 요청이 만료되었거나 페이지가 변경되었습니다.');
+        setPopupExpanded(false);
+      } catch (error) {
+        setPopupError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setPopupBusy(null);
+      }
+    },
+    [popupBusy, popupRequest],
   );
 
   return (
@@ -188,6 +227,54 @@ export const BrowserPane: React.FC<{
           placeholder={addressSearch?.enabled ? 'URL 또는 검색어 입력' : 'URL 입력'}
         />
       </form>
+      {popupRequest && (
+        <div className="browser-popup-notice" role="alert">
+          <button
+            type="button"
+            className="browser-popup-summary"
+            aria-expanded={popupExpanded}
+            onClick={() => setPopupExpanded((expanded) => !expanded)}
+          >
+            <PopupBlockedIcon size={15} />
+            <span>
+              <strong>{popupRequest.openerOrigin}</strong>에서 팝업을 차단했습니다.
+              {popupRequests.length > 1 ? ` (${popupRequests.length}개)` : ''}
+            </span>
+            <span className="browser-popup-configure">{popupExpanded ? '닫기' : '설정'}</span>
+          </button>
+          {popupExpanded && (
+            <div className="browser-popup-detail">
+              <div className="browser-popup-target" title={popupRequest.targetDisplayUrl}>
+                대상: {popupRequest.targetDisplayUrl}
+              </div>
+              <div className="browser-popup-actions">
+                <button
+                  type="button"
+                  disabled={popupBusy !== null}
+                  onClick={() => void resolvePopup('allow_always')}
+                >
+                  항상 허용
+                </button>
+                <button
+                  type="button"
+                  disabled={popupBusy !== null}
+                  onClick={() => void resolvePopup('allow_session')}
+                >
+                  이번 세션만
+                </button>
+                <button
+                  type="button"
+                  disabled={popupBusy !== null}
+                  onClick={() => void resolvePopup('block')}
+                >
+                  계속 차단
+                </button>
+              </div>
+              {popupError && <div className="browser-popup-error">{popupError}</div>}
+            </div>
+          )}
+        </div>
+      )}
       {navigationError && <div className="browser-error">{navigationError}</div>}
       {active?.error && <div className="browser-error">{active.error}</div>}
       <div ref={surfaceRef} className="browser-surface-anchor">

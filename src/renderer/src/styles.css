@@ -1840,6 +1840,83 @@ button {
   color: var(--text);
   font-size: 12px;
 }
+.browser-popup-notice {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+}
+.browser-popup-summary {
+  width: 100%;
+  min-height: 31px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.browser-popup-summary:hover {
+  background: var(--panel-2);
+}
+.browser-popup-summary > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.browser-popup-summary > span:not(.browser-popup-configure) {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-popup-configure {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-weight: 600;
+}
+.browser-popup-detail {
+  padding: 0 10px 9px 32px;
+}
+.browser-popup-target {
+  margin-bottom: 7px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-popup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.browser-popup-actions button {
+  min-height: 27px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.browser-popup-actions button:hover:not(:disabled) {
+  border-color: var(--primary-soft-border);
+  color: var(--primary);
+}
+.browser-popup-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.browser-popup-error {
+  margin-top: 7px;
+  color: var(--error);
+}
 .browser-surface-anchor {
   position: relative;
   flex: 1;

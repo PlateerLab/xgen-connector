@@ -11,6 +11,7 @@ import {
 const state: BrowserState = {
   enabled: true,
   activeByWorkflow: { wf: 'p1' },
+  popupRequests: [],
   pages: [
     {
       pageId: 'p1',

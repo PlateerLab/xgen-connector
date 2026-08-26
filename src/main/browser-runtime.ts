@@ -5,8 +5,13 @@ import type {
   BrowserCreateRequest,
   BrowserNavigateRequest,
   BrowserPageInfo,
+  BrowserPopupPermission,
+  BrowserPopupPermissions,
+  BrowserPopupRequest,
+  BrowserPopupResolveRequest,
   BrowserState,
 } from '../core/browser';
+import { browserOrigin, sanitizedBrowserUrl } from '../core/browser';
 import { AgentBrowserRunner } from './agent-browser-runner';
 import { CdpPageProxy } from './cdp-page-proxy';
 import { allowedBrowserUrl, browserPartition } from './browser-security';
@@ -26,6 +31,17 @@ interface PendingBrowserConnection {
   noticeTimer?: ReturnType<typeof setTimeout>;
   timeoutTimer?: ReturnType<typeof setTimeout>;
 }
+
+interface PendingBrowserPopup {
+  request: BrowserPopupRequest;
+  targetUrl: string;
+  openerGeneration: number;
+  openerContentsId: number;
+  timeoutTimer: ReturnType<typeof setTimeout>;
+}
+
+const POPUP_REQUEST_TTL_MS = 60_000;
+const MAX_PENDING_POPUPS = 12;
 
 export class BrowserRuntimeError extends Error {
   constructor(
@@ -52,11 +68,19 @@ export class BrowserRuntime {
   private runner = new AgentBrowserRunner();
   private notify: (state: BrowserState) => void = () => {};
   private notifyConnection: (event: BrowserConnectionEvent) => void = () => {};
+  private persistPopupPermission: (
+    partition: string,
+    origin: string,
+    permission: BrowserPopupPermission,
+  ) => void = () => {};
   private pendingConnections = new Map<string, PendingBrowserConnection>();
   private alertedConnections = new Set<string>();
   private hardenedPartitions = new Set<string>();
   private allowedSharedContents = new Set<number>();
   private downloadPermit: { pageId: string; path: string; expiresAt: number } | null = null;
+  private popupPermissions = new Map<string, BrowserPopupPermission>();
+  private sessionPopupPermissions = new Set<string>();
+  private pendingPopups = new Map<string, PendingBrowserPopup>();
 
   setStateListener(listener: (state: BrowserState) => void): void {
     this.notify = listener;
@@ -66,11 +90,18 @@ export class BrowserRuntime {
     this.notifyConnection = listener;
   }
 
+  setPopupPermissionListener(
+    listener: (partition: string, origin: string, permission: BrowserPopupPermission) => void,
+  ): void {
+    this.persistPopupPermission = listener;
+  }
+
   configure(options: {
     enabled: boolean;
     serverUrl?: string;
     userId?: string;
     newTabUrl?: string;
+    popupPermissions?: BrowserPopupPermissions;
   }): void {
     this.sharedNewTabUrl = allowedBrowserUrl(options.newTabUrl ?? 'about:blank') ?? 'about:blank';
     const partition =
@@ -79,14 +110,22 @@ export class BrowserRuntime {
         : '';
     if (!options.enabled || !partition) {
       this.enabled = false;
+      this.popupPermissions.clear();
+      this.sessionPopupPermissions.clear();
+      this.clearPendingPopups(false);
       void this.closeAll();
       this.accountPartition = '';
       this.emit();
       return;
     }
-    if (this.accountPartition && this.accountPartition !== partition) void this.closeAll();
+    if (this.accountPartition && this.accountPartition !== partition) {
+      this.sessionPopupPermissions.clear();
+      this.clearPendingPopups(false);
+      void this.closeAll();
+    }
     this.enabled = true;
     this.accountPartition = partition;
+    this.popupPermissions = this.normalizedPopupPermissions(options.popupPermissions?.[partition]);
     this.hardenPartition(partition);
     this.emit();
   }
@@ -104,7 +143,21 @@ export class BrowserRuntime {
       enabled: this.enabled,
       pages: [...this.pages.values()].map((page) => ({ ...page.info })),
       activeByWorkflow: Object.fromEntries(this.activeByWorkflow),
+      popupRequests: [...this.pendingPopups.values()].map(({ request }) => ({ ...request })),
     };
+  }
+
+  private normalizedPopupPermissions(
+    permissions: Record<string, BrowserPopupPermission> | undefined,
+  ): Map<string, BrowserPopupPermission> {
+    const normalized = new Map<string, BrowserPopupPermission>();
+    for (const [rawOrigin, permission] of Object.entries(permissions ?? {})) {
+      const origin = browserOrigin(rawOrigin);
+      if (origin && (permission === 'allow' || permission === 'block')) {
+        normalized.set(origin, permission);
+      }
+    }
+    return normalized;
   }
 
   private emit(): void {
@@ -117,7 +170,10 @@ export class BrowserRuntime {
     }
   }
 
-  private emitConnection(runtime: BrowserPageRuntime, phase: BrowserConnectionEvent['phase']): void {
+  private emitConnection(
+    runtime: BrowserPageRuntime,
+    phase: BrowserConnectionEvent['phase'],
+  ): void {
     this.notifyConnection({
       phase,
       pageId: runtime.info.pageId,
@@ -326,7 +382,7 @@ export class BrowserRuntime {
     runtime.contents = contents;
     this.resolvePendingConnection(runtime, contents);
     const isCurrent = () => runtime.contents?.id === contents.id;
-    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    this.installPopupHandler(runtime, contents);
     const updateLocation = () => {
       if (!isCurrent() || contents.isDestroyed()) return;
       const next = allowedBrowserUrl(contents.getURL());
@@ -354,6 +410,7 @@ export class BrowserRuntime {
     });
     const navigated = () => {
       if (!isCurrent()) return;
+      this.clearPendingPopupsForPage(runtime.info.pageId, false);
       runtime.info.generation += 1;
       updateLocation();
     };
@@ -380,6 +437,7 @@ export class BrowserRuntime {
     });
     contents.once('destroyed', () => {
       if (!isCurrent()) return;
+      this.clearPendingPopupsForPage(runtime.info.pageId, false);
       runtime.info.generation += 1;
       runtime.contents = null;
       void this.resetAutomation(runtime);
@@ -388,6 +446,183 @@ export class BrowserRuntime {
     });
     updateLocation();
     this.emit();
+  }
+
+  /**
+   * Page-created windows never become native Electron children. A permitted
+   * request is replayed through create(), which gives it the normal sandbox,
+   * account partition, workflow ownership and renderer binding.
+   */
+  private installPopupHandler(runtime: BrowserPageRuntime, contents: WebContents): void {
+    contents.setWindowOpenHandler(({ url, postBody }) => {
+      const targetUrl = allowedBrowserUrl(url);
+      const openerOrigin = browserOrigin(contents.getURL());
+      const targetOrigin = browserOrigin(targetUrl);
+      if (
+        runtime.info.mode !== 'shared' ||
+        runtime.contents?.id !== contents.id ||
+        Boolean(postBody) ||
+        !targetUrl ||
+        targetUrl === 'about:blank' ||
+        !openerOrigin ||
+        !targetOrigin
+      ) {
+        return { action: 'deny' };
+      }
+
+      if (
+        this.popupPermissions.get(openerOrigin) === 'allow' ||
+        this.sessionPopupPermissions.has(openerOrigin)
+      ) {
+        const generation = runtime.info.generation;
+        setImmediate(() => {
+          void this.openManagedPopup(runtime, targetUrl, generation, contents.id).catch(
+            () => undefined,
+          );
+        });
+      } else {
+        this.queueBlockedPopup(runtime, contents, openerOrigin, targetOrigin, targetUrl);
+      }
+      return { action: 'deny' };
+    });
+  }
+
+  private queueBlockedPopup(
+    runtime: BrowserPageRuntime,
+    contents: WebContents,
+    openerOrigin: string,
+    targetOrigin: string,
+    targetUrl: string,
+  ): void {
+    const duplicate = [...this.pendingPopups.values()].find(
+      (pending) =>
+        pending.request.pageId === runtime.info.pageId &&
+        pending.request.openerOrigin === openerOrigin &&
+        pending.targetUrl === targetUrl,
+    );
+    if (duplicate) return;
+
+    while (this.pendingPopups.size >= MAX_PENDING_POPUPS) {
+      const oldest = this.pendingPopups.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.removePendingPopup(oldest, false);
+    }
+
+    const requestId = randomUUID();
+    const request: BrowserPopupRequest = {
+      requestId,
+      pageId: runtime.info.pageId,
+      workflowId: runtime.info.workflowId,
+      openerOrigin,
+      targetOrigin,
+      targetDisplayUrl: sanitizedBrowserUrl(targetUrl),
+      createdAt: Date.now(),
+    };
+    const timeoutTimer = setTimeout(() => {
+      this.removePendingPopup(requestId, true);
+    }, POPUP_REQUEST_TTL_MS);
+    (timeoutTimer as NodeJS.Timeout).unref?.();
+    this.pendingPopups.set(requestId, {
+      request,
+      targetUrl,
+      openerGeneration: runtime.info.generation,
+      openerContentsId: contents.id,
+      timeoutTimer,
+    });
+    this.emit();
+  }
+
+  private removePendingPopup(requestId: string, emit: boolean): void {
+    const pending = this.pendingPopups.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timeoutTimer);
+    this.pendingPopups.delete(requestId);
+    if (emit) this.emit();
+  }
+
+  private clearPendingPopupsForPage(pageId: string, emit: boolean): void {
+    let removed = false;
+    for (const [requestId, pending] of this.pendingPopups) {
+      if (pending.request.pageId !== pageId) continue;
+      clearTimeout(pending.timeoutTimer);
+      this.pendingPopups.delete(requestId);
+      removed = true;
+    }
+    if (removed && emit) this.emit();
+  }
+
+  private clearPendingPopups(emit: boolean): void {
+    if (!this.pendingPopups.size) return;
+    for (const pending of this.pendingPopups.values()) clearTimeout(pending.timeoutTimer);
+    this.pendingPopups.clear();
+    if (emit) this.emit();
+  }
+
+  private async openManagedPopup(
+    opener: BrowserPageRuntime,
+    targetUrl: string,
+    openerGeneration: number,
+    openerContentsId: number,
+  ): Promise<BrowserPageInfo> {
+    if (
+      !this.enabled ||
+      this.pages.get(opener.info.pageId) !== opener ||
+      opener.info.generation !== openerGeneration ||
+      opener.contents?.id !== openerContentsId ||
+      opener.contents.isDestroyed()
+    ) {
+      throw new BrowserRuntimeError('browser_stale_ref', '팝업을 요청한 페이지가 변경되었습니다.');
+    }
+    return this.create({
+      workflowId: opener.info.workflowId,
+      workflowName: opener.info.workflowName,
+      mode: 'shared',
+      url: targetUrl,
+    });
+  }
+
+  async resolvePopup(request: BrowserPopupResolveRequest): Promise<boolean> {
+    this.requireEnabled();
+    const requestId = String(request?.requestId ?? '').trim();
+    const decision = request?.decision;
+    if (
+      !requestId ||
+      (decision !== 'allow_always' && decision !== 'allow_session' && decision !== 'block')
+    ) {
+      throw new BrowserRuntimeError('browser_denied', '올바른 팝업 권한 선택이 필요합니다.');
+    }
+
+    const pending = this.pendingPopups.get(requestId);
+    if (!pending) return false;
+    const opener = this.pages.get(pending.request.pageId);
+    if (
+      !opener ||
+      opener.info.generation !== pending.openerGeneration ||
+      opener.contents?.id !== pending.openerContentsId ||
+      opener.contents.isDestroyed()
+    ) {
+      this.removePendingPopup(requestId, true);
+      return false;
+    }
+
+    if (decision === 'allow_always' || decision === 'block') {
+      const permission: BrowserPopupPermission = decision === 'allow_always' ? 'allow' : 'block';
+      this.persistPopupPermission(this.accountPartition, pending.request.openerOrigin, permission);
+      this.popupPermissions.set(pending.request.openerOrigin, permission);
+    } else {
+      this.sessionPopupPermissions.add(pending.request.openerOrigin);
+    }
+
+    this.removePendingPopup(requestId, false);
+    this.emit();
+    if (decision === 'block') return true;
+    await this.openManagedPopup(
+      opener,
+      pending.targetUrl,
+      pending.openerGeneration,
+      pending.openerContentsId,
+    );
+    return true;
   }
 
   private patch(runtime: BrowserPageRuntime, patch: Partial<BrowserPageInfo>): void {
@@ -550,6 +785,7 @@ export class BrowserRuntime {
     const runtime = this.pages.get(pageId);
     if (!runtime) return;
     this.rejectPendingConnection(runtime);
+    this.clearPendingPopupsForPage(pageId, false);
     this.pages.delete(pageId);
     await runtime.automationReset;
     await this.runner.cancelPage(pageId);
@@ -592,6 +828,8 @@ export class BrowserRuntime {
     this.activeByWorkflow.clear();
     this.downloadPermit = null;
     this.allowedSharedContents.clear();
+    this.sessionPopupPermissions.clear();
+    this.clearPendingPopups(false);
     await Promise.all(pages.map((runtime) => runtime.automationReset));
     await this.runner.closeAll();
     this.emit();

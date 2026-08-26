@@ -86,6 +86,7 @@ export interface BrowserState {
   enabled: boolean;
   pages: BrowserPageInfo[];
   activeByWorkflow: Record<string, string>;
+  popupRequests: BrowserPopupRequest[];
 }
 
 export interface BrowserConnectionEvent {
@@ -106,6 +107,43 @@ export interface BrowserNavigateRequest {
   pageId: string;
   action: 'goto' | 'back' | 'forward' | 'reload' | 'stop';
   url?: string;
+}
+
+export type BrowserPopupPermission = 'allow' | 'block';
+
+/** Persisted popup rules keyed first by the account-hashed browser partition. */
+export type BrowserPopupPermissions = Record<string, Record<string, BrowserPopupPermission>>;
+
+export type BrowserPopupDecision = 'allow_always' | 'allow_session' | 'block';
+
+/**
+ * A secret-free popup summary exposed to the renderer. The main process keeps
+ * the complete target URL (including query/fragment) behind requestId.
+ */
+export interface BrowserPopupRequest {
+  requestId: string;
+  pageId: string;
+  workflowId: string;
+  openerOrigin: string;
+  targetOrigin: string;
+  targetDisplayUrl: string;
+  createdAt: number;
+}
+
+export interface BrowserPopupResolveRequest {
+  requestId: string;
+  decision: BrowserPopupDecision;
+}
+
+/** Exact http(s) origin used as the popup permission key. */
+export function browserOrigin(raw: unknown): string | null {
+  const normalized = normalizeBrowserUrl(raw);
+  if (!normalized || normalized === 'about:blank') return null;
+  try {
+    return new URL(normalized).origin;
+  } catch {
+    return null;
+  }
 }
 
 export type BrowserErrorCode =

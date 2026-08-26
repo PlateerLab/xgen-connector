@@ -144,6 +144,7 @@ import { createSsoWindowOptions } from './sso-window-options';
 import { getBrowserRuntime } from './browser-runtime';
 import { getBrowserToolProvider } from './browser-tools';
 import { allowedBrowserUrl } from './browser-security';
+import type { BrowserPopupPermission, BrowserPopupResolveRequest } from '../core/browser';
 import { systemMetricsSampler } from './system-metrics';
 import { TeamsSocketHub } from './teams-ws';
 import {
@@ -306,7 +307,7 @@ function createWindow(): void {
       return;
     }
     // Never accept preferences supplied by page markup. The guest has no Node,
-    // preload, popup or web-security escape hatch.
+    // preload, unmanaged-popup or web-security escape hatch.
     delete webPreferences.preload;
     webPreferences.nodeIntegration = false;
     webPreferences.nodeIntegrationInSubFrames = false;
@@ -319,11 +320,30 @@ function createWindow(): void {
     guest.setWindowOpenHandler(() => ({ action: 'deny' }));
     getBrowserRuntime().registerSharedGuest(guest);
   });
-  getBrowserRuntime().setStateListener((state) =>
+  const browserRuntime = getBrowserRuntime();
+  browserRuntime.setStateListener((state) =>
     safeSend(mainWindow, CHANNELS.browserStateEvent, state),
   );
-  getBrowserRuntime().setConnectionListener((event) =>
+  browserRuntime.setConnectionListener((event) =>
     safeSend(mainWindow, CHANNELS.browserConnectionEvent, event),
+  );
+  browserRuntime.setPopupPermissionListener(
+    (partition: string, origin: string, permission: BrowserPopupPermission) => {
+      const cfg = loadConfig();
+      const browser = cfg.browser ?? {};
+      const popupPermissions = browser.popupPermissions ?? {};
+      const accountPermissions = popupPermissions[partition] ?? {};
+      const next = saveConfig({
+        browser: {
+          ...browser,
+          popupPermissions: {
+            ...popupPermissions,
+            [partition]: { ...accountPermissions, [origin]: permission },
+          },
+        },
+      });
+      broadcastConfig(next);
+    },
   );
 
   mainWindow.on('ready-to-show', () => mainWindow?.show());
@@ -1492,6 +1512,7 @@ function syncMcp(): void {
     serverUrl: normalizeServerUrl(cfg.serverUrl),
     userId: currentUserId() ?? undefined,
     newTabUrl: cfg.browser?.newTabUrl,
+    popupPermissions: cfg.browser?.popupPermissions,
   });
   const browserTools = getBrowserToolProvider(getBrowserRuntime());
   browserTools.configure(
@@ -1581,6 +1602,24 @@ ipcMain.handle(CHANNELS.configProbeServer, async (_e, input: string) => {
   });
 });
 ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) => {
+  // Browser popup permissions are main-owned security state. Renderer settings
+  // may update the other browser fields, but must neither grant permissions nor
+  // erase existing rules when replacing the nested browser object.
+  if (patch.browser !== undefined) {
+    const previous = loadConfig().browser ?? {};
+    patch = {
+      ...patch,
+      browser: {
+        ...previous,
+        ...patch.browser,
+        addressSearch:
+          patch.browser.addressSearch === undefined
+            ? previous.addressSearch
+            : { ...previous.addressSearch, ...patch.browser.addressSearch },
+        popupPermissions: previous.popupPermissions,
+      },
+    };
+  }
   // 서버 전환 = 계정 공간 전환: 구 서버의 세션/저장 자격 증명은 새 서버에서
   // 무의미하므로 여기서 전부 정리하고 재로그인을 요구한다. 원격 로그아웃은
   // best-effort 로만 시도한다 — 구 서버가 죽어서 주소를 바꾸는 경우가 흔해
@@ -2286,6 +2325,12 @@ ipcMain.handle(CHANNELS.browserNavigate, (_e, request) => getBrowserRuntime().na
 ipcMain.handle(CHANNELS.browserActivate, (_e, pageId: string) =>
   getBrowserRuntime().activate(pageId),
 );
+ipcMain.handle(CHANNELS.browserPopupResolve, (event, request: BrowserPopupResolveRequest) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('browser_denied: 허용되지 않은 팝업 권한 요청입니다.');
+  }
+  return getBrowserRuntime().resolvePopup(request);
+});
 ipcMain.handle(CHANNELS.browserClose, async (_e, pageId: string) => {
   await getBrowserRuntime().close(pageId);
   return true;

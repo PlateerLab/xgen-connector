@@ -251,6 +251,15 @@ export const BrowserIcon: React.FC<P> = ({ size = 16, className }) => (
   </svg>
 );
 
+/** A website-requested popup that remains outside the managed tab runtime. */
+export const PopupBlockedIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M3 9h18" />
+    <path d="m9 13 6 6M15 13l-6 6" />
+  </svg>
+);
+
 export const ForwardIcon: React.FC<P> = ({ size = 16, className }) => (
   <svg {...base(size)} className={className}>
     <path d="m12 5 7 7-7 7" />

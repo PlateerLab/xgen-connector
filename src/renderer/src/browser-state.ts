@@ -4,7 +4,7 @@ import { prependBrowserContext } from '../../core/browser';
 import type { ChatRequest } from '../../core/types';
 import { xgen } from './bridge';
 
-const EMPTY: BrowserState = { enabled: false, pages: [], activeByWorkflow: {} };
+const EMPTY: BrowserState = { enabled: false, pages: [], activeByWorkflow: {}, popupRequests: [] };
 
 class BrowserStateStore {
   private snapshot: BrowserState = EMPTY;
@@ -30,7 +30,7 @@ class BrowserStateStore {
   }
 
   private set(state: BrowserState): void {
-    this.snapshot = state;
+    this.snapshot = { ...state, popupRequests: state.popupRequests ?? [] };
     for (const listener of this.listeners) listener();
   }
 

@@ -115,6 +115,7 @@ export const CHANNELS = {
   browserBindShared: 'browser:bindShared',
   browserNavigate: 'browser:navigate',
   browserActivate: 'browser:activate',
+  browserPopupResolve: 'browser:popupResolve',
   browserClose: 'browser:close',
   browserCloseWorkflow: 'browser:closeWorkflow',
 
