@@ -62,13 +62,13 @@ test('pythonArchiveUrl: python-build-standalone install_only URL', () => {
   assert.match(url, /-x86_64-unknown-linux-gnu-install_only\.tar\.gz$/);
 });
 
-test('DEFAULT_RUNTIME_WHEEL: 릴리스된 runtime(host 포함) wheel v3.11.0 을 가리킨다', () => {
-  assert.equal(RUNTIME_WHEEL_VERSION, '3.11.0');
+test('DEFAULT_RUNTIME_WHEEL: 릴리스된 runtime(host 포함) wheel v3.12.0 을 가리킨다', () => {
+  assert.equal(RUNTIME_WHEEL_VERSION, '3.12.0');
   assert.equal(
     DEFAULT_RUNTIME_WHEEL,
-    'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.11.0/xgen_agent_runtime-3.11.0-py3-none-any.whl',
+    'https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v3.12.0/xgen_agent_runtime-3.12.0-py3-none-any.whl',
   );
-  assert.match(DEFAULT_RUNTIME_WHEEL, /xgen-agent-runtime\/releases\/download\/v3\.11\.0\//);
+  assert.match(DEFAULT_RUNTIME_WHEEL, /xgen-agent-runtime\/releases\/download\/v3\.12\.0\//);
   assert.match(DEFAULT_RUNTIME_WHEEL, /\.whl$/);
   // URL 패턴은 버전만 바뀐다(3.7.0 과 동일 패턴).
   assert.equal(
