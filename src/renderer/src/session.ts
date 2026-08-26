@@ -21,6 +21,22 @@ export const sessionStore = new SessionStore({
     ),
   historyTurns: (workflowId, interactionId, name) =>
     xgen.history.turns(workflowId, interactionId, name),
+  uploadWorkspaceImage: async ({
+    workflowId,
+    interactionId,
+    attachmentId,
+    name,
+    mimeType,
+    bytes,
+  }) =>
+    xgen.agentData.workspaceUpload(
+      workflowId,
+      bytes,
+      name,
+      mimeType,
+      interactionId,
+      attachmentId,
+    ),
 });
 
 /** Subscribe a component to the whole session snapshot. */

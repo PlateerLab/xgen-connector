@@ -36,6 +36,7 @@ import type {
   ForgedTool,
   WorkspaceListResult,
   WorkspaceFile,
+  WorkspaceUploadResult,
 } from '../core/index';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
@@ -355,6 +356,23 @@ const api = {
       ipcRenderer.invoke(CHANNELS.agentWsTree, wf, path),
     workspaceFile: (wf: string, path: string): Promise<WorkspaceFile> =>
       ipcRenderer.invoke(CHANNELS.agentWsFile, wf, path),
+    workspaceUpload: (
+      wf: string,
+      bytes: Uint8Array,
+      filename: string,
+      mimeType: string,
+      interactionId: string,
+      attachmentId: string,
+    ): Promise<WorkspaceUploadResult> =>
+      ipcRenderer.invoke(
+        CHANNELS.agentWsUpload,
+        wf,
+        bytes,
+        filename,
+        mimeType,
+        interactionId,
+        attachmentId,
+      ),
   },
 
   browser: {

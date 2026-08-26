@@ -129,6 +129,57 @@ test('이미지만 있는 메시지도 전송하고 허용하지 않은 data URL
   ])
 })
 
+test('XGeny 이미지는 에이전트 workspace 업로드 후 참조로 실행한다', async () => {
+  const streams: FakeStream[] = []
+  const uploads: Array<{ workflowId: string; interactionId: string; name: string; bytes: Uint8Array }> = []
+  const transport: SessionTransport = {
+    stream(req, onEvent) {
+      const stream: FakeStream = {
+        interactionId: req.interactionId,
+        input: req.input,
+        onEvent,
+        cancelled: false,
+      }
+      streams.push(stream)
+      return { cancel: () => { stream.cancelled = true } }
+    },
+    async uploadWorkspaceImage(request) {
+      uploads.push(request)
+      return {
+        workspace_path: `uploads/${request.interactionId}/${request.name}`,
+        size: request.bytes.byteLength,
+        sha256: 'abc123',
+      }
+    },
+    async historyTurns() { return [] },
+  }
+  const store = new SessionStore(transport, () => 1234)
+  const xgeny = { ...agent('geny'), hasAgentGeny: true }
+  const key = store.openNew(xgeny)
+
+  store.send(key, '이미지를 설명해줘', null, [
+    { dataUrl: 'data:image/png;base64,AAAA', name: 'a.png', mime: 'image/png', size: 3 },
+  ])
+  assert.equal(streams.length, 0, 'workspace commit 전에는 실행하지 않음')
+  await flush()
+
+  assert.equal(uploads.length, 1)
+  assert.equal(uploads[0].workflowId, 'geny')
+  assert.equal(streams.length, 1)
+  assert.deepEqual(streams[0].input, {
+    input_str: '이미지를 설명해줘',
+    attachments: [{
+      kind: 'image',
+      attachment_id: `conn-${key}-1`,
+      name: 'a.png',
+      mime_type: 'image/png',
+      size: 3,
+      sha256: 'abc123',
+      workspace_path: `uploads/${key}/a.png`,
+    }],
+  })
+})
+
 test('스트림 이벤트가 텍스트·도구·출처를 누적하고 end 에서 멈춘다', () => {
   const { store, streams } = makeStore()
   const k = store.openNew(agent('A'))

@@ -46,6 +46,8 @@ export interface Agent {
   fullName: string;
   createdAt: string;
   updatedAt: string;
+  /** True when this workflow contains the server-runtime agents/geny node. */
+  hasAgentGeny?: boolean;
 }
 
 export interface Pagination {

@@ -1,5 +1,5 @@
 /**
- * AgentDataApi — 한 에이전트(workflow)의 **읽기 전용** 관측 데이터.
+ * AgentDataApi — 한 에이전트(workflow)의 관측 데이터와 사용자 첨부 업로드.
  *
  * 채팅 헤더의 [...] 메뉴에서 여는 "에이전트 뷰어"가 쓰는 전송 계층이다.
  * 서버(xgen-workflow)의 표준 REST(owner/superuser 권한, 베어러 토큰) 를 그대로
@@ -11,13 +11,24 @@
  */
 import { HttpClient } from './client';
 
-
 /** 에이전트 뷰어의 하위 탭 — **단일 정의**.
  *
  * 렌더러(workspace-layout)와 main(config 의 레이아웃 영속 스키마)이 둘 다 쓴다.
  * 예전엔 두 곳에 유니온이 복제돼 있어서, 탭을 하나 늘리면 저장 스키마 쪽이 조용히
  * 안 맞고 레이아웃 복원에서 그 탭만 사라졌다. */
 export type AgentViewerSub = 'basic' | 'memory' | 'tasks' | 'tools' | 'storage' | 'fulllog';
+
+export interface WorkspaceUploadResult {
+  ok: boolean;
+  workflow_id?: string;
+  workspace_path?: string;
+  path?: string;
+  size?: number;
+  sha256?: string;
+  seq?: number;
+  status?: 'pending_approval';
+  request_id?: number;
+}
 
 // ── 기본정보(basic-info) ───────────────────────────────────────────
 //
@@ -393,6 +404,25 @@ export class AgentDataApi {
     const params = new URLSearchParams({ path });
     return this.http.get<WorkspaceFile>(
       `/api/agentflow/geny-workspace/${encodeURIComponent(workflowId)}/storage/text?${params}`,
+    );
+  }
+
+  /** Image bytes land in this agent's durable workspace before chat execution. */
+  workspaceUpload(
+    workflowId: string,
+    bytes: Uint8Array,
+    filename: string,
+    mimeType: string,
+    interactionId: string,
+    attachmentId: string,
+  ): Promise<WorkspaceUploadResult> {
+    const form = new FormData();
+    const owned = new Uint8Array(bytes);
+    form.append('file', new Blob([owned.buffer], { type: mimeType }), filename);
+    return this.http.upload<WorkspaceUploadResult>(
+      `/api/agentflow/geny-workspace/${encodeURIComponent(workflowId)}/storage/upload?subdir=uploads&purpose=chat_attachment&interaction_id=${encodeURIComponent(interactionId)}&attachment_id=${encodeURIComponent(attachmentId)}`,
+      form,
+      { timeoutMs: 300_000 },
     );
   }
 }
