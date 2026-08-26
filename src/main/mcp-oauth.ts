@@ -40,7 +40,7 @@ type OAuthClientProviderLike = {
   invalidateCredentials?(scope: 'all' | 'client' | 'tokens' | 'verifier'): Promise<void> | void;
 };
 
-const CLIENT_NAME = 'XGEN Connector';
+const CLIENT_NAME = 'XGen Dex';
 const AUTH_TIMEOUT_MS = 5 * 60_000;
 
 /** An OAuthClientProvider backed by the encrypted keychain. */
@@ -174,7 +174,7 @@ function startLoopback(expectedState: string): Promise<Loopback> {
       const stateOk = gotState === expectedState;
       const ok = !!authCode && !err && stateOk;
       const message = ok
-        ? '이 창을 닫고 XGEN 커넥터로 돌아가세요.'
+        ? '이 창을 닫고 XGen Dex로 돌아가세요.'
         : !stateOk
           ? '보안 검증(state)에 실패했습니다. 다시 시도하세요.'
           : escapeHtml(err || '인가 코드가 없습니다.');
@@ -311,7 +311,7 @@ export async function authorizeMcpServer(
     const transport = mkTransport();
     if (!transport) return { ok: false, error: '이 빌드에서 SSE 전송을 사용할 수 없습니다.' };
 
-    const client = new Client({ name: 'xgen-connector', version: '1.0.0' }, { capabilities: {} });
+    const client = new Client({ name: 'xgen-dex', version: '1.0.0' }, { capabilities: {} });
     try {
       // If we already have valid/refreshable tokens, this connects straight away.
       // Bounded so a stalled discovery/registration can't hang forever.
@@ -329,7 +329,7 @@ export async function authorizeMcpServer(
     await withTimeout(transport.finishAuth(code), 60_000, 'OAuth 토큰 교환');
     // Verify with a fresh transport that now has tokens.
     const verifyTransport = mkTransport();
-    const verifyClient = new Client({ name: 'xgen-connector', version: '1.0.0' }, { capabilities: {} });
+    const verifyClient = new Client({ name: 'xgen-dex', version: '1.0.0' }, { capabilities: {} });
     try {
       if (verifyTransport) {
         await withTimeout(verifyClient.connect(verifyTransport), 60_000, 'OAuth 검증');

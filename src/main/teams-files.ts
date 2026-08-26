@@ -73,7 +73,7 @@ export async function openAttachmentTemp(
   storageKey: string,
   bytes: Uint8Array,
 ): Promise<string> {
-  const dir = join(app.getPath('temp'), 'xgen-connector', 'teams', safeFileName(storageKey));
+  const dir = join(app.getPath('temp'), 'xgen-dex', 'teams', safeFileName(storageKey));
   await mkdir(dir, { recursive: true });
   const target = join(dir, safeFileName(filename));
   await writeFile(target, bytes);

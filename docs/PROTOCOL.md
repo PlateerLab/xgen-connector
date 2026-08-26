@@ -1,4 +1,4 @@
-# XGEN Connector — API protocol reference
+# XGen Dex — API protocol reference
 
 The connector talks to a deployed XGEN instance through its **gateway**
 (`http(s)://<gateway-host>:8000`). Everything is under `/api`. All

@@ -20,8 +20,8 @@ import type { ConnectorConfig } from '../src/main/config';
 
 const HOME = '/home/tester';
 
-test('resolveDataRoot: 기본 ~/xgen-connector, 명시값 존중', () => {
-  assert.equal(resolveDataRoot({}, HOME), join(HOME, 'xgen-connector'));
+test('resolveDataRoot: 기본 ~/xgen-dex, 명시값 존중', () => {
+  assert.equal(resolveDataRoot({}, HOME), join(HOME, 'xgen-dex'));
   // resolve() 는 윈도우에서 드라이브를 붙인다 — 기대값도 같은 규칙으로.
   assert.equal(resolveDataRoot({ dataRoot: '/custom/place' }, HOME), resolve('/custom/place'));
 });
@@ -31,7 +31,7 @@ test('settleDataRoot: 트리 생성 + 미설정 기본 채움, 명시 설정은 
   try {
     const cfg = { serverUrl: '' } as unknown as ConnectorConfig;
     const { root, patch } = settleDataRoot(cfg, home);
-    assert.equal(root, join(home, 'xgen-connector'));
+    assert.equal(root, join(home, 'xgen-dex'));
     // 트리가 실제로 만들어졌다.
     for (const d of [root, workspaceDirOf(root), cloudDirOf(root), runtimeDirOf(root)])
       assert.ok(existsSync(d), d);
@@ -63,7 +63,7 @@ test('consumeInstallOptions: 1회 소비(파일 삭제) + 패치 매핑, 없으�
     writeFileSync(
       join(ud, INSTALL_OPTIONS_FILE),
       JSON.stringify({
-        dataRoot: 'D:\\xgen-connector',
+        dataRoot: 'D:\\xgen-dex',
         autoRuntime: true,
         autoCodex: false,
         autoClaude: true,
@@ -71,7 +71,7 @@ test('consumeInstallOptions: 1회 소비(파일 삭제) + 패치 매핑, 없으�
     );
     const patch = consumeInstallOptions(ud);
     assert.deepEqual(patch, {
-      dataRoot: 'D:\\xgen-connector',
+      dataRoot: 'D:\\xgen-dex',
       localExec: { autoRuntime: true, autoCodex: false, autoClaude: true },
     });
     // 소비됐다 — 파일 삭제 + 재호출 null.
@@ -116,9 +116,9 @@ test('writeCliInstallScripts: OS 별 스크립트를 루트에 배치(공식 소
 
 test('readInstallerText: UTF-16LE(BOM)/UTF-8(BOM)/ANSI-ASCII 를 모두 읽는다 (한글 경로 안전)', async () => {
   const { readInstallerText } = await import('../src/main/data-root');
-  const json = '{"dataRoot":"C:\\\\Users\\\\홍길동\\\\xgen-connector","autoRuntime":true}';
+  const json = '{"dataRoot":"C:\\\\Users\\\\홍길동\\\\xgen-dex","autoRuntime":true}';
   const u16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(json, 'utf16le')]);
-  assert.equal(JSON.parse(readInstallerText(u16)).dataRoot, 'C:\\Users\\홍길동\\xgen-connector');
+  assert.equal(JSON.parse(readInstallerText(u16)).dataRoot, 'C:\\Users\\홍길동\\xgen-dex');
   const u8 = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(json, 'utf8')]);
   assert.equal(JSON.parse(readInstallerText(u8)).autoRuntime, true);
   assert.equal(JSON.parse(readInstallerText(Buffer.from('{"a":1}'))).a, 1);

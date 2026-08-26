@@ -20,16 +20,16 @@ import {
 
 const inst = (over: Partial<CandidateLike> = {}): CandidateLike => ({
   source: 'install',
-  runtimeDir: 'C:\\u\\xgen-connector\\local-runtime',
-  python: 'C:\\u\\xgen-connector\\local-runtime\\python\\python.exe',
+  runtimeDir: 'C:\\u\\xgen-dex\\local-runtime',
+  python: 'C:\\u\\xgen-dex\\local-runtime\\python\\python.exe',
   exists: true,
   version: '3.8.0',
   ...over,
 });
 const bun = (over: Partial<CandidateLike> = {}): CandidateLike => ({
   source: 'bundle',
-  runtimeDir: 'C:\\Program Files\\XGEN Connector\\resources',
-  python: 'C:\\Program Files\\XGEN Connector\\resources\\python\\python.exe',
+  runtimeDir: 'C:\\Program Files\\XGen-Dex\\resources',
+  python: 'C:\\Program Files\\XGen-Dex\\resources\\python\\python.exe',
   exists: true,
   version: '3.8.0',
   ...over,

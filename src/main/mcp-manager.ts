@@ -351,7 +351,7 @@ export class MCPManager {
           }) as ConstructorParameters<typeof StreamableHTTPClientTransport>[1],
         );
       }
-      const client = new Client({ name: 'xgen-connector', version: '1.0.0' }, { capabilities: {} });
+      const client = new Client({ name: 'xgen-dex', version: '1.0.0' }, { capabilities: {} });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let listed: any;
       try {

@@ -126,7 +126,7 @@ export interface ConnectorConfig {
    * 켜져 있으면 로컬 MCP 서버가 하나도 없어도 브릿지가 떠서 이 도구를 광고한다.
    */
   localShell?: LocalShellPersistConfig;
-  /** 통합 데이터 루트(기본 ~/xgen-connector) — workspace/·cloud/·local-runtime/ 의
+  /** 통합 데이터 루트(기본 ~/xgen-dex) — workspace/·cloud/·local-runtime/ 의
    *  부모. 인스톨러 선택 또는 설정에서 변경. 개별 경로 명시가 항상 우선. */
   dataRoot?: string;
   /** 로컬 실행 자동 프로비저닝 스위치(인스톨러 체크박스 미러; 기본 전부 true). */

@@ -108,7 +108,7 @@ STATUS=$?
 ELAPSED=$(( $(date +%s) - START ))
 # 133 = 128 + SIGTRAP(5). 기동 직후면 샌드박스가 원인이다.
 if [ "$STATUS" -eq 133 ] && [ "$ELAPSED" -le 10 ] && ! has_flag "$@"; then
-  echo "xgen-connector: sandbox unavailable (SIGTRAP at startup) - retrying with --no-sandbox" >&2
+  echo "xgen-dex: sandbox unavailable (SIGTRAP at startup) - retrying with --no-sandbox" >&2
   exec -a "$0" "$REAL" --no-sandbox "$@"
 fi
 exit $STATUS

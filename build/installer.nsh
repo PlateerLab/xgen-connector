@@ -1,8 +1,14 @@
-; XGEN Connector — NSIS 설치 커스터마이즈
+; XGen Dex — NSIS 설치 커스터마이즈
+;
+; ⚠ %APPDATA%\XGEN-Connector\... 경로들은 브랜드명이 아니라 Electron 의
+; userData 폴더 이름이다 — src/main/index.ts 최상단의 app.setName('XGEN-Connector')
+; 로 리브랜딩 이후에도 고정해 뒀다(기존 사용자의 로그인 세션·로컬 런타임·동기화
+; 상태를 보존하기 위해). 표시 문구가 아닌 실제 경로이므로 여기서는 바꾸지 않는다.
 ;
 ; ── 데이터 폴더 선택 페이지 ─────────────────────────────────────────────
 ; 커넥터의 모든 작업 자산(workspace/ · cloud/ · local-runtime/ + codex/claude CLI)
-; 은 **통합 루트**(기본 %USERPROFILE%\xgen-connector) 아래에 모인다. 이 페이지가
+; 은 **통합 루트**(기본 %USERPROFILE%\xgen-dex — 새 설치만, 기존 사용자는 마커에
+; 저장된 실제 경로를 그대로 씀) 아래에 모인다. 이 페이지가
 ; 루트 경로와 구성요소 체크(기본 전부 체크)를 받아
 ;   %APPDATA%\XGEN-Connector\install-options.json
 ; 으로 남기면, 앱 첫 부팅(data-root.consumeInstallOptions)이 한 번 삼켜 config 에
@@ -82,7 +88,7 @@
       Pop $XgenDataRoot
     ${EndIf}
     StrCmp $XgenDataRoot "" 0 +2
-      StrCpy $XgenDataRoot "$PROFILE\xgen-connector"
+      StrCpy $XgenDataRoot "$PROFILE\xgen-dex"
 
     ${NSD_CreateLabel} 0 0 100% 24u "이 폴더 아래에 workspace\(작업·동기화), cloud\(스토리지), local-runtime\(에이전트 로컬 실행 런타임과 CLI)이 만들어집니다."
     Pop $0
@@ -236,7 +242,7 @@
   Function XgenInstFilesShow
     SetDetailsView show
     SetDetailsPrint both
-    DetailPrint "XGEN Connector ${VERSION} 설치를 시작합니다."
+    DetailPrint "XGen Dex ${VERSION} 설치를 시작합니다."
     DetailPrint "1/3 앱 파일 압축 해제 — 진행 막대를 확인하세요 (이 단계는 줄 단위 로그가 없습니다)."
     DetailPrint "설치 로그 파일: $APPDATA\XGEN-Connector\install.log"
   FunctionEnd
@@ -277,7 +283,7 @@
   ${If} $installMode == "all"
     SetShellVarContext current
   ${EndIf}
-  !insertmacro XgenLog "==== XGEN Connector ${VERSION} install start ===="
+  !insertmacro XgenLog "==== XGen Dex ${VERSION} install start ===="
   !insertmacro XgenLog "INSTDIR=$INSTDIR installMode=$installMode"
   DetailPrint "WebDAV 파일 크기 상한을 조정하는 중..."
   ; 0xFFFFFFFF = 4GiB-1 (WebClient 가 받는 최대값)
@@ -306,7 +312,7 @@
     Pop $XgenDataRoot
   ${EndIf}
   StrCmp $XgenDataRoot "" 0 +2
-    StrCpy $XgenDataRoot "$PROFILE\xgen-connector"
+    StrCpy $XgenDataRoot "$PROFILE\xgen-dex"
   StrCmp $XgenRuntimeState "" 0 +2
     StrCpy $XgenRuntimeState 1
   StrCmp $XgenCodexState "" 0 +2

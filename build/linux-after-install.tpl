@@ -27,9 +27,9 @@ fi
 # 죽었을 때 원인 추적이 처음부터 다시 시작된다.
 SANDBOX='/opt/${sanitizedProductName}/chrome-sandbox'
 if chown root:root "$SANDBOX" 2>/dev/null && chmod 4755 "$SANDBOX" 2>/dev/null; then
-    echo "xgen-connector: chrome-sandbox SUID-root 설정 완료 (샌드박스 사용)"
+    echo "xgen-dex: chrome-sandbox SUID-root 설정 완료 (샌드박스 사용)"
 else
-    echo "xgen-connector: chrome-sandbox SUID 설정 실패 — 앱이 --no-sandbox 로 자동 전환됩니다" >&2
+    echo "xgen-dex: chrome-sandbox SUID 설정 실패 — 앱이 --no-sandbox 로 자동 전환됩니다" >&2
 fi
 
 if hash update-mime-database 2>/dev/null; then

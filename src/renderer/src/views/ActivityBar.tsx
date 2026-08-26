@@ -64,7 +64,7 @@ export const ActivityBar: React.FC<{
 
   return (
     <nav className="activity-bar">
-      <div className="ab-logo" title="XGEN Connector">
+      <div className="ab-logo" title="XGen Dex">
         <XgenMark height={24} variant="color" />
       </div>
 

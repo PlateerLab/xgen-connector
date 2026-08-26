@@ -1,6 +1,6 @@
 name: Release Installers
 
-# Builds the XGEN Connector for macOS, Windows and Linux and publishes the
+# Builds XGen Dex for macOS, Windows and Linux and publishes the
 # installers to a GitHub Release. Public repo → all three OS runners are free.
 # Triggered by pushing a `v*` tag (e.g. v0.1.0), or manually.
 #
@@ -118,20 +118,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
-          name: XGEN Connector v${{ steps.ver.outputs.version }}
+          name: XGen Dex v${{ steps.ver.outputs.version }}
           files: artifacts/**/*
           fail_on_unmatched_files: true
           body: |
-            **XGEN desktop connector** — installers (macOS ad-hoc signed; Windows unsigned).
+            **XGen Dex desktop connector** — installers (macOS ad-hoc signed; Windows unsigned).
 
             | OS | File | Install |
             |---|---|---|
-            | Windows | `XGEN-Connector-Setup-*.exe` | Run it → if SmartScreen appears, **More info → Run anyway** |
-            | macOS | `XGEN-Connector-*.dmg` | Open it, drag **XGEN Connector.app** to **Applications** → on first launch **right-click → Open** (or System Settings → Privacy & Security → **Open Anyway**) |
-            | Linux | `XGEN-Connector-*.AppImage` / `*.deb` | AppImage: `chmod +x` then run / deb: `sudo dpkg -i` |
+            | Windows | `XGen-Dex-Setup-*.exe` | Run it → if SmartScreen appears, **More info → Run anyway** |
+            | macOS | `XGen-Dex-*.dmg` | Open it, drag **XGen-Dex.app** to **Applications** → on first launch **right-click → Open** (or System Settings → Privacy & Security → **Open Anyway**) |
+            | Linux | `XGen-Dex-*.AppImage` / `*.deb` | AppImage: `chmod +x` then run / deb: `sudo dpkg -i` |
 
             > **If macOS says "damaged / move to Trash"** (from an older build, or when right-click → Open won't work):
-            > run `xattr -dr com.apple.quarantine "/Applications/XGEN Connector.app"` in Terminal, then open it again.
+            > run `xattr -dr com.apple.quarantine "/Applications/XGen-Dex.app"` in Terminal, then open it again.
 
             On first launch, enter your **XGEN server URL** + your **account (email / password)** to connect,
             then pick an agent and chat. The connector ships with no default server — point it at your own XGEN deployment.

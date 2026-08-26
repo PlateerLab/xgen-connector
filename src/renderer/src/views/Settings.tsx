@@ -292,7 +292,7 @@ export const Settings: React.FC<{
     commitShell({ cwd: p });
   };
   // 설치 폴더(통합 루트) 파생 기본 — PC 컨트롤/스토리지의 기본은 이 하위다.
-  const installRoot = (config.dataRoot ?? '').trim() || '~/xgen-connector';
+  const installRoot = (config.dataRoot ?? '').trim() || '~/xgen-dex';
   const sep = installRoot.includes('\\') ? '\\' : '/';
   const defaultShellCwd = `${installRoot}${sep}workspace`;
   const clearShellCwd = () => {
