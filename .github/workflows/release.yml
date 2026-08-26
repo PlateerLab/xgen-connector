@@ -78,14 +78,6 @@ jobs:
       - name: Build renderer + main
         run: npm run build
 
-      # 에이전트 로컬 실행 런타임을 **앱에 내장** — 이식형 CPython + xgen-agent-runtime
-      # (사이드카 포함)를 이 OS/arch 로 조립해 extraResources 로 실린다. STRICT=1:
-      # 조립 실패 = 릴리스 실패(런타임 없는 설치본을 조용히 내보내지 않는다).
-      - name: Bundle local-exec runtime (portable Python + agent runtime)
-        run: node scripts/bundle-python-sidecar.mjs
-        env:
-          XGEN_SIDECAR_STRICT: '1'
-
       - name: Package installer
         run: npx --no-install electron-builder ${{ matrix.flag }} --publish never
         env:

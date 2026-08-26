@@ -31,9 +31,7 @@ import { spawn } from 'node:child_process';
 import {
   appendFileSync,
   chmodSync,
-  existsSync,
   mkdirSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -81,14 +79,12 @@ import { CHANNELS } from './ipc';
 // 않는다 (v1.7.0 에서 에이전트 추가가 먹통이던 원인).
 import { initWorkspaceManager, getWorkspaceManager } from './workspace-manager';
 import { makeWorkspaceApi } from './workspace-api';
-import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-transport';
+import { HttpSyncTransport, WorkspaceWsClient } from './sync-transport';
 import { LocalSyncManager } from './local-sync-manager';
 import { WorkspaceBridge } from './workspace-bridge-tools';
 import {
   consumeInstallOptions,
-  readInstallLogText,
   resolveDataRoot,
-  runtimeDirOf,
   settleDataRoot,
   writeDataRootMarker,
 } from './data-root';
@@ -2990,37 +2986,8 @@ function appendInstallLog(line: string): void {
     /* 로그 실패는 무시 */
   }
 }
-/**
- * 인스톨러가 남긴 로그(%APPDATA%\XGEN-Connector\install.log, win) + 앱 로그 꼬리.
- * 인스톨러(NSIS FileWrite = ANSI/CP949)와 앱(UTF-8)이 **같은 파일**에 섞어 쓰므로 줄 단위로
- * 인코딩을 판별해 디코드한다(readInstallLogText) — 통째로 utf-8 로 읽으면 '→'/한글이 깨진다.
- */
-function readInstallLogs(maxLines = 120): { path: string; lines: string[] }[] {
-  const out: { path: string; lines: string[] }[] = [];
-  for (const p of [join(app.getPath('userData'), 'install.log'), installLogPath()]) {
-    if (!existsSync(p)) continue;
-    try {
-      const lines = readInstallLogText(readFileSync(p)).filter(Boolean);
-      out.push({ path: p, lines: lines.slice(-maxLines) });
-    } catch {
-      /* skip */
-    }
-  }
-  return out;
-}
-/**
- * 로컬 실행용 외부 MCP 서버 설정 해석 — cfg.mcp 가 켜져 있고 enabled 서버가 있을 때만.
- * connector.json 의 redacted 설정 + 키체인 시크릿(env/headers) + oauth 토큰(Authorization
- * Bearer)을 합쳐 **resolved** 설정 리스트를 만든다(사이드카가 런타임 MCP 매니저로 직접 연결).
- * 실패는 방어적으로 건너뛴다(그 서버만 제외).
- */
 
 /** CLI 바이너리 자동 보장 — 도구별 single-flight(연타 턴이 중복 설치하지 않게). */
-const cliEnsureInflight = new Map<string, Promise<boolean>>();
-
-// CLI 바이너리(codex / Claude Code) 프로비저닝 — 진행률은 localRuntimeProgress 재사용.
-/** CLI 는 항상 설치 폴더 하위(local-runtime/bin) — 설치 스크립트와 같은 목적지. */
-
 ipcMain.handle(CHANNELS.syncStatus, () => {
   return localSync?.status() ?? { enabled: false, reason: 'disabled', agents: [] };
 });
