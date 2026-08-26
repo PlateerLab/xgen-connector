@@ -2199,6 +2199,119 @@ button {
   white-space: pre-wrap;
 }
 
+/* 사용자가 직접 붙인 그림 — 전송 뒤에도 어떤 입력을 보냈는지 대화 안에서 보인다. */
+.bubble.user.has-images {
+  padding: 6px;
+}
+.bubble.user.has-images .bubble-plain {
+  display: block;
+  padding: 6px 9px 5px;
+}
+.chat-message-images {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  width: min(380px, 58vw);
+  overflow: hidden;
+  border-radius: calc(var(--radius-xl) - 4px);
+}
+.chat-message-images.count-2,
+.chat-message-images.count-3,
+.chat-message-images.count-4 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.chat-message-image-button {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: zoom-in;
+}
+.chat-message-image-button:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: -3px;
+}
+.chat-message-images img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 360px;
+  min-height: 72px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.08);
+}
+.chat-message-images:not(.count-1) img {
+  height: 150px;
+  object-fit: cover;
+}
+
+/* 채팅 이미지 확대 미리보기 — 원본 비율을 유지하며 뷰포트 안에서 최대한 크게. */
+.chat-image-preview {
+  padding: 28px;
+  background: rgba(9, 11, 17, 0.88);
+  backdrop-filter: blur(8px);
+}
+.chat-image-preview-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: calc(100vw - 56px);
+  max-height: calc(100vh - 56px);
+}
+.chat-image-preview-dialog > img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 162px);
+  border-radius: 10px;
+  object-fit: contain;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+.chat-image-preview-close {
+  position: static;
+  flex: none;
+  align-self: flex-end;
+  width: 30px;
+  height: 30px;
+  margin-bottom: 6px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(16, 18, 24, 0.72);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-image-preview-close:hover {
+  background: rgba(16, 18, 24, 0.94);
+}
+.chat-image-preview-caption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding-top: 10px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+}
+.chat-image-preview-caption span {
+  max-width: min(560px, 70vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-image-preview-caption small {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 /* ─── Markdown (assistant chat bubbles) ─── */
 .md {
   white-space: normal; /* 블록 요소가 레이아웃을 소유 — bubble 의 pre-wrap 해제 */
@@ -2571,6 +2684,63 @@ button {
 .composer-input::placeholder {
   color: var(--gray-400);
 }
+.composer-image-input {
+  display: none;
+}
+
+/* 전송 전 이미지 미리보기. 이미지 자체와 이름, 개별 제거를 한 덩어리로 보여 준다. */
+.composer-images {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 2px 1px 3px;
+}
+.composer-image {
+  position: relative;
+  flex: 0 0 112px;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.composer-image img {
+  display: block;
+  width: 100%;
+  height: 64px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: var(--input-bg);
+}
+.composer-image-name {
+  display: block;
+  padding: 4px 2px 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-image button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  background: rgba(20, 24, 34, 0.76);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer-image button:hover {
+  background: rgba(185, 28, 28, 0.9);
+}
 .composer-send {
   flex: none;
   width: 36px;
@@ -2608,6 +2778,7 @@ button {
 }
 /* 화면 첨부 토글 — 켜져 있으면 한눈에 보여야 한다. 켜 둔 것을 잊고
    민감한 화면을 보내는 것이 이 기능의 유일한 위험이다. */
+.composer-attach,
 .composer-shot {
   flex: none;
   width: 36px;
@@ -2621,9 +2792,14 @@ button {
   align-items: center;
   justify-content: center;
 }
+.composer-attach:hover:not(:disabled),
 .composer-shot:hover:not(:disabled) {
   background: var(--panel-2);
 }
+.composer-attach:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.composer-attach:disabled,
 .composer-shot:disabled {
   opacity: 0.5;
   cursor: default;
@@ -2691,6 +2867,10 @@ button {
 .composer-foot {
   padding: 0 4px;
   min-height: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .kbd-hint {
   font-size: 11px;
@@ -2708,6 +2888,12 @@ button {
   font-size: 10px;
   line-height: 1.5;
   margin: 0 1px;
+}
+.composer-image-hint {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
 /* ─── Settings modal ─── */
