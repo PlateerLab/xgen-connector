@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useModalDismiss } from './use-modal-dismiss';
-import { xgen, copyText } from '../bridge';
+import { xgen } from '../bridge';
 import {
   BROWSER_SEARCH_PROVIDERS,
   normalizeBrowserUrl,
