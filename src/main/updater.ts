@@ -85,7 +85,7 @@ async function netFetch(
     return await net.fetch(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'xgen-connector',
+        'User-Agent': 'xgen-dex',
         Accept: 'application/vnd.github+json',
         ...headers,
       },
@@ -149,7 +149,7 @@ function getUpdater(): AppUpdater | null {
       defaultId: 0,
       cancelId: 1,
       title: '업데이트 준비됨',
-      message: `XGEN Connector ${info.version} 가 다운로드됐습니다.`,
+      message: `XGen Dex ${info.version} 가 다운로드됐습니다.`,
       detail: '지금 재시작하면 새 버전이 설치됩니다.',
     });
     if (res.response === 0) {
@@ -206,7 +206,7 @@ async function macAssistedUpdate(version: string, manual: boolean): Promise<void
       await dialog.showMessageBox({
         type: 'info',
         message: `새 버전 v${version} 다운로드 완료`,
-        detail: `열린 디스크 이미지에서 'XGEN Connector' 를 Applications 폴더로 드래그해 설치하세요.\n파일 위치: ${dest}`,
+        detail: `열린 디스크 이미지에서 'XGen-Dex' 를 Applications 폴더로 드래그해 설치하세요.\n파일 위치: ${dest}`,
       });
     }
   } catch (e) {
@@ -282,8 +282,8 @@ async function downloadXgenPackage(pkg: XgenInstallerPackage, token: string): Pr
   if (!res.ok) throw new Error(`XGEN 다운로드 센터 ${res.status}`);
   if (!res.body) throw new Error('설치 파일 응답이 비어 있습니다.');
 
-  const safeName = basename(pkg.original_name || `xgen-connector-${pkg.version || 'update'}`);
-  const updateDir = join(app.getPath('temp'), 'xgen-connector-updates', id);
+  const safeName = basename(pkg.original_name || `xgen-dex-${pkg.version || 'update'}`);
+  const updateDir = join(app.getPath('temp'), 'xgen-dex-updates', id);
   mkdirSync(updateDir, { recursive: true });
   const destination = join(updateDir, safeName);
   const output = createWriteStream(destination);
@@ -336,16 +336,16 @@ async function installXgenPackage(pkg: XgenInstallerPackage): Promise<void> {
       defaultId: 0,
       cancelId: 1,
       title: '업데이트 준비됨',
-      message: `XGEN Connector ${pkg.version} 설치 파일을 확인했습니다.`,
+      message: `XGen Dex ${pkg.version} 설치 파일을 확인했습니다.`,
       detail:
         process.platform === 'win32'
-          ? 'Connector 종료 후 설치 진행 창을 표시하고 새 버전으로 다시 시작합니다.'
+          ? 'XGen Dex 종료 후 설치 진행 창을 표시하고 새 버전으로 다시 시작합니다.'
           : '설치 프로그램을 연 뒤 화면의 안내에 따라 업데이트를 완료해 주세요.',
     });
     if (result.response === 0) {
       if (process.platform === 'win32') {
         await new Promise<void>((resolve, reject) => {
-          // NSIS를 바로 열면 현재 Connector의 파일 잠금 검사와 경합한다.
+          // NSIS를 바로 열면 현재 XGen Dex의 파일 잠금 검사와 경합한다.
           // 숨겨진 cmd launcher가 안전 종료 제한(3.5초)보다 늦게 실행해,
           // 앱이 완전히 사라진 뒤 대화형 NSIS 프로그레스 창을 표시한다.
           const command = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
@@ -361,7 +361,7 @@ async function installXgenPackage(pkg: XgenInstallerPackage): Promise<void> {
           });
           launcher.once('error', reject);
         });
-        notify('Connector 종료 후 설치 진행 창을 표시합니다.');
+        notify('XGen Dex 종료 후 설치 진행 창을 표시합니다.');
         appWillInstall();
         app.quit();
         // MCP·동기화 자식 프로세스가 종료를 늦춰 설치 파일 잠금이 남는 경우를
@@ -515,7 +515,7 @@ function notifyUpdateAvailable(version: string, onAccept: () => void): void {
   notify(`새 버전 v${version} 이(가) 있습니다.`);
   if (Notification.isSupported()) {
     const n = new Notification({
-      title: 'XGEN Connector 업데이트',
+      title: 'XGen Dex 업데이트',
       body: `새 버전 v${version} — 클릭하면 지금 업데이트합니다.`,
     });
     n.on('click', onAccept);

@@ -1,4 +1,4 @@
-# XGEN Connector
+# XGen Dex
 
 A desktop **connector** for [XGEN](https://github.com/PlateerLab) — set your XGEN
 server URL, log in, browse **your agents** (the "Agent 목록"), and **chat** with
@@ -19,9 +19,9 @@ Grab an installer from the [**Releases**](https://github.com/PlateerLab/xgen-con
 
 | OS      | File                                  | Install                                                                                                                                                                                       |
 | ------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows | `XGEN-Connector-Setup-*.exe`          | Run it → if SmartScreen appears, **More info → Run anyway** (unsigned).                                                                                                                       |
-| macOS   | `XGEN-Connector-*.dmg`                | Open, drag **XGEN Connector.app** to **Applications** → first launch **right-click → Open**. If it says _"damaged"_, run `xattr -dr com.apple.quarantine "/Applications/XGEN Connector.app"`. |
-| Linux   | `XGEN-Connector-*.AppImage` / `*.deb` | AppImage: `chmod +x` then run · deb: `sudo dpkg -i`.                                                                                                                                          |
+| Windows | `XGen-Dex-Setup-*.exe`          | Run it → if SmartScreen appears, **More info → Run anyway** (unsigned).                                                                                                                       |
+| macOS   | `XGen-Dex-*.dmg`                | Open, drag **XGen-Dex.app** to **Applications** → first launch **right-click → Open**. If it says _"damaged"_, run `xattr -dr com.apple.quarantine "/Applications/XGen-Dex.app"`. |
+| Linux   | `XGen-Dex-*.AppImage` / `*.deb` | AppImage: `chmod +x` then run · deb: `sudo dpkg -i`.                                                                                                                                          |
 
 The app auto-updates from these releases (toggle in Settings). On first launch,
 enter your **XGEN server URL** and **account**, then pick an agent and chat.

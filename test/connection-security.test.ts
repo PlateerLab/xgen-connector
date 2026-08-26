@@ -139,7 +139,7 @@ test('워크스페이스 HTTP 통신은 주입된 Electron fetch를 사용한다
       fetch: injectedFetch,
       allowPrivateCertificate: true,
     },
-    '/tmp/xgen-connector-test',
+    '/tmp/xgen-dex-test',
   );
 
   assert.deepEqual(await transport.changes(0), { latest_seq: 0, changes: [] });

@@ -47,7 +47,7 @@ reason:'quota_exceeded', detail:<message>}` + `error <message>` + `end` 로 턴�
 **동기화 미완료 안내** — `ensureSynced` 가 제한시간 내 하이드레이트를 못 끝내면(`synced=false`) 폴백하지 않고 로컬에서 실행하되
 `status {surface:'connector_local', detail:'동기화 미완료 — 일부 파일이 아직 없을 수 있음'}` 으로 알린다(배지: 이 PC에서 실행 — 동기화 미완료 …).
 
-## 구성요소 (설치 폴더 `<dataRoot>` = 기본 `~/xgen-connector`)
+## 구성요소 (설치 폴더 `<dataRoot>` = 기본 `~/xgen-dex`)
 
 | 경로 | 내용 | 누가 만드나 |
 |---|---|---|

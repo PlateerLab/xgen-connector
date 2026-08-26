@@ -1,5 +1,5 @@
 /**
- * XgenClient — the single entry point for the XGEN connector transport layer.
+ * XgenClient — the single entry point for the XGen Dex transport layer.
  *
  * ```ts
  * const xgen = new XgenClient({ baseUrl: 'https://xgen.example.com' });

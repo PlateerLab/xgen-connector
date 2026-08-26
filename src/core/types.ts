@@ -1,5 +1,5 @@
 /**
- * Shared types for the XGEN connector transport layer.
+ * Shared types for the XGen Dex transport layer.
  *
  * These mirror the real XGEN gateway/workflow API (see docs/PROTOCOL.md). The
  * transport layer is framework-agnostic (no Electron/React imports) so it can

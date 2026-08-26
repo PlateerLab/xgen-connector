@@ -1,7 +1,7 @@
 {
   "name": "xgen-connector",
-  "version": "2.0.3",
-  "description": "XGEN Connector - desktop client to log in to an XGEN instance, browse your agents, and chat (SSE streaming). Works with agent_geny / agent_xgen / agent_harness agents.",
+  "version": "2.1.0",
+  "description": "XGen Dex - desktop client to log in to an XGEN instance, browse your agents, and chat (SSE streaming). Works with agent_geny / agent_xgen / agent_harness agents.",
   "author": "PlateerLab",
   "license": "Apache-2.0",
   "main": "./out/main/index.js",

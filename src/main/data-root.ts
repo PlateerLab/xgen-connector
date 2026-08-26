@@ -1,9 +1,13 @@
 /**
- * data-root — 커넥터의 **통합 데이터 루트 폴더** (`~/xgen-connector`).
+ * data-root — 커넥터의 **통합 데이터 루트 폴더** (`~/xgen-dex`).
+ *
+ * ⚠ 이 기본값은 새 설치에만 적용된다 — 이미 부팅한 적이 있는 기존 사용자는
+ * settleDataRoot 가 첫 부팅에 dataRoot 를 config 에 못박아 둬서(아래 참고)
+ * 이 문자열이 바뀌어도 기존 데이터 폴더(예: ~/xgen-connector)를 그대로 쓴다.
  *
  * 커넥터가 만드는 모든 작업 자산이 한 지붕 아래 모인다:
  *
- *   <dataRoot>/                ← 기본 ~/xgen-connector (인스톨러/설정에서 변경 가능)
+ *   <dataRoot>/                ← 기본 ~/xgen-dex (인스톨러/설정에서 변경 가능)
  *     workspace/               ← PC 컨트롤 작업 폴더 + 에이전트 로컬 동기화 루트
  *     cloud/                   ← 스토리지(가상 드라이브) 마운트 루트
  *     local-runtime/           ← 에이전트 로컬 실행 런타임(Python) + bin/(codex·claude CLI)
@@ -109,10 +113,10 @@ export interface InstallOptions {
   autoClaude?: boolean;
 }
 
-/** 통합 루트 — config.dataRoot 존중, 기본 ~/xgen-connector. */
+/** 통합 루트 — config.dataRoot 존중, 기본 ~/xgen-dex(새 설치만 — 위 파일 docstring 참고). */
 export function resolveDataRoot(cfg: Pick<ConnectorConfig, 'dataRoot'>, home = homedir()): string {
   const r = (cfg.dataRoot ?? '').trim();
-  return r ? resolve(r) : join(home, 'xgen-connector');
+  return r ? resolve(r) : join(home, 'xgen-dex');
 }
 
 export function workspaceDirOf(root: string): string {
@@ -194,7 +198,7 @@ export function consumeInstallOptions(userDataDir: string): Partial<ConnectorCon
 // (win .cmd 는 콘솔 코드페이지 문제를 피해 영어 메시지 — curl/tar 는 Win10+ 내장.)
 
 const SH_CODEX = `#!/bin/sh
-# XGEN Connector — codex CLI 설치 (공식 install.sh: github.com/openai/codex)
+# XGen Dex — codex CLI 설치 (공식 install.sh: github.com/openai/codex)
 # 설치 위치: <이 폴더>/local-runtime/bin/codex  (서버 파드와 같은 공식 채널)
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -206,7 +210,7 @@ echo "installed: $BIN/codex"
 `;
 
 const SH_CLAUDE = `#!/bin/sh
-# XGEN Connector — Claude Code CLI 설치 (공식 배포: downloads.claude.ai)
+# XGen Dex — Claude Code CLI 설치 (공식 배포: downloads.claude.ai)
 # 설치 위치: <이 폴더>/local-runtime/bin/claude
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -224,7 +228,7 @@ echo "installed: $BIN/claude"
 `;
 
 const CMD_CODEX = `@echo off\r
-rem XGEN Connector - install codex CLI (official: github.com/openai/codex)\r
+rem XGen Dex - install codex CLI (official: github.com/openai/codex)\r
 rem installs to: <this folder>\\local-runtime\\bin\\codex.exe\r
 setlocal\r
 set "BIN=%~dp0local-runtime\\bin"\r
@@ -249,7 +253,7 @@ exit /b 1\r
 `;
 
 const CMD_CLAUDE = `@echo off\r
-rem XGEN Connector - install Claude Code CLI (official: downloads.claude.ai)\r
+rem XGen Dex - install Claude Code CLI (official: downloads.claude.ai)\r
 rem installs to: <this folder>\\local-runtime\\bin\\claude.exe\r
 setlocal\r
 set "BIN=%~dp0local-runtime\\bin"\r

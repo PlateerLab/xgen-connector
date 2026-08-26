@@ -1,5 +1,5 @@
 /**
- * Electron main process — the native shell of the XGEN connector.
+ * Electron main process — the native shell of XGen Dex.
  *
  * Owns: the app window, connector.json config, OS-keychain token storage, the
  * auto-updater, and the IPC surface the renderer uses to reach the XGEN API.
@@ -154,6 +154,16 @@ import {
   saveAttachmentAs,
 } from './teams-files';
 
+// ⚠ 표시 이름(제품명/설치 파일/창 제목)은 "XGen Dex"로 바뀌었지만, Electron 은
+// app.getPath('userData') 등 기본 데이터 경로를 **app.name**(기본값 = package.json
+// productName)에서 파생시킨다 — 아무 조치 없이 productName 만 바꾸면 기존
+// 사용자의 로그인 세션·로컬 런타임·동기화 상태가 들어있는 데이터 폴더
+// (%APPDATA%\XGEN-Connector 등)를 잃어버리고 새 폴더로 조용히 갈라진다.
+// 여기서 옛 이름으로 고정해 데이터 연속성을 지킨다(keytar 서비스 이름도
+// keychain.ts 에서 별도로 'xgen-connector' 로 고정돼 있어 이 값과 무관하다).
+// app.getPath 를 부르는 어떤 코드보다도 먼저 실행돼야 하므로 파일 최상단에 둔다.
+app.setName('XGEN-Connector');
+
 const IS_LINUX = process.platform === 'linux';
 
 // Custom scheme the avatar overlay loads model assets through. Registered
@@ -272,7 +282,7 @@ function createWindow(): void {
     minWidth: 860,
     minHeight: 600,
     show: false,
-    title: 'XGEN Connector',
+    title: 'XGen Dex',
     // Hide the generic File/Edit/View/Window/Help bar (Alt still reveals it on
     // Win/Linux) so the app doesn't read as a raw Electron shell.
     autoHideMenuBar: true,
@@ -1117,7 +1127,17 @@ function applyAutoLaunch(enabled: boolean): boolean {
     return enabled;
   }
   const autostartDir = join(homedir(), '.config', 'autostart');
-  const desktopPath = join(autostartDir, 'xgen-connector.desktop');
+  const desktopPath = join(autostartDir, 'xgen-dex.desktop');
+  // 리브랜딩(XGen Dex) 이전에 등록된 옛 이름의 자동 시작 항목이 있으면 함께
+  // 정리한다 — 안 하면 새 파일만 추가/삭제되고 옛 파일이 그대로 남아 로그인마다
+  // 두 번 실행되거나(옛 파일이 계속 살아있는데 새로 하나 더 생김), 설정에서
+  // [끄기]를 눌러도(새 이름 파일만 지워지고) 실제로는 꺼지지 않는 것처럼 보인다.
+  const legacyDesktopPath = join(autostartDir, 'xgen-connector.desktop');
+  try {
+    rmSync(legacyDesktopPath, { force: true });
+  } catch {
+    /* best-effort */
+  }
   if (!enabled) {
     try {
       rmSync(desktopPath, { force: true });
@@ -1140,7 +1160,7 @@ function applyAutoLaunch(enabled: boolean): boolean {
       [
         '[Desktop Entry]',
         'Type=Application',
-        'Name=XGEN Connector',
+        'Name=XGen Dex',
         `Exec=${exec}`,
         'X-GNOME-Autostart-enabled=true',
         'NoDisplay=false',
@@ -1228,7 +1248,7 @@ function createTray(): boolean {
   try {
     const icon = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_B64}`);
     tray = new Tray(icon);
-    tray.setToolTip('XGEN Connector');
+    tray.setToolTip('XGen Dex');
     rebuildTrayMenu();
     tray.on('click', () => showMain());
     return true;
@@ -1705,7 +1725,7 @@ async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   return persisted;
 }
 
-const SSO_CALLBACK = 'xgenConnectorSsoComplete';
+const SSO_CALLBACK = 'xgenDexSsoComplete';
 let pendingSso: {
   resolve: (value: { user: NonNullable<XgenClient['user']>; tokenPersisted: boolean }) => void;
   reject: (reason: Error) => void;
