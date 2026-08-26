@@ -10,6 +10,7 @@ import {
   type BrowserPageInfo,
 } from '../src/core/browser';
 import { BrowserRuntime } from '../src/main/browser-runtime';
+import { BROWSER_TABS_TOOL, BrowserToolProvider } from '../src/main/browser-tools';
 import {
   BROWSER_PARTITION_PREFIX,
   allowedBrowserUrl,
@@ -110,4 +111,61 @@ test('upload/download paths stay inside allowedRoots', async () => {
   const root = await mkdtemp(join(tmpdir(), 'xgen-browser-'));
   assert.equal(browserPathWithinRoots(join(root, 'a.txt'), [root]), join(root, 'a.txt'));
   assert.equal(browserPathWithinRoots(join(root, '..', 'escape.txt'), [root]), null);
+});
+
+test('an agent-created shared page requests visible browser UI', async () => {
+  const basePage: BrowserPageInfo = {
+    pageId: 'agent-page',
+    workflowId: 'workflow-25',
+    workflowName: 'Agentflow (25)',
+    mode: 'shared',
+    url: 'https://example.com/',
+    title: '새 탭',
+    loading: 'idle',
+    canGoBack: false,
+    canGoForward: false,
+    partition: 'persist:test',
+    generation: 0,
+  };
+  const createdModes: string[] = [];
+  const createdWorkflows: string[] = [];
+  const fakeRuntime = {
+    create: async (request: { mode?: string; workflowId: string }) => {
+      const mode = request.mode === 'shared' ? 'shared' : 'background';
+      createdModes.push(mode);
+      createdWorkflows.push(request.workflowId);
+      return { ...basePage, mode } as BrowserPageInfo;
+    },
+  } as unknown as BrowserRuntime;
+  const provider = new BrowserToolProvider(fakeRuntime);
+  const revealed: string[] = [];
+  provider.configure(true, [], (page) => revealed.push(page.pageId));
+
+  await provider.callTool(BROWSER_TABS_TOOL, {
+    action: 'create',
+    mode: 'shared',
+    url: 'https://example.com',
+  }, { workflowId: 'workflow-25', workflowName: 'Agentflow (25)' });
+  await provider.callTool(BROWSER_TABS_TOOL, {
+    action: 'create',
+    mode: 'background',
+  }, { workflowId: 'workflow-25', workflowName: 'Agentflow (25)' });
+
+  assert.deepEqual(createdModes, ['shared', 'background']);
+  assert.deepEqual(createdWorkflows, ['workflow-25', 'workflow-25']);
+  assert.deepEqual(revealed, ['agent-page']);
+
+  await assert.rejects(
+    () => provider.callTool(BROWSER_TABS_TOOL, { action: 'create', mode: 'shared' }),
+    /mcp_call\.context\.workflow_id/,
+  );
+
+  await assert.rejects(
+    () => provider.callTool(
+      BROWSER_TABS_TOOL,
+      { action: 'create', workflow_id: 'another-workflow' },
+      { workflowId: 'workflow-25' },
+    ),
+    /일치하지 않습니다/,
+  );
 });

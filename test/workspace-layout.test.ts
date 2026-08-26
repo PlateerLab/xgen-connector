@@ -6,11 +6,23 @@ import {
   findTab,
   newWorkspaceLayout,
   normalizeWorkspaceLayout,
+  placeBrowserBesideChat,
   removeWorkspaceTab,
   setWorkspaceRatio,
 } from '../src/renderer/src/views/workspace-layout';
 
 const chat = (id: string) => ({ id, kind: 'chat' as const, sessionKey: id.slice(5) });
+const workflowChat = (id: string, workflowId: string) => ({
+  ...chat(id),
+  workflowId,
+  workflowName: workflowId,
+});
+const browser = (workflowId: string) => ({
+  id: `browser:${workflowId}`,
+  kind: 'browser' as const,
+  workflowId,
+  workflowName: workflowId,
+});
 
 test('edge drop creates one horizontal/vertical split and never a third group', () => {
   let layout = addWorkspaceTab(newWorkspaceLayout(), 'group-a', chat('chat:a'));
@@ -71,4 +83,38 @@ test('persisted layout normalization deduplicates tabs, caps groups and repairs 
   assert.equal(layout.focusedGroupId, 'a');
   assert.equal(layout.direction, 'vertical');
   assert.equal(layout.ratio, 0.8);
+});
+
+test('agent browser opens in a new group beside its chat', () => {
+  let layout = addWorkspaceTab(
+    newWorkspaceLayout(),
+    'group-a',
+    workflowChat('chat:a', 'workflow-a'),
+  );
+  layout = placeBrowserBesideChat(layout, browser('workflow-a'));
+
+  assert.equal(layout.groups.length, 2);
+  assert.equal(layout.direction, 'horizontal');
+  assert.equal(layout.groups[0].activeTabId, 'chat:a');
+  assert.equal(layout.groups[1].activeTabId, 'browser:workflow-a');
+});
+
+test('agent browser reuses the group opposite its chat', () => {
+  let layout = addWorkspaceTab(
+    newWorkspaceLayout(),
+    'group-a',
+    workflowChat('chat:a', 'workflow-a'),
+  );
+  layout = addWorkspaceTab(layout, 'group-a', { id: 'avatar', kind: 'avatar' });
+  layout = dropWorkspaceTab(layout, 'avatar', 'group-a', 'bottom');
+  layout = placeBrowserBesideChat(layout, browser('workflow-a'));
+
+  assert.equal(layout.groups.length, 2);
+  assert.equal(layout.direction, 'horizontal');
+  assert.equal(findTab(layout, 'chat:a')?.group.activeTabId, 'chat:a');
+  assert.equal(findTab(layout, 'browser:workflow-a')?.group.activeTabId, 'browser:workflow-a');
+  assert.notEqual(
+    findTab(layout, 'chat:a')?.group.id,
+    findTab(layout, 'browser:workflow-a')?.group.id,
+  );
 });

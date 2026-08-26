@@ -1494,7 +1494,14 @@ function syncMcp(): void {
     newTabUrl: cfg.browser?.newTabUrl,
   });
   const browserTools = getBrowserToolProvider(getBrowserRuntime());
-  browserTools.configure(cfg.browser?.enabled === true, cfg.localShell?.allowedRoots ?? []);
+  browserTools.configure(
+    cfg.browser?.enabled === true,
+    cfg.localShell?.allowedRoots ?? [],
+    (page) => {
+      showMain();
+      safeSend(mainWindow, CHANNELS.browserRevealEvent, page);
+    },
+  );
   getLocalToolProvider().configure(cfg.localShell, browserTools);
   // 로컬 MCP 자기관리 도구(McpAddServer 등) — cfg.mcp 스위치로 delegate 가 스스로 게이트한다.
   getLocalToolProvider().configureMcpAdmin(mcpAdminDelegate);
