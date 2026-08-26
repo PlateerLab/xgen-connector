@@ -65,13 +65,21 @@ test('가드 자체: 주석 속 문구는 통과, 실제 호출은 잡힌다(따
   );
 });
 
-test('index.ts 의 WorkspaceBridge / pythonExePath 는 정적 import 다(부팅 오류 원인 고정)', () => {
+test('index.ts 의 WorkspaceBridge 는 정적 import 다(부팅 오류 원인 고정)', () => {
   const src = readSrc(join(MAIN, 'index.ts'));
   assert.match(src, /^import \{ WorkspaceBridge \} from '\.\/workspace-bridge-tools';/m);
-  assert.match(
-    src,
-    /pythonExePath as localRuntimePythonExePath,\n\} from '\.\/local-runtime-install'/,
-  );
-  const sidecar = readSrc(join(MAIN, 'local-agent-sidecar.ts'));
-  assert.match(sidecar, /^import \{ pythonExePath \} from '\.\/local-runtime-install';/m);
+});
+
+test('로컬 실행 런타임은 이 앱에 없다 — 에이전트는 서버에서 돈다', () => {
+  const src = readSrc(join(MAIN, 'index.ts'));
+  for (const gone of [
+    'local-chat-route',
+    'local-agent-sidecar',
+    'local-runtime-install',
+    'local-runtime-ensure',
+    'local-runtime-converge',
+    'cli-provision',
+  ]) {
+    assert.ok(!src.includes(gone), `index.ts 가 아직 ${gone} 을 참조한다`);
+  }
 });

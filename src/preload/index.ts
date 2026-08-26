@@ -273,32 +273,6 @@ const api = {
    * 커넥터에서 시작한 Agent-XGeny 턴은 자동으로 이 환경에서 돈다(chatStart). 여기는
    * 상태 표시·설치·서버 버전 수렴([설정 → 일반]).
    */
-  localRuntime: {
-    status: (): Promise<LocalExecStatus> => ipcRenderer.invoke(CHANNELS.localRuntimeStatus),
-    install: (): Promise<{ ok: boolean; status?: unknown; error?: string }> =>
-      ipcRenderer.invoke(CHANNELS.localRuntimeInstall),
-    /** 서버 매니페스트 기준으로 런타임/CLI 를 서버와 같은 버전으로 맞춘다. */
-    sync: (): Promise<LocalExecStatus> => ipcRenderer.invoke(CHANNELS.localRuntimeSync),
-    /** 설치 로그(install.log)를 OS 기본 앱으로 연다. */
-    openLog: (): Promise<{ ok: boolean; path: string; error?: string }> =>
-      ipcRenderer.invoke(CHANNELS.localRuntimeOpenLog),
-    onProgress: (
-      cb: (p: { phase: string; message: string; tool?: string; fraction?: number }) => void,
-    ): (() => void) => {
-      const h = (_e: unknown, p: unknown) => cb(p as never);
-      ipcRenderer.on(CHANNELS.localRuntimeProgress, h);
-      return () => ipcRenderer.removeListener(CHANNELS.localRuntimeProgress, h);
-    },
-    /** CLI 바이너리(codex / Claude Code) — 공식 배포처에서 로컬 설치(서버 목표 버전). */
-    cliStatus: (): Promise<{
-      codex: { installed: boolean; path: string; version?: string };
-      claude: { installed: boolean; path: string; version?: string };
-    }> => ipcRenderer.invoke(CHANNELS.localCliStatus),
-    cliInstall: (
-      tool: 'codex' | 'claude',
-    ): Promise<{ ok: boolean; version?: string; error?: string }> =>
-      ipcRenderer.invoke(CHANNELS.localCliInstall, tool),
-  },
 
   user: {
     /** The logged-in user's avatar config (preferences.avatar). Global default. */

@@ -9,13 +9,6 @@ import {
 import type { ConnectorConfig } from '../../../main/config';
 import { HotkeyCapture } from './HotkeyCapture';
 import { SettingsSection } from './SettingsSection';
-import {
-  BOOT_ERROR_HINT,
-  cliInstallButtonLabel,
-  describeCliRow,
-  describeConverge,
-  describeInstallStatus,
-} from '../local-exec-text';
 import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
@@ -118,81 +111,6 @@ export const Settings: React.FC<{
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
-  // ── 로컬 실행 환경 (일반 탭) — 상태는 메인의 localExecStatus 한 번에 ──
-  type LocalExecStatus = Awaited<ReturnType<typeof xgen.localRuntime.status>>;
-  const [lrStatus, setLrStatus] = useState<LocalExecStatus | null>(null);
-  const [lrMsg, setLrMsg] = useState<string | null>(null);
-  const [lrSyncing, setLrSyncing] = useState(false);
-  const cliStatus = lrStatus?.cli ?? null;
-  const [cliBusy, setCliBusy] = useState<'codex' | 'claude' | null>(null);
-  const [lrRepairing, setLrRepairing] = useState(false);
-  const [logModalOpen, setLogModalOpen] = useState(false);
-  const repairRuntime = async () => {
-    setLrRepairing(true);
-    setLrMsg(null);
-    try {
-      const r = await xgen.localRuntime.install();
-      if (!r.ok) setLrMsg(`실패: ${r.error ?? '알 수 없음'}`);
-      refreshLocalExec();
-    } catch (e) {
-      setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setLrRepairing(false);
-    }
-  };
-  const refreshLocalExec = () => {
-    void xgen.localRuntime
-      .status()
-      .then(setLrStatus)
-      .catch(() => setLrStatus(null));
-  };
-  const syncWithServer = async () => {
-    setLrSyncing(true);
-    setLrMsg(null);
-    try {
-      const st = await xgen.localRuntime.sync();
-      setLrStatus(st);
-      setLrMsg(`서버 버전 맞추기: ${describeConverge(st.converge, st.server)}`);
-    } catch (e) {
-      setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setLrSyncing(false);
-    }
-  };
-  useEffect(() => {
-    const refresh = refreshLocalExec;
-    refresh();
-    // 부팅 자동 프로비저닝(런타임/CLI)의 진행을 실시간 반영 — 설치는 사용자
-    // 액션 없이도 백그라운드로 일어난다(내장이 기본, 이 화면은 상태 표시).
-    const off = xgen.localRuntime.onProgress((p) => {
-      setLrMsg(p.message);
-      if (p.phase === 'done' || p.phase === 'error') refresh();
-    });
-    return off;
-  }, []);
-  // 사다리가 도는 동안(검증/복사/다운로드)은 2초마다 상태를 당겨 온다 — 진행 이벤트를 내지
-  // 않는 경로에서도 화면이 '검증 중'에 머물지 않게.
-  useEffect(() => {
-    const ph = lrStatus?.ensure?.phase;
-    if (!(ph === 'idle' || ph === 'checking' || ph === 'copying' || ph === 'downloading')) return;
-    const t = setInterval(refreshLocalExec, 2000);
-    return () => clearInterval(t);
-  }, [lrStatus?.ensure?.phase]);
-  const installCli = async (tool: 'codex' | 'claude') => {
-    setCliBusy(tool);
-    setLrMsg(null);
-    const off = xgen.localRuntime.onProgress((p) => setLrMsg(p.message));
-    try {
-      const r = await xgen.localRuntime.cliInstall(tool);
-      if (!r.ok) setLrMsg(`실패: ${r.error ?? '알 수 없음'}`);
-      refreshLocalExec();
-    } catch (e) {
-      setLrMsg(`실패: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      off();
-      setCliBusy(null);
-    }
-  };
   const [saved, setSaved] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
 
@@ -672,8 +590,6 @@ export const Settings: React.FC<{
             </SettingsSection>
 
             <SettingsSection title="설치">
-              {/* 상태 전용(토글·접기 없음). 순서: 설치 폴더 → 설치 상태 → Claude Code CLI →
-                  Codex CLI → (부팅 오류) → 설치 로그[모달]. CLI 인증은 서버에서 하므로 표시하지 않는다. */}
               <div className="field-row">
                 <span>
                   설치 폴더
@@ -687,130 +603,12 @@ export const Settings: React.FC<{
                   </button>
                 </div>
               </div>
-
-              <div className="field-row">
-                <span>
-                  설치 상태
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    {lrStatus ? describeInstallStatus(lrStatus).text : '상태 확인 중…'}
-                  </span>
-                </span>
-                <div className="row">
-                  {!lrStatus?.ensure?.candidates?.find((c) => c.source === 'install')?.healthy && (
-                    <button
-                      className="secondary"
-                      disabled={
-                        lrRepairing ||
-                        lrStatus?.ensure?.phase === 'copying' ||
-                        lrStatus?.ensure?.phase === 'downloading'
-                      }
-                      onClick={() => void repairRuntime()}
-                      title="설치 폴더 런타임을 내장 번들 복사(없으면 네트워크 설치)로 복구합니다"
-                    >
-                      {lrRepairing ||
-                      lrStatus?.ensure?.phase === 'copying' ||
-                      lrStatus?.ensure?.phase === 'downloading'
-                        ? '설치 중…'
-                        : '지금 설치/복구'}
-                    </button>
-                  )}
-                  <button
-                    className="secondary"
-                    disabled={lrSyncing}
-                    onClick={() => void syncWithServer()}
-                    title="서버가 알려주는 런타임/CLI 목표 버전으로 맞춥니다"
-                  >
-                    {lrSyncing ? '맞추는 중…' : '서버 버전으로 맞추기'}
-                  </button>
-                </div>
-              </div>
-
-              {/* CLI provider 바이너리 — 설치/업데이트(버전 맞추기). 순서: Claude → Codex. */}
-              {(
-                [
-                  [
-                    'claude',
-                    'Claude Code CLI',
-                    'Claude Code provider 의 로컬 실행 바이너리 (공식 배포)',
-                  ],
-                  [
-                    'codex',
-                    'Codex CLI',
-                    'OpenAI Codex provider 의 로컬 실행 바이너리 (공식 릴리스)',
-                  ],
-                ] as const
-              ).map(([tool, label, desc]) => (
-                <div className="field-row" key={tool}>
-                  <span>
-                    {label}
-                    <span className="small muted" style={{ marginLeft: 8 }}>
-                      {describeCliRow(tool, desc, cliStatus?.[tool], lrStatus?.server)}
-                    </span>
-                  </span>
-                  <div className="row">
-                    <button
-                      className="secondary"
-                      disabled={cliBusy !== null}
-                      onClick={() => void installCli(tool)}
-                      title="공식 배포처에서 서버 매니페스트 목표 버전을 설치합니다 (서버 정보가 없으면 최신)"
-                    >
-                      {cliInstallButtonLabel({
-                        busy: cliBusy === tool,
-                        installed: !!cliStatus?.[tool]?.installed,
-                        serverVersion: lrStatus?.server?.[tool] ?? null,
-                        installedVersion: cliStatus?.[tool]?.version,
-                      })}
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              {(lrMsg || lrStatus?.daemon?.lastError) && (
-                <div className="field-row">
-                  <span className="small muted">{lrMsg ?? lrStatus?.daemon?.lastError}</span>
-                </div>
-              )}
-
-              {lrStatus?.bootErrors && lrStatus.bootErrors.length > 0 && (
-                <div className="field-row" style={{ alignItems: 'flex-start' }}>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ color: '#b45309' }}>부팅 오류</span>
-                    <span className="small muted" style={{ marginLeft: 8 }}>
-                      {BOOT_ERROR_HINT}
-                    </span>
-                    <ul className="small" style={{ margin: '6px 0 0 16px', color: '#b45309' }}>
-                      {lrStatus.bootErrors.map((e, i) => (
-                        <li key={i} style={{ wordBreak: 'break-all' }}>
-                          {e}
-                        </li>
-                      ))}
-                    </ul>
-                  </span>
-                </div>
-              )}
-
-              <div className="field-row">
-                <span>
-                  설치 로그
-                  <span className="small muted" style={{ marginLeft: 8 }}>
-                    인스톨러·앱이 남긴 단계와 원인
-                  </span>
-                </span>
-                <div className="row">
-                  <button className="secondary" onClick={() => setLogModalOpen(true)}>
-                    로그 보기
-                  </button>
-                </div>
-              </div>
+              <p className="small muted" style={{ marginTop: 8 }}>
+                에이전트는 서버에서 실행됩니다 — 이 PC 에는 실행 런타임이 설치되지
+                않습니다. 이 앱은 서버 실행을 호출하고, 필요할 때 이 PC 의 도구
+                (브라우저·셸·로컬 MCP)를 에이전트에게 빌려 줍니다.
+              </p>
             </SettingsSection>
-            {logModalOpen && (
-              <InstallLogModal
-                status={lrStatus}
-                onClose={() => setLogModalOpen(false)}
-                onRefresh={() => refreshLocalExec()}
-                setMsg={setLrMsg}
-              />
-            )}
           </>
         )}
 
@@ -1264,77 +1062,3 @@ export const Settings: React.FC<{
   );
 };
 
-/** 설치 로그 모달 — 인스톨러(NSIS)와 앱(자가치유)이 남긴 파일 경로 + 꼬리 로그.
- *  설치 탭의 [로그 보기]가 연다. 이상한 인라인 pre 대신 전용 모달로 크게 본다. */
-const InstallLogModal: React.FC<{
-  status: Awaited<ReturnType<typeof xgen.localRuntime.status>> | null;
-  onClose: () => void;
-  onRefresh: () => void;
-  setMsg: (m: string | null) => void;
-}> = ({ status, onClose, onRefresh, setMsg }) => {
-  useModalDismiss(onClose);
-  const logs = status?.logs ?? [];
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h2>설치 로그</h2>
-          <button className="link" onClick={onClose}>
-            닫기
-          </button>
-        </div>
-        {logs.length ? (
-          <>
-            <ul className="small muted" style={{ margin: '0 0 8px 16px' }}>
-              {logs.map((l) => (
-                <li key={l.path} style={{ wordBreak: 'break-all' }}>
-                  {l.path}
-                </li>
-              ))}
-            </ul>
-            <pre
-              className="small"
-              style={{
-                margin: 0,
-                maxHeight: '52vh',
-                overflow: 'auto',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-all',
-                fontSize: 11.5,
-                lineHeight: 1.5,
-                background: 'var(--surface-2, rgba(128,128,128,0.08))',
-                borderRadius: 6,
-                padding: '10px 12px',
-              }}
-            >
-              {logs.map((l) => `# ${l.path}\n${l.lines.slice(-200).join('\n')}`).join('\n\n')}
-            </pre>
-          </>
-        ) : (
-          <p className="small muted" style={{ margin: '4px 0 12px' }}>
-            아직 로그가 없습니다. 설치/복구를 실행하면 생성됩니다.
-          </p>
-        )}
-        <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
-          <button
-            className="secondary"
-            title="상태 전체(JSON)를 클립보드에 복사 — 문의 시 붙여넣기"
-            onClick={() => {
-              void copyText(JSON.stringify(status, null, 2)).then((ok) =>
-                setMsg(ok ? '진단 정보를 복사했습니다.' : '복사 실패'),
-              );
-            }}
-          >
-            진단 복사
-          </button>
-          <button className="secondary" onClick={() => void xgen.localRuntime.openLog()}>
-            파일로 열기
-          </button>
-          <button className="secondary" onClick={onRefresh}>
-            새로고침
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};

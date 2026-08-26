@@ -231,14 +231,7 @@ export const CHANNELS = {
   // 로컬 실행 환경(설치 폴더의 Python 런타임 + CLI) — 상태 조회 / 설치 / 진행 push /
   // 서버 버전으로 수렴(sync). 커넥터-세션 턴은 chatStart 가 자동으로 이 환경(사이드카
   // 데몬)에서 돌린다 — 별도 렌더러 IPC 없음.
-  localRuntimeStatus: 'local-runtime:status',
-  localRuntimeInstall: 'local-runtime:install',
-  localRuntimeProgress: 'local-runtime:progress',
-  localRuntimeSync: 'local-runtime:sync',
-  localRuntimeOpenLog: 'local-runtime:openLog',
   // CLI 바이너리(codex / Claude Code) 프로비저닝 — 공식 배포처에서 로컬 설치.
-  localCliStatus: 'local-cli:status',
-  localCliInstall: 'local-cli:install', // arg: 'codex' | 'claude'
   /** 설치 폴더 등 로컬 폴더를 OS 파일 관리자로 연다. */
   appOpenFolder: 'app:openFolder',
 } as const;

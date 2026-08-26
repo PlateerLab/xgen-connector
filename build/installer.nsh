@@ -6,7 +6,7 @@
 ; 상태를 보존하기 위해). 표시 문구가 아닌 실제 경로이므로 여기서는 바꾸지 않는다.
 ;
 ; ── 데이터 폴더 선택 페이지 ─────────────────────────────────────────────
-; 커넥터의 모든 작업 자산(workspace/ · cloud/ · local-runtime/ + codex/claude CLI)
+; 커넥터의 작업 자산(workspace/ · cloud/)
 ; 은 **통합 루트**(기본 %USERPROFILE%\xgen-dex — 새 설치만, 기존 사용자는 마커에
 ; 저장된 실제 경로를 그대로 씀) 아래에 모인다. 이 페이지가
 ; 루트 경로와 구성요소 체크(기본 전부 체크)를 받아
@@ -28,12 +28,6 @@
   Var XgenDlg
   Var XgenDirBox
   Var XgenDirBtn
-  Var XgenChkRuntime
-  Var XgenChkCodex
-  Var XgenChkClaude
-  Var XgenRuntimeState
-  Var XgenCodexState
-  Var XgenClaudeState
 
   !include nsDialogs.nsh
   !include LogicLib.nsh
@@ -76,7 +70,7 @@
       Pop $XgenDataRoot
       Abort
     ${EndIf}
-    !insertmacro MUI_HEADER_TEXT "데이터 폴더" "에이전트 작업 폴더와 로컬 실행 구성요소가 설치될 위치입니다."
+    !insertmacro MUI_HEADER_TEXT "데이터 폴더" "에이전트 작업 폴더(동기화)와 스토리지가 만들어질 위치입니다."
     nsDialogs::Create 1018
     Pop $XgenDlg
     ${If} $XgenDlg == error
@@ -90,7 +84,7 @@
     StrCmp $XgenDataRoot "" 0 +2
       StrCpy $XgenDataRoot "$PROFILE\xgen-dex"
 
-    ${NSD_CreateLabel} 0 0 100% 24u "이 폴더 아래에 workspace\(작업·동기화), cloud\(스토리지), local-runtime\(에이전트 로컬 실행 런타임과 CLI)이 만들어집니다."
+    ${NSD_CreateLabel} 0 0 100% 24u "이 폴더 아래에 workspace\(작업·동기화)와 cloud\(스토리지)가 만들어집니다. 에이전트는 서버에서 실행되므로 이 PC 에는 실행 런타임이 설치되지 않습니다."
     Pop $0
 
     ${NSD_CreateDirRequest} 0 28u 82% 13u "$XgenDataRoot"
@@ -98,19 +92,6 @@
     ${NSD_CreateBrowseButton} 84% 28u 16% 13u "찾아보기…"
     Pop $XgenDirBtn
     ${NSD_OnClick} $XgenDirBtn XgenBrowseDir
-
-    ${NSD_CreateCheckbox} 0 52u 100% 12u "에이전트 로컬 실행 런타임 (권장 — 에이전트가 이 PC 에서 실행됩니다)"
-    Pop $XgenChkRuntime
-    ${NSD_Check} $XgenChkRuntime
-    ${NSD_CreateCheckbox} 0 66u 100% 12u "Codex CLI (OpenAI Codex provider 로컬 실행)"
-    Pop $XgenChkCodex
-    ${NSD_Check} $XgenChkCodex
-    ${NSD_CreateCheckbox} 0 80u 100% 12u "Claude Code CLI (Claude Code provider 로컬 실행)"
-    Pop $XgenChkClaude
-    ${NSD_Check} $XgenChkClaude
-
-    ${NSD_CreateLabel} 0 98u 100% 20u "체크된 항목은 첫 실행 시 자동으로 설치됩니다. 나중에 [설정 → 일반]에서 변경할 수 있습니다."
-    Pop $0
 
     nsDialogs::Show
   FunctionEnd
@@ -126,9 +107,6 @@
 
   Function XgenDataPageLeave
     ${NSD_GetText} $XgenDirBox $XgenDataRoot
-    ${NSD_GetState} $XgenChkRuntime $XgenRuntimeState
-    ${NSD_GetState} $XgenChkCodex $XgenCodexState
-    ${NSD_GetState} $XgenChkClaude $XgenClaudeState
   FunctionEnd
 
   ; JSON 문자열 값으로 안전하게 — 백슬래시 이스케이프(\ → \\).
@@ -313,27 +291,6 @@
   ${EndIf}
   StrCmp $XgenDataRoot "" 0 +2
     StrCpy $XgenDataRoot "$PROFILE\xgen-dex"
-  StrCmp $XgenRuntimeState "" 0 +2
-    StrCpy $XgenRuntimeState 1
-  StrCmp $XgenCodexState "" 0 +2
-    StrCpy $XgenCodexState 1
-  StrCmp $XgenClaudeState "" 0 +2
-    StrCpy $XgenClaudeState 1
-  ${If} $XgenRuntimeState == 1
-    StrCpy $1 "true"
-  ${Else}
-    StrCpy $1 "false"
-  ${EndIf}
-  ${If} $XgenCodexState == 1
-    StrCpy $2 "true"
-  ${Else}
-    StrCpy $2 "false"
-  ${EndIf}
-  ${If} $XgenClaudeState == 1
-    StrCpy $3 "true"
-  ${Else}
-    StrCpy $3 "false"
-  ${EndIf}
   ${If} ${isUpdated}
     ; 업데이트: 사용자의 기존 선택(config)을 덮지 않는다 — 옵션 파일을 쓰지 않는다.
     !insertmacro XgenLog "update install - install-options.json not written (keep existing config)"
@@ -345,7 +302,7 @@
     FileOpen $0 "$APPDATA\XGEN-Connector\install-options.json" w
     ${If} $0 != ""
       ; UTF-16LE(BOM) — Unicode NSIS 의 FileWrite 는 ANSI 로 써 한글 경로가 깨진다(앱은 BOM 으로 판별).
-      FileWriteUTF16LE /BOM $0 '{"dataRoot":"$4","autoRuntime":$1,"autoCodex":$2,"autoClaude":$3}'
+      FileWriteUTF16LE /BOM $0 '{"dataRoot":"$4"}'
       FileClose $0
     ${EndIf}
     ; 마커도 처음 한 번 써 둔다(앱이 부팅마다 갱신) — 언인스톨러가 런타임 위치를 안다.
@@ -356,84 +313,10 @@
     ${EndIf}
   ${EndIf}
 
-  ; ── 로컬 실행 런타임을 **설치 시점에** 설치 폴더로 복사 ────────────────
-  ; 번들(resources\python)은 이 설치본 안에 이미 있다 — 앱이 뜬 뒤 내려받는
-  ; 것이 아니라 인스톨러가 지금 깐다(오프라인, 결정적). 앱은 뜨는 순간
-  ; <설치폴더>\local-runtime\python 을 발견한다("설치 중" 상태가 존재하지 않는다).
-  !insertmacro XgenLog "dataRoot=$XgenDataRoot runtime=$XgenRuntimeState codex=$XgenCodexState claude=$XgenClaudeState"
-  ${If} $XgenRuntimeState == 1
-    DetailPrint "로컬 실행 런타임을 설치하는 중... (수십 초 소요)"
-    ; 번들 레이아웃 확인 — resources\python\python.exe 가 있어야 한다(v1.62~1.66 은 한 단계
-    ; 더 깊게 들어가 있어 복사본이 앱·런타임 경로와 맞지 않았다).
-    ${If} ${FileExists} "$INSTDIR\resources\python\python.exe"
-      !insertmacro XgenLog "bundle OK: $INSTDIR\resources\python\python.exe"
-    ${Else}
-      !insertmacro XgenLog "bundle MISSING: $INSTDIR\resources\python\python.exe (app repairs/downloads on first run)"
-    ${EndIf}
-    ; ── 재사용 판정: 설치 폴더에 **같은 버전**의 런타임이 이미 있고 실행되면 다시 복사하지 않는다
-    ;    (업데이트 때 1GB 삭제/복사로 시간을 낭비하지 않는다). 버전 스탬프 RUNTIME_VERSION(번들 스크립트) 비교.
-    StrCpy $5 ""
-    StrCpy $6 ""
-    ${If} ${FileExists} "$INSTDIR\resources\python\RUNTIME_VERSION"
-      FileOpen $0 "$INSTDIR\resources\python\RUNTIME_VERSION" r
-      ${If} $0 != ""
-        FileRead $0 $5
-        FileClose $0
-      ${EndIf}
-    ${EndIf}
-    ${If} ${FileExists} "$XgenDataRoot\local-runtime\python\RUNTIME_VERSION"
-      FileOpen $0 "$XgenDataRoot\local-runtime\python\RUNTIME_VERSION" r
-      ${If} $0 != ""
-        FileRead $0 $6
-        FileClose $0
-      ${EndIf}
-    ${EndIf}
-    StrCpy $7 0
-    ${If} $5 != ""
-    ${AndIf} $5 == $6
-    ${AndIf} ${FileExists} "$XgenDataRoot\local-runtime\python\python.exe"
-      nsExec::ExecToStack '"$XgenDataRoot\local-runtime\python\python.exe" -I -c "import xgen_agent_runtime.host.sidecar"'
-      Pop $0
-      Pop $1
-      ${If} $0 == 0
-        StrCpy $7 1
-      ${EndIf}
-    ${EndIf}
-    ${If} $7 == 1
-      DetailPrint "로컬 실행 런타임 재사용 — 이미 같은 버전이 설치되어 있습니다 ($5)"
-      !insertmacro XgenLog "runtime reuse (same version $5, smoke OK) - copy skipped"
-    ${Else}
-      DetailPrint "런타임 복사: $INSTDIR\resources\python → $XgenDataRoot\local-runtime\python"
-      !insertmacro XgenLog "copy start -> $XgenDataRoot\local-runtime\python (bundle=$5 installed=$6)"
-      CreateDirectory "$XgenDataRoot\local-runtime"
-      RMDir /r "$XgenDataRoot\local-runtime\python"
-      Push "$INSTDIR\resources\python"
-      Push "$XgenDataRoot\local-runtime\python"
-      Call XgenCopyEntries
-      DetailPrint "런타임 복사 완료"
-      !insertmacro XgenLog "copy done -> $XgenDataRoot\local-runtime\python"
-    ${EndIf}
-    ${If} ${FileExists} "$XgenDataRoot\local-runtime\python\python.exe"
-      !insertmacro XgenLog "copied python.exe present"
-    ${Else}
-      !insertmacro XgenLog "copied python.exe MISSING after copy"
-    ${EndIf}
-    ; 복사본 검증(import 스모크) — 실패해도 설치는 계속한다(앱이 부팅 때 내장 번들에서 복구).
-    DetailPrint "로컬 실행 런타임을 검증하는 중..."
-    nsExec::ExecToStack '"$XgenDataRoot\local-runtime\python\python.exe" -c "import xgen_agent_runtime.host.sidecar; print(1)"'
-    Pop $0
-    Pop $1
-    ${If} $0 == 0
-      DetailPrint "런타임 검증 OK (import xgen_agent_runtime.host.sidecar)"
-      !insertmacro XgenLog "smoke OK"
-    ${Else}
-      DetailPrint "런타임 검증 실패(코드 $0) — 앱 첫 실행 시 자동 복구됩니다."
-      !insertmacro XgenLog "smoke FAILED rc=$0: $1"
-    ${EndIf}
-  ${Else}
-    !insertmacro XgenLog "runtime install skipped (unchecked)"
-  ${EndIf}
-  DetailPrint "Codex / Claude Code CLI 는 앱 첫 실행 시 자동 설치·서버 버전 수렴됩니다(설정 → 설치 에서 확인)."
+  ; 에이전트 실행 런타임은 이 PC 에 설치하지 않는다 — 에이전트는 서버 세션에서
+  ; 돌고, 이 앱은 그 실행을 호출하는 접속기다. (예전에는 이식형 CPython + 런타임
+  ; wheel + codex/claude 바이너리를 여기서 깔았고, 설치본이 그만큼 무거웠다.)
+  !insertmacro XgenLog "dataRoot=$XgenDataRoot (no local runtime — agents run on the server)"
   DetailPrint "설치 완료."
   !insertmacro XgenLog "==== install end ===="
   DetailPrint "3/3 설치 완료 — 마침 화면으로 넘어갑니다."
@@ -446,8 +329,9 @@
   ; 상한 조정은 되돌리지 않는다 — 다른 WebDAV 클라이언트도 쓰는 시스템
   ; 설정이고, 낮추는 것이 사용자에게 이득이 되는 경우가 없다.
   ;
-  ; 로컬 실행 런타임(<데이터 폴더>\local-runtime: Python 1GB+, CLI, 격리 홈)은 사용자 데이터가
-  ; 아니다 — 진짜 제거(업데이트가 아닌)일 때 물어보고 지운다. workspace/·cloud/ 는 건드리지 않는다.
+  ; **구버전이 남긴** 로컬 실행 런타임(<데이터 폴더>\local-runtime: Python 1GB+, CLI, 격리 홈).
+  ; 지금은 설치하지 않지만(에이전트는 서버에서 돈다) 예전 설치본에는 남아 있다 — 진짜 제거
+  ; (업데이트가 아닌)일 때 물어보고 지운다. workspace/·cloud/ 는 건드리지 않는다.
   ${IfNot} ${isUpdated}
   ${AndIfNot} ${Silent}
     ${If} $installMode == "all"
@@ -471,7 +355,7 @@
     StrCmp $1 "" 0 +2
       StrCpy $1 "$PROFILE\xgen-connector"
     ${If} ${FileExists} "$1\local-runtime\*.*"
-      MessageBox MB_YESNO|MB_ICONQUESTION "로컬 실행 런타임 폴더도 삭제할까요?$\r$\n$1\local-runtime$\r$\n(작업 폴더 workspace\ 와 cloud\ 는 남습니다)" IDNO +2
+      MessageBox MB_YESNO|MB_ICONQUESTION "예전 버전이 남긴 실행 런타임 폴더도 삭제할까요?$\r$\n$1\local-runtime$\r$\n(작업 폴더 workspace\ 와 cloud\ 는 남습니다)" IDNO +2
         RMDir /r "$1\local-runtime"
     ${EndIf}
     ${If} $installMode == "all"

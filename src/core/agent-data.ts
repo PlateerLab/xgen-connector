@@ -345,6 +345,16 @@ export class AgentDataApi {
     );
   }
 
+  // ── 세션 수명 ──────────────────────────────────────────────────
+  /** '진행 중 대화' 종료 — 서버가 들고 있는 세션 RAM(executor + 라우팅)을 회수한다.
+   *  이력은 지우지 않는다(삭제는 세션 종료이지 대화 기록 삭제가 아니다). */
+  endSession(workflowId: string, interactionId: string): Promise<{ ok: boolean }> {
+    return this.http.post<{ ok: boolean }>(
+      `/api/agentflow/geny-agent/${encodeURIComponent(workflowId)}/end-session`,
+      { interaction_id: interactionId },
+    );
+  }
+
   // ── 기본정보 ──────────────────────────────────────────────────
   /** 실행 없이 재구성한 턴 프롬프트 + 도구 표면(web/connector 둘 다). */
   basicInfo(workflowId: string): Promise<AgentBasicInfo> {
