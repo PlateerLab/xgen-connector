@@ -33,6 +33,7 @@ function agent(workflowId: string, name = workflowId): Agent {
 
 interface FakeStream {
   interactionId: string
+  input: unknown
   onEvent: (e: ChatEvent) => void
   cancelled: boolean
 }
@@ -42,7 +43,7 @@ function makeStore(history: Record<string, Array<{ input: string; output: string
   let historyCalls = 0
   const transport: SessionTransport = {
     stream(req, onEvent) {
-      const s: FakeStream = { interactionId: req.interactionId, onEvent, cancelled: false }
+      const s: FakeStream = { interactionId: req.interactionId, input: req.input, onEvent, cancelled: false }
       streams.push(s)
       return { cancel: () => { s.cancelled = true } }
     },
@@ -92,6 +93,40 @@ test('send 는 사용자·assistant 메시지를 넣고 스트림을 연다', ()
   assert.deepEqual(s.messages.map((m) => m.role), ['user', 'assistant'])
   assert.equal(s.messages[0].text, '질문')
   assert.equal(streams.length, 1)
+})
+
+test('send 는 붙인 이미지 여러 장을 멀티모달 입력과 사용자 메시지에 보존한다', () => {
+  const { store, streams } = makeStore()
+  const k = store.openNew(agent('A'))
+  const images = [
+    { dataUrl: 'data:image/png;base64,AAAA', name: 'a.png', mime: 'image/png', size: 3 },
+    { dataUrl: 'data:image/jpeg;base64,BBBB', name: 'b.jpg', mime: 'image/jpeg', size: 3 },
+  ]
+  store.send(k, '두 그림을 비교해줘', null, images)
+
+  assert.equal(store.get(k)!.messages[0].images?.length, 2)
+  assert.deepEqual(streams[0].input, [
+    { type: 'text', text: '두 그림을 비교해줘' },
+    { type: 'image_url', image_url: { url: images[0].dataUrl } },
+    { type: 'image_url', image_url: { url: images[1].dataUrl } },
+  ])
+})
+
+test('이미지만 있는 메시지도 전송하고 허용하지 않은 data URL 은 버린다', () => {
+  const { store, streams } = makeStore()
+  const k = store.openNew(agent('A'))
+  store.send(k, '', null, [
+    { dataUrl: 'data:image/webp;base64,AAAA', name: 'ok.webp', mime: 'image/webp', size: 3 },
+    { dataUrl: 'data:image/svg+xml;base64,BBBB', name: 'bad.svg', mime: 'image/svg+xml', size: 3 },
+  ])
+
+  assert.equal(streams.length, 1)
+  assert.equal(store.get(k)!.messages[0].text, '')
+  assert.equal(store.get(k)!.messages[0].images?.length, 1)
+  assert.deepEqual(streams[0].input, [
+    { type: 'text', text: '' },
+    { type: 'image_url', image_url: { url: 'data:image/webp;base64,AAAA' } },
+  ])
 })
 
 test('스트림 이벤트가 텍스트·도구·출처를 누적하고 end 에서 멈춘다', () => {

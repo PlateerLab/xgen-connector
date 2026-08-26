@@ -36,6 +36,8 @@ export interface ChatMsg {
   error?: boolean;
   /** 이 메시지와 함께 보낸 화면 캡처 — 무엇을 찍었는지(창 이름). */
   screenshot?: { sourceName: string; width: number; height: number };
+  /** 사용자가 + 버튼/클립보드로 직접 붙인 그림. data URL 은 이 열린 세션에서만 보관한다. */
+  images?: ChatImageAttachment[];
   /** 이 턴의 실행 환경(커넥터 전용 status 이벤트) — 이 PC / 서버 sandbox / 차단(blocked). */
   surface?: 'connector_local' | 'server_sandbox' | 'blocked';
   /** 서버 폴백 사유·차단 사유·로컬 안내(동기화 미완료 등) — 있으면 배지 옆에 표시. */
@@ -99,6 +101,16 @@ export interface StoreSnapshot {
 export interface OutgoingShot {
   dataUrl?: string;
   sourceName?: string;
+  width?: number;
+  height?: number;
+}
+
+/** 작성기에 대기했다가 멀티모달 content 로 함께 나가는 그림 한 장. */
+export interface ChatImageAttachment {
+  dataUrl: string;
+  name: string;
+  mime: string;
+  size: number;
   width?: number;
   height?: number;
 }
@@ -345,15 +357,26 @@ export class SessionStore {
   // ── Sending / streaming ────────────────────────────────────────────
 
   /** Send a turn on `key`. Safe to call for a non-focused session. */
-  send(key: string, text: string, shot?: OutgoingShot | null): void {
+  send(
+    key: string,
+    text: string,
+    shot?: OutgoingShot | null,
+    images: ChatImageAttachment[] = [],
+  ): void {
     const s = this.map.get(key);
     const rt = this.rt.get(key);
-    if (!s || !rt || s.streaming || !text.trim()) return;
+    // 작성기 경계에서도 검사하지만 스토어는 외부 주입/오래된 렌더러를 믿지 않는다.
+    // SVG·임의 data URL 은 모델 입력과 <img> 미리보기에 싣지 않는다.
+    const attached = images.filter((image) =>
+      /^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(image.dataUrl),
+    );
+    if (!s || !rt || s.streaming || (!text.trim() && attached.length === 0)) return;
     rt.tools = [];
     rt.citations = [];
     const userMsg: ChatMsg = {
       role: 'user',
       text,
+      images: attached.length > 0 ? attached : undefined,
       screenshot: shot
         ? {
             sourceName: shot.sourceName ?? '화면',
@@ -378,12 +401,15 @@ export class SessionStore {
       updatedAt: this.now(),
     }));
     this.emit();
-    const input: ChatRequest['input'] = shot?.dataUrl
-      ? [
-          { type: 'text', text },
-          { type: 'image_url', image_url: { url: shot.dataUrl } },
-        ]
-      : text;
+    const multimodal = attached.length > 0 || !!shot?.dataUrl;
+    const content: unknown[] = [{ type: 'text', text }];
+    for (const image of attached) {
+      content.push({ type: 'image_url', image_url: { url: image.dataUrl } });
+    }
+    if (shot?.dataUrl) {
+      content.push({ type: 'image_url', image_url: { url: shot.dataUrl } });
+    }
+    const input: ChatRequest['input'] = multimodal ? content : text;
     const handle = this.transport.stream(
       {
         workflowId: s.agent.workflowId,

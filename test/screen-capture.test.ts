@@ -145,9 +145,9 @@ test('백엔드가 받는 멀티모달 형식으로 보낸다', () => {
   assert.match(STORE, /: text;/);
 });
 
-test('켜져 있다는 사실이 항상 보인다', () => {
-  assert.match(CHAT, /composer-shot/);
-  assert.match(CHAT, /aria-pressed=\{screenCaptureOn\}/);
+test('작성기에서 버튼을 숨긴 동안에는 저장된 화면 캡처 설정도 강제로 끈다', () => {
+  assert.match(CHAT, /화면 캡처 버튼은 이미지 첨부 버튼으로 교체하여 임시 비활성화/);
+  assert.match(CHAT, /if \(c\.screenCapture\) void xgen\.config\.set\(\{ screenCapture: false \}\)/);
 });
 
 test('나간 기록이 대화에 남는다', () => {

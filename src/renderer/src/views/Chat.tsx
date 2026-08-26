@@ -19,7 +19,7 @@ import { CONTEXT_LIMIT_CHOICES, teamsContextStore, useContextChip } from '../tea
 import { ShareToTeamsModal } from './ShareToTeams';
 import { TeamsRoomList } from './TeamsRoomPicker';
 import { useModalDismiss } from './use-modal-dismiss';
-import type { SessionState } from '../session-store';
+import type { ChatImageAttachment, SessionState } from '../session-store';
 import type { ToolEvent, Citation, VoiceConfig } from '../../../core/index';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
 import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
@@ -35,6 +35,7 @@ import {
   DocIcon,
   MicIcon,
   MonitorIcon,
+  PlusIcon,
   SendIcon,
   ShareIcon,
   SpeakerIcon,
@@ -171,6 +172,64 @@ function sentenceCut(pending: string): number {
 
 const AGENT_KIND: Record<string, string> = { canvas: 'Canvas', harness: 'Harness' };
 
+const CHAT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const CHAT_IMAGE_ACCEPT = [...CHAT_IMAGE_TYPES].join(',');
+const CHAT_IMAGE_MAX_COUNT = 5;
+const CHAT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const CHAT_IMAGE_MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+
+interface StagedChatImage extends ChatImageAttachment {
+  id: string;
+}
+
+function fileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      typeof reader.result === 'string'
+        ? resolve(reader.result)
+        : reject(new Error('이미지를 읽지 못했습니다.'));
+    reader.onerror = () => reject(reader.error ?? new Error('이미지를 읽지 못했습니다.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function imageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => reject(new Error('지원하지 않거나 손상된 이미지입니다.'));
+    image.src = dataUrl;
+  });
+}
+
+function imageError(file: File): string | null {
+  if (!CHAT_IMAGE_TYPES.has(file.type.toLowerCase())) {
+    return `${file.name || '이미지'}: PNG, JPEG, WebP, GIF 형식만 첨부할 수 있습니다.`;
+  }
+  if (file.size <= 0) return `${file.name || '이미지'}: 빈 파일은 첨부할 수 없습니다.`;
+  if (file.size > CHAT_IMAGE_MAX_BYTES) {
+    return `${file.name || '이미지'}: 이미지 한 장은 10MB까지 첨부할 수 있습니다.`;
+  }
+  return null;
+}
+
+async function prepareChatImage(file: File): Promise<StagedChatImage> {
+  const problem = imageError(file);
+  if (problem) throw new Error(problem);
+  const dataUrl = await fileAsDataUrl(file);
+  const { width, height } = await imageDimensions(dataUrl);
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    dataUrl,
+    name: file.name || `붙여넣은 이미지.${file.type.split('/')[1] || 'png'}`,
+    mime: file.type.toLowerCase(),
+    size: file.size,
+    width,
+    height,
+  };
+}
+
 export const Chat: React.FC<{
   session: SessionState;
   /** 로그인 사용자 표시 이름 — Teams 로 공유할 때 낙관적 렌더에 쓴다. */
@@ -185,6 +244,12 @@ export const Chat: React.FC<{
   const loadingHistory = session.loadingHistory;
 
   const [input, setInput] = useState('');
+  // 로컬 그림 첨부 — 서버에 미리 업로드하지 않고, 전송 순간 멀티모달 content 로
+  // 함께 보낸다. 대기 중인 data URL 은 이 Chat 컴포넌트와 열린 세션에만 남는다.
+  const [stagedImages, setStagedImages] = useState<StagedChatImage[]>([]);
+  const stagedImagesRef = useRef<StagedChatImage[]>([]);
+  const [preparingImages, setPreparingImages] = useState(0);
+  const [imageNotice, setImageNotice] = useState('');
   // 화면 캡처 — 기본 꺼짐. 화면에는 다른 사람의 메시지·비밀번호·미공개 문서가
   // 있을 수 있어서, 서버로 보내는 것은 사용자가 명시적으로 골라야 한다.
   const [screenCaptureOn, setScreenCaptureOn] = useState(false);
@@ -197,9 +262,13 @@ export const Chat: React.FC<{
     text: string;
     count: number;
     roomName: string;
+    images: StagedChatImage[];
   } | null>(null);
   // 이 답변을 Teams 로 공유하는 중 — 본문을 들고 모달을 띄운다.
   const [shareBody, setShareBody] = useState<string | null>(null);
+  // 사용자가 보낸 그림 확대 미리보기. data URL 은 열린 세션 메시지가 소유하므로
+  // 별도 파일 접근이나 네트워크 요청 없이 그대로 보여 준다.
+  const [previewImage, setPreviewImage] = useState<ChatImageAttachment | null>(null);
   // Teams 대화를 문맥으로 붙일 방을 고르는 중.
   const [ctxPicker, setCtxPicker] = useState(false);
   const [copiedAt, setCopiedAt] = useState(-1);
@@ -208,6 +277,7 @@ export const Chat: React.FC<{
   const [mcpLogsOpen, setMcpLogsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   // ── Voice (STT/TTS) state ──────────────────────────────────────
   const [voiceCfg, setVoiceCfg] = useState<VoiceConfig | null>(null);
@@ -292,6 +362,81 @@ export const Chat: React.FC<{
     ta.style.height = 'auto';
     ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`;
   }, [input]);
+
+  const replaceStagedImages = useCallback((next: StagedChatImage[]) => {
+    stagedImagesRef.current = next;
+    setStagedImages(next);
+  }, []);
+
+  const addImageFiles = useCallback(
+    async (files: File[]) => {
+      const candidates = files.filter((file) => file.type.toLowerCase().startsWith('image/'));
+      if (candidates.length === 0) {
+        setImageNotice('이미지 파일을 선택하거나 클립보드에서 붙여넣어 주세요.');
+        return;
+      }
+
+      setPreparingImages((count) => count + 1);
+      const problems: string[] = [];
+      try {
+        for (const file of candidates) {
+          const current = stagedImagesRef.current;
+          if (current.length >= CHAT_IMAGE_MAX_COUNT) {
+            problems.push(
+              `이미지는 한 번에 최대 ${CHAT_IMAGE_MAX_COUNT}장까지 첨부할 수 있습니다.`,
+            );
+            break;
+          }
+          const problem = imageError(file);
+          if (problem) {
+            problems.push(problem);
+            continue;
+          }
+          const usedBytes = current.reduce((sum, image) => sum + image.size, 0);
+          if (usedBytes + file.size > CHAT_IMAGE_MAX_TOTAL_BYTES) {
+            problems.push('첨부 이미지의 전체 크기는 25MB를 넘을 수 없습니다.');
+            break;
+          }
+          try {
+            const image = await prepareChatImage(file);
+            replaceStagedImages([...stagedImagesRef.current, image]);
+          } catch (error) {
+            problems.push(error instanceof Error ? error.message : '이미지를 읽지 못했습니다.');
+          }
+        }
+      } finally {
+        setPreparingImages((count) => Math.max(0, count - 1));
+      }
+      setImageNotice(problems[0] ?? '');
+    },
+    [replaceStagedImages],
+  );
+
+  const removeStagedImage = useCallback(
+    (id: string) => {
+      replaceStagedImages(stagedImagesRef.current.filter((image) => image.id !== id));
+    },
+    [replaceStagedImages],
+  );
+
+  const handleImagePaste = useCallback(
+    (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = Array.from(event.clipboardData.items)
+        .filter((item) => item.kind === 'file' && item.type.toLowerCase().startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => !!file);
+      if (files.length === 0) return;
+      event.preventDefault();
+      void addImageFiles(files);
+    },
+    [addImageFiles],
+  );
+
+  useEffect(() => {
+    if (!imageNotice) return;
+    const timer = setTimeout(() => setImageNotice(''), 7000);
+    return () => clearTimeout(timer);
+  }, [imageNotice]);
 
   const endChat = useCallback(() => {
     sessionStore.endChat(session.key);
@@ -386,7 +531,12 @@ export const Chat: React.FC<{
   }, []);
 
   useEffect(() => {
-    const apply = (c: { screenCapture?: boolean }): void => setScreenCaptureOn(!!c.screenCapture);
+    // 화면 캡처 버튼을 작성기에서 숨긴 동안에는 예전에 저장된 on 설정도 반드시
+    // 끈다. 토글이 보이지 않는데 화면이 전송되는 상태가 생기면 안 된다.
+    const apply = (c: { screenCapture?: boolean }): void => {
+      setScreenCaptureOn(false);
+      if (c.screenCapture) void xgen.config.set({ screenCapture: false });
+    };
     void xgen.config.get().then(apply);
     return xgen.config.onChange(apply);
   }, []);
@@ -408,7 +558,7 @@ export const Chat: React.FC<{
    * 덤이고, 그것 때문에 사용자의 질문이 사라지면 그게 더 나쁘다.
    */
   const dispatch = useCallback(
-    async (text: string) => {
+    async (text: string, images: StagedChatImage[] = []) => {
       let shot: { dataUrl?: string; sourceName?: string; width?: number; height?: number } | null =
         null;
       if (screenCaptureOn) {
@@ -427,7 +577,7 @@ export const Chat: React.FC<{
       }
       // 전송·스트림 수명은 스토어가 소유한다 — 이 뷰가 언마운트돼도(세션 전환)
       // 답변은 백그라운드에서 계속 도착한다.
-      sessionStore.send(session.key, text, shot);
+      sessionStore.send(session.key, text, shot, images);
     },
     [session.key, screenCaptureOn],
   );
@@ -435,8 +585,14 @@ export const Chat: React.FC<{
   const send = useCallback(
     async (override?: string) => {
       const text = (override ?? input).trim();
-      if (!text || streaming) return;
-      if (override === undefined) setInput('');
+      // Quick Chat/STT 가 override 텍스트로 들어올 때 메인 작성기에 대기 중인 그림을
+      // 몰래 가져가지 않는다. +/붙여넣기 그림은 해당 작성기에서 직접 보낼 때만 간다.
+      const images = override === undefined ? stagedImagesRef.current : [];
+      if ((!text && images.length === 0) || streaming || preparingImages > 0) return;
+      if (override === undefined) {
+        setInput('');
+        replaceStagedImages([]);
+      }
 
       // Teams 문맥이 붙어 있는데 아직 승인 전이면 **먼저 묻는다**. 남이 쓴 글이
       // 에이전트로 나가는 것이므로, 몇 건이 나가는지 보여 주고 동의를 받는다.
@@ -447,14 +603,14 @@ export const Chat: React.FC<{
         if (count > 0) {
           // 방 이름까지 들고 간다 — 확인창을 칩 상태에 매달아 두면, 그 사이
           // 칩이 사라질 때 붙잡아 둔 사용자의 문장까지 함께 증발한다.
-          setCtxConfirm({ text, count, roomName: pendingChip.roomName });
+          setCtxConfirm({ text, count, roomName: pendingChip.roomName, images });
           return;
         }
         // 실을 게 없으면 물을 것도 없다 — 그냥 보낸다.
       }
-      await dispatch(text);
+      await dispatch(text, images);
     },
-    [input, streaming, session.key, dispatch],
+    [input, streaming, preparingImages, session.key, dispatch, replaceStagedImages],
   );
 
   /** 확인창의 [보내기] — 승인 기록을 남기고 그대로 이어서 보낸다. */
@@ -463,20 +619,33 @@ export const Chat: React.FC<{
     if (!held) return;
     teamsContextStore.approve(session.key);
     setCtxConfirm(null);
-    await dispatch(held.text);
+    await dispatch(held.text, held.images);
   }, [ctxConfirm, session.key, dispatch]);
 
   /** 확인창의 [취소] — 사용자가 친 문장을 입력창에 그대로 돌려준다. */
   const cancelContext = useCallback(() => {
     setCtxConfirm((held) => {
-      if (held) setInput((current) => current || held.text);
+      if (held) {
+        setInput((current) => current || held.text);
+        // 확인창이 떠 있는 동안에는 작성기를 조작할 수 없지만, 방어적으로 현재
+        // 대기분과 합치고 최대 장수까지만 복원한다.
+        const current = stagedImagesRef.current;
+        const known = new Set(current.map((image) => image.id));
+        replaceStagedImages(
+          [...held.images.filter((image) => !known.has(image.id)), ...current].slice(
+            0,
+            CHAT_IMAGE_MAX_COUNT,
+          ),
+        );
+      }
       return null;
     });
-  }, []);
+  }, [replaceStagedImages]);
 
   // 문맥 확인창도 Esc 로 취소된다 — 취소는 사용자의 문장을 입력창에 돌려준다.
   useModalDismiss(cancelContext, !!ctxConfirm);
   useModalDismiss(() => setCtxPicker(false), ctxPicker);
+  useModalDismiss(() => setPreviewImage(null), !!previewImage);
 
   const stop = useCallback(() => {
     // 사용자가 멈추면 소리도 멈춘다 — 아직 안 읽은 문장을 마저 읽지 않는다.
@@ -816,7 +985,9 @@ export const Chat: React.FC<{
                 {m.tools && m.tools.length > 0 && (
                   <ToolActivity events={m.tools} streaming={!!m.streaming} />
                 )}
-                <div className={`bubble ${m.role} ${m.error ? 'error' : ''}`}>
+                <div
+                  className={`bubble ${m.role} ${m.error ? 'error' : ''}${m.images?.length ? ' has-images' : ''}`}
+                >
                   {/* 어시스턴트 답변은 웹 채팅과 동일하게 마크다운 렌더 —
                       볼드/리스트/표/코드블록/링크. 사용자가 입력한 메시지는
                       리터럴 텍스트라 평문(pre-wrap)으로 둔다. */}
@@ -827,7 +998,35 @@ export const Chat: React.FC<{
                       m.streaming && <span className="cursor" />
                     )
                   ) : (
-                    <span className="bubble-plain">{m.text}</span>
+                    <>
+                      {m.images && m.images.length > 0 && (
+                        <div
+                          className={`chat-message-images count-${Math.min(m.images.length, 4)}`}
+                          aria-label={`첨부 이미지 ${m.images.length}장`}
+                        >
+                          {m.images.map((image, imageIndex) => (
+                            <button
+                              key={`${image.name}-${imageIndex}`}
+                              type="button"
+                              className="chat-message-image-button"
+                              onClick={() => setPreviewImage(image)}
+                              aria-label={`${image.name || `첨부 이미지 ${imageIndex + 1}`} 확대 보기`}
+                              title={
+                                image.width && image.height
+                                  ? `${image.name} · ${image.width}×${image.height} · 클릭하여 확대`
+                                  : `${image.name} · 클릭하여 확대`
+                              }
+                            >
+                              <img
+                                src={image.dataUrl}
+                                alt={image.name || `첨부 이미지 ${imageIndex + 1}`}
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {m.text && <span className="bubble-plain">{m.text}</span>}
+                    </>
                   )}
                   {m.role === 'assistant' && m.text && m.streaming && <span className="cursor" />}
                 </div>
@@ -902,6 +1101,11 @@ export const Chat: React.FC<{
             화면을 첨부하지 못했습니다: {captureNotice}
           </div>
         )}
+        {imageNotice && (
+          <div className="voice-error small" title={imageNotice} role="status">
+            {imageNotice}
+          </div>
+        )}
         {/* Teams 문맥 칩 — 켜져 있다는 사실이 **항상** 보여야 한다. 화면 캡처
             토글과 같은 원칙이다: 켜 둔 것을 잊고 남의 대화를 흘려보내는 것이
             이 기능의 유일한 위험이다. */}
@@ -955,13 +1159,50 @@ export const Chat: React.FC<{
             <TeamsIcon size={12} /> Teams 대화 붙이기
           </button>
         )}
+        <input
+          ref={imageInputRef}
+          className="composer-image-input"
+          type="file"
+          accept={CHAT_IMAGE_ACCEPT}
+          multiple
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = '';
+            if (files.length > 0) void addImageFiles(files);
+          }}
+        />
+        {stagedImages.length > 0 && (
+          <div className="composer-images" aria-label={`전송 대기 이미지 ${stagedImages.length}장`}>
+            {stagedImages.map((image) => (
+              <div className="composer-image" key={image.id}>
+                <img src={image.dataUrl} alt="" />
+                <span className="composer-image-name" title={image.name}>
+                  {image.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeStagedImage(image.id)}
+                  title={`${image.name} 첨부 취소`}
+                  aria-label={`${image.name} 첨부 취소`}
+                >
+                  <CloseIcon size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="composer">
           <textarea
             ref={taRef}
             className="composer-input"
             value={input}
-            placeholder="메시지를 입력하세요…"
+            placeholder={
+              stagedImages.length > 0 ? '이미지에 대해 질문해 보세요…' : '메시지를 입력하세요…'
+            }
             onChange={(e) => setInput(e.target.value)}
+            onPaste={handleImagePaste}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
@@ -971,9 +1212,7 @@ export const Chat: React.FC<{
             rows={1}
             spellCheck={false}
           />
-          {/* 화면 캡처 토글 — 켜져 있으면 보낼 때마다 지금 화면이 함께 간다.
-              그 사실이 항상 보여야 한다: 켜 둔 것을 잊고 민감한 화면을 보내는
-              것이 이 기능의 유일한 위험이다. */}
+          {/* 화면 캡처 버튼은 이미지 첨부 버튼으로 교체하여 임시 비활성화.
           <button
             className={`composer-shot${screenCaptureOn ? ' on' : ''}`}
             onClick={() => void xgen.config.set({ screenCapture: !screenCaptureOn })}
@@ -987,6 +1226,25 @@ export const Chat: React.FC<{
             aria-pressed={screenCaptureOn}
           >
             <MonitorIcon size={16} />
+          </button>
+          */}
+          <button
+            type="button"
+            className="composer-attach"
+            onClick={() => imageInputRef.current?.click()}
+            disabled={
+              streaming || preparingImages > 0 || stagedImages.length >= CHAT_IMAGE_MAX_COUNT
+            }
+            title={
+              stagedImages.length >= CHAT_IMAGE_MAX_COUNT
+                ? `이미지는 최대 ${CHAT_IMAGE_MAX_COUNT}장까지 첨부할 수 있습니다`
+                : preparingImages > 0
+                  ? '이미지를 준비하는 중…'
+                  : '이미지 첨부'
+            }
+            aria-label="이미지 첨부"
+          >
+            <PlusIcon size={17} />
           </button>
           {sttOn && (
             <button
@@ -1007,7 +1265,7 @@ export const Chat: React.FC<{
             <button
               className="composer-send"
               onClick={() => void send()}
-              disabled={!input.trim()}
+              disabled={(!input.trim() && stagedImages.length === 0) || preparingImages > 0}
               title="전송"
               aria-label="전송"
             >
@@ -1019,8 +1277,40 @@ export const Chat: React.FC<{
           <span className="kbd-hint">
             <kbd>Enter</kbd> 전송 · <kbd>Shift + Enter</kbd> 줄바꿈
           </span>
+          <span className="composer-image-hint">이미지는 붙여넣기 또는 + · 최대 5장</span>
         </div>
       </div>
+
+      {previewImage && (
+        <div
+          className="modal-backdrop chat-image-preview"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${previewImage.name} 이미지 미리보기`}
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="chat-image-preview-dialog" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className="chat-image-preview-close"
+              onClick={() => setPreviewImage(null)}
+              title="미리보기 닫기"
+              aria-label="이미지 미리보기 닫기"
+            >
+              <CloseIcon size={16} />
+            </button>
+            <img src={previewImage.dataUrl} alt={previewImage.name} />
+            <div className="chat-image-preview-caption">
+              <span title={previewImage.name}>{previewImage.name}</span>
+              {previewImage.width && previewImage.height && (
+                <small>
+                  {previewImage.width}×{previewImage.height}
+                </small>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 남이 쓴 글이 에이전트로 나가기 전 마지막 확인. 건수를 **정확히** 적는다 —
           "대화 내용" 같은 뭉뚱그린 표현은 동의를 받은 것이 아니다. */}
