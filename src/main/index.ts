@@ -2019,6 +2019,26 @@ ipcMain.handle(CHANNELS.agentWsTree, (_e, wf: string, path?: string) =>
 ipcMain.handle(CHANNELS.agentWsFile, (_e, wf: string, path: string) =>
   getClient().agentData.workspaceFile(wf, path),
 );
+ipcMain.handle(
+  CHANNELS.agentWsUpload,
+  (
+    _e,
+    wf: string,
+    bytes: Uint8Array,
+    filename: string,
+    mimeType: string,
+    interactionId: string,
+    attachmentId: string,
+  ) =>
+    getClient().agentData.workspaceUpload(
+      wf,
+      bytes,
+      filename,
+      mimeType,
+      interactionId,
+      attachmentId,
+    ),
+);
 
 // ── IPC: Teams (사람 사이의 대화) ────────────────────────────────
 // REST 는 전부 core 의 TeamsApi 에 위임한다 — 이 파일에는 매핑 로직이 없다.

@@ -118,11 +118,33 @@ export interface ChatImageAttachment {
 /** Injected transport — the renderer passes the real xgen bridge. */
 export interface SessionTransport {
   stream(req: ChatRequest, onEvent: (e: ChatEvent) => void): { cancel: () => void };
+  uploadWorkspaceImage?: (request: {
+    workflowId: string;
+    interactionId: string;
+    attachmentId: string;
+    name: string;
+    mimeType: string;
+    bytes: Uint8Array;
+  }) => Promise<{
+    workspace_path?: string;
+    size?: number;
+    sha256?: string;
+    status?: 'pending_approval';
+  }>;
   historyTurns(
     workflowId: string,
     interactionId: string,
     name?: string,
   ): Promise<Array<{ input: string; output: string }>>;
+}
+
+function imageBytes(dataUrl: string): { mimeType: string; bytes: Uint8Array } {
+  const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)$/i.exec(dataUrl);
+  if (!match) throw new Error('지원하지 않는 이미지 형식입니다.');
+  const binary = atob(match[2].replace(/\s/g, ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return { mimeType: match[1].toLowerCase(), bytes };
 }
 
 /** Per-session mutable runtime kept out of the public snapshot. */
@@ -410,16 +432,79 @@ export class SessionStore {
       content.push({ type: 'image_url', image_url: { url: shot.dataUrl } });
     }
     const input: ChatRequest['input'] = multimodal ? content : text;
-    const handle = this.transport.stream(
-      {
-        workflowId: s.agent.workflowId,
-        workflowName: s.agent.workflowName,
-        input,
-        interactionId: s.interactionId,
-      },
-      (ev) => this.onEvent(key, ev),
-    );
-    rt.cancel = handle.cancel;
+    const startStream = (preparedInput: ChatRequest['input']): void => {
+      const current = this.map.get(key);
+      if (!current?.streaming) return;
+      const handle = this.transport.stream(
+        {
+          workflowId: s.agent.workflowId,
+          workflowName: s.agent.workflowName,
+          input: preparedInput,
+          interactionId: s.interactionId,
+        },
+        (ev) => this.onEvent(key, ev),
+      );
+      rt.cancel = handle.cancel;
+    };
+
+    if (multimodal && s.agent.hasAgentGeny && this.transport.uploadWorkspaceImage) {
+      let cancelled = false;
+      rt.cancel = () => {
+        cancelled = true;
+      };
+      const pending = [
+        ...attached.map((image) => ({
+          dataUrl: image.dataUrl,
+          name: image.name,
+        })),
+        ...(shot?.dataUrl
+          ? [{ dataUrl: shot.dataUrl, name: `${shot.sourceName || 'screen'}.png` }]
+          : []),
+      ];
+      void Promise.all(
+        pending.map(async (image, index) => {
+          const decoded = imageBytes(image.dataUrl);
+          if (decoded.bytes.byteLength > 20 * 1024 * 1024) {
+            throw new Error('XGeny 이미지 한 장은 20MiB를 넘을 수 없습니다.');
+          }
+          const attachmentId = `conn-${s.interactionId}-${index + 1}`;
+          const result = await this.transport.uploadWorkspaceImage!({
+            workflowId: s.agent.workflowId,
+            interactionId: s.interactionId,
+            attachmentId,
+            name: image.name || `image-${index + 1}.png`,
+            mimeType: decoded.mimeType,
+            bytes: decoded.bytes,
+          });
+          if (result.status === 'pending_approval') {
+            throw new Error('이미지 업로드가 승인 대기 중입니다. 승인 후 다시 시도해 주세요.');
+          }
+          if (!result.workspace_path) throw new Error('Workspace 업로드 경로가 없습니다.');
+          return {
+            kind: 'image',
+            attachment_id: attachmentId,
+            name: image.name,
+            mime_type: decoded.mimeType,
+            size: result.size ?? decoded.bytes.byteLength,
+            sha256: result.sha256,
+            workspace_path: result.workspace_path,
+          };
+        }),
+      )
+        .then((attachments) => {
+          if (cancelled) return;
+          startStream({ input_str: text, attachments });
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          this.onEvent(key, {
+            kind: 'error',
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+    startStream(input);
   }
 
   private onEvent(key: string, ev: ChatEvent): void {

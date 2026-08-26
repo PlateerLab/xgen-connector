@@ -24,6 +24,7 @@ interface RawAgent {
   full_name?: string;
   created_at?: string;
   updated_at?: string;
+  has_agent_geny?: boolean;
 }
 
 interface RawListResponse {
@@ -52,6 +53,7 @@ function mapAgent(r: RawAgent): Agent {
     fullName: r.full_name ?? '',
     createdAt: r.created_at ?? '',
     updatedAt: r.updated_at ?? '',
+    hasAgentGeny: !!r.has_agent_geny,
   };
 }
 
