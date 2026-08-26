@@ -8,7 +8,7 @@
 import { app } from 'electron';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { BrowserAddressSearchConfig } from '../core/browser';
+import type { BrowserAddressSearchConfig, BrowserPopupPermissions } from '../core/browser';
 import { DEPLOYMENT_DEFAULTS } from './deployment-defaults';
 
 /** A local MCP server the connector hosts + proxies to the user's XGEN agents. */
@@ -174,6 +174,8 @@ export interface BrowserPersistConfig {
   newTabUrl?: string;
   /** Optional omnibox search fallback. Default OFF. */
   addressSearch?: BrowserAddressSearchConfig;
+  /** Popup allow/block rules isolated by the account-hashed browser partition. */
+  popupPermissions?: BrowserPopupPermissions;
 }
 
 export interface WorkspaceLayoutPersistConfig {

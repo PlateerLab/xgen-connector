@@ -45,6 +45,7 @@ import type {
   BrowserCreateRequest,
   BrowserNavigateRequest,
   BrowserPageInfo,
+  BrowserPopupResolveRequest,
   BrowserState,
 } from '../core/browser';
 
@@ -391,6 +392,8 @@ const api = {
       ipcRenderer.invoke(CHANNELS.browserNavigate, request),
     activate: (pageId: string): Promise<BrowserPageInfo> =>
       ipcRenderer.invoke(CHANNELS.browserActivate, pageId),
+    resolvePopup: (request: BrowserPopupResolveRequest): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.browserPopupResolve, request),
     close: (pageId: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.browserClose, pageId),
     closeWorkflow: (workflowId: string): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.browserCloseWorkflow, workflowId),

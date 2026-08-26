@@ -34,7 +34,7 @@ const PersistentWebview: React.FC<{
         height: 1,
         visibility: 'hidden',
         pointerEvents: 'none',
-  };
+      };
   const setRef = (element: ElectronWebview | null): void => {
     if (!element) return;
     const bind = () => {
@@ -63,6 +63,10 @@ const PersistentWebview: React.FC<{
     className: 'browser-webview',
     src: initial.current.src,
     partition: initial.current.partition,
+    // Electron disables popup requests before they reach setWindowOpenHandler
+    // unless this attribute is present. The main process still returns `deny`
+    // for every request and replays only user-approved URLs as managed tabs.
+    allowpopups: 'true',
     webpreferences: 'sandbox=yes,contextIsolation=yes,nodeIntegration=no,webSecurity=yes',
     style,
   });
