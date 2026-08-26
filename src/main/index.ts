@@ -85,28 +85,11 @@ import { HttpSyncTransport, WorkspaceWsClient, type NetworkFetch } from './sync-
 import { LocalSyncManager } from './local-sync-manager';
 import { WorkspaceBridge } from './workspace-bridge-tools';
 import {
-  getStatusFast as localRuntimeGetStatusFast,
-  pythonExePath as localRuntimePythonExePath,
-} from './local-runtime-install';
-import { SidecarDaemon, defaultSidecarCommand } from './local-agent-sidecar';
-import { makeServerClient as makeLocalExecServerClient } from './local-agent-server-client';
-import { LocalRuntimeConverger, restartSidecarWhenIdle } from './local-runtime-converge';
-import { LocalRuntimeEnsurer } from './local-runtime-ensure';
-import {
-  cliSettings as localCliSettings,
-  getCliStatus as localCliGetStatus,
-  installClaudeCli,
-  installCodexCli,
-  purgeCliCredentials as localCliPurgeCredentials,
-} from './cli-provision';
-import { runLocalChatTurn, describeFallback, type LocalChatDeps } from './local-chat-route';
-import {
   consumeInstallOptions,
   readInstallLogText,
   resolveDataRoot,
   runtimeDirOf,
   settleDataRoot,
-  writeCliInstallScripts,
   writeDataRootMarker,
 } from './data-root';
 import type { SyncRemote } from './local-sync';
@@ -1665,9 +1648,6 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
     await getWorkspaceManager()?.reconcile();
     await tokenStore.clear();
     await credentialStore.clear();
-    // 구 서버의 CLI 자격증명(격리 홈 auth.json 등)·상주 사이드카·매니페스트 캐시는 새 서버와 무관.
-    purgeLocalExecCredentials('server-changed');
-    localConverger?.clearManifest();
     patch = { ...patch, autoLogin: false }; // 저장된 자동 로그인은 구 서버 계정
   }
   const next = saveConfig(patch);
@@ -1720,8 +1700,6 @@ async function afterAuthSuccess(refreshToken?: string): Promise<boolean> {
   // 뜨고 [다시 연결] 을 눌러야만 붙었다 (실기 신고).
   void getWorkspaceManager()?.reconcile();
   checkForUpdatesAfterLogin();
-  // 로컬 실행 환경을 **서버와 같은 버전**으로(런타임 wheel·Claude Code·Codex) — 무소음.
-  convergeLocalRuntimeInBackground('login');
   return persisted;
 }
 
@@ -1931,9 +1909,6 @@ ipcMain.handle(CHANNELS.authLogout, async () => {
   // An explicit logout also disables auto-login (else next launch signs right back in).
   await credentialStore.clear();
   saveConfig({ autoLogin: false });
-  // 로컬 실행 자격증명 — 격리 홈에 물질화된 서버 중앙 토큰 파일을 지우고, 그 토큰을 메모리에
-  // 들고 있을 상주 사이드카를 내린다(감사 #41).
-  purgeLocalExecCredentials('logout');
   return true;
 });
 
@@ -2246,48 +2221,17 @@ ipcMain.handle(CHANNELS.chatStart, async (e, streamId: string, req) => {
   const controller = new AbortController();
   aborters.set(streamId, controller);
   const sender = e.sender;
-  const emitLocal = (ev: ChatEvent) => {
-    if (!sender.isDestroyed()) sender.send(CHANNELS.chatEvent, streamId, ev);
-  };
   (async () => {
     try {
-      // 커넥터 로컬 실행 우선 — 독립 런타임이 설치돼 있고 서버가 로컬-턴을
-      // 지원하며 로컬 동기화가 되면, 이 PC 에서 돌린다(에이전트가 네이티브
-      // shell/파일을 로컬 자원으로). 안 되면 아무것도 안 보낸 채 서버로 폴백.
-      // 커넥터 로컬 실행 v2 — 커넥터에서 시작한 턴은 이 PC 의 사이드카에서 돈다
-      // (기억·파일·이력은 서버). 로컬이 불가능한 경우에만 서버 sandbox 로 보내되
-      // 이유를 상태 이벤트·진단 로그로 드러내고, 서버에는 execution_target='sandbox'
-      // 를 실어 커넥터 로컬 워크스페이스(역방향 WS) 경로를 쓰지 않게 한다.
+      // 에이전트 턴은 **언제나 서버에서** 돈다 — 서버가 workflow 세션을 만들고
+      // 그 세션의 sandbox 안에서 실행한다. 커넥터는 그 실행을 호출하는 접속기다.
+      //
+      // 예전에는 이 PC 에 Python 런타임을 심어 턴을 직접 돌렸다. 그러면 같은
+      // 에이전트가 어디서 대화했느냐에 따라 다른 파일시스템·다른 도구 표면에서
+      // 돌아, 모든 기능을 두 번 만들어야 했고 두 번째 구현은 늘 뒤처졌다.
+      // 사용자 PC 는 이제 **도구**로만 참여한다(브라우저·Shell·로컬 MCP —
+      // 서버 에이전트가 reverse-WS 카탈로그로 호출한다).
       const serverReq: ChatRequest = { ...(req as ChatRequest) };
-      if (loadConfig().localExec?.enabled !== false) {
-        const local = await runLocalChatTurn(
-          req as ChatRequest,
-          localChatDeps(controller.signal),
-          emitLocal,
-        ).catch((err) => ({
-          handled: false,
-          reason: 'runtime_missing' as const,
-          detail: err instanceof Error ? err.message : String(err),
-        }));
-        if (local.handled) return; // 로컬이 end 까지 처리함.
-        if (local.reason) {
-          serverReq.executionTarget = 'sandbox';
-          emitLocal({
-            kind: 'status',
-            surface: 'server_sandbox',
-            reason: describeFallback(local.reason, local.detail),
-            detail: local.detail,
-          });
-        }
-      } else {
-        serverReq.executionTarget = 'sandbox';
-        emitLocal({
-          kind: 'status',
-          surface: 'server_sandbox',
-          reason: '로컬 실행이 꺼져 있어 서버 sandbox 에서 실행합니다',
-        });
-      }
-
       for await (const ev of getClient().chat.stream(serverReq, controller.signal)) {
         if (sender.isDestroyed()) break;
         sender.send(CHANNELS.chatEvent, streamId, ev satisfies ChatEvent);
@@ -2312,22 +2256,16 @@ ipcMain.handle(CHANNELS.chatCancel, (_e, streamId: string) => {
   return true;
 });
 
-// '진행 중 대화' 삭제 → 서버 세션 RAM(executor + 라우팅)을 완전 정리한다. 로컬 데몬은
-// 공유 자원이라 여기서 내리지 않는다(다른 세션이 쓰며, 30분 idle 로 회수). 이력은 보존.
+// '진행 중 대화' 삭제 → 서버 세션 RAM(executor + 라우팅)을 완전 정리한다. 이력은 보존.
 // best-effort — 서버 미도달/미인증이어도 로컬 삭제 UX 는 막지 않는다.
 ipcMain.handle(CHANNELS.chatEndSession, async (_e, workflowId: string, interactionId: string) => {
   if (!workflowId || !interactionId) return false;
   try {
-    const client = makeLocalExecServerClient({
-      serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
-      token: () => liveAccessToken(),
-      fetch: mcpHttpFetch as unknown as NetworkFetch,
-    });
-    await client.endSession(workflowId, interactionId);
+    await getClient().agentData.endSession(workflowId, interactionId);
     return true;
   } catch (err) {
     void import('./diag-log').then(({ diag }) =>
-      diag('local-exec', `end-session 서버 정리 실패(무시): ${(err as Error).message}`),
+      diag('chat', `end-session 서버 정리 실패(무시): ${(err as Error).message}`),
     );
     return false;
   }
@@ -2938,9 +2876,11 @@ function wireLocalSync(): void {
       const cfg = loadConfig();
       const shell = cfg.localShell ?? {};
       return {
-        // 로컬 실행(기본 ON)은 에이전트 동기화 폴더가 전제다 — PC 컨트롤(Shell 도구)
-        // 토글과 무관하게 켠다. 둘 다 꺼져 있을 때만 동기화 엔진이 쉰다.
-        enabled: shell.enabled === true || cfg.localExec?.enabled !== false,
+        // workspace 동기화는 Drive 형 미러다 — 에이전트가 서버에서 만든 파일을 이
+        // PC 로 비춰 준다. 예전엔 '로컬 실행' 스위치에 묶여 있었는데 그 스위치가
+        // 없어졌다(에이전트는 언제나 서버에서 돈다). 실질 게이트는 페어링된
+        // 에이전트 목록과 root 다.
+        enabled: true,
         root: (shell.cwd ?? '').trim(),
         targets: (currentWorkspace()?.agents ?? []).map((a) => ({
           workflowId: a.workflowId,
@@ -3015,103 +2955,6 @@ function wireLocalSync(): void {
 
 // ── 로컬 실행 v2: 사이드카 데몬 + 서버 버전 수렴 ──────────────────────
 /** 사이드카 데몬(상주) — 첫 턴에 기동, 유휴 15분 뒤 자가 종료, 앱 종료 시 내림. */
-let sidecarDaemon: SidecarDaemon | null = null;
-function getSidecarDaemon(): SidecarDaemon {
-  if (!sidecarDaemon) {
-    sidecarDaemon = new SidecarDaemon({
-      command: () =>
-        defaultSidecarCommand(true, getLocalEnsurer().activePython()?.python, {
-          runtimeDir: cliRuntimeDir(),
-        }),
-      log: (m) => {
-        void import('./diag-log')
-          .then(({ diag }) => diag('local-exec', `sidecar: ${m}`))
-          .catch(() => {});
-      },
-    });
-  }
-  return sidecarDaemon;
-}
-/** 서버 버전 수렴기 — 로그인 직후/설정 버튼에서 매니페스트를 받아 런타임·CLI 를 맞춘다. */
-let localConverger: LocalRuntimeConverger | null = null;
-function getLocalConverger(): LocalRuntimeConverger {
-  if (!localConverger) {
-    localConverger = new LocalRuntimeConverger(() => {
-      const le = loadConfig().localExec ?? {};
-      return {
-        server: makeLocalExecServerClient({
-          serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
-          token: () => liveAccessToken(),
-          fetch: mcpHttpFetch as unknown as NetworkFetch,
-        }),
-        runtimeDir: cliRuntimeDir(),
-        fetch: mcpHttpFetch as unknown as typeof fetch,
-        autoRuntime: le.autoRuntime,
-        autoCodex: le.autoCodex,
-        autoClaude: le.autoClaude,
-        onProgress: (p) => {
-          try {
-            mainWindow?.webContents.send(CHANNELS.localRuntimeProgress, p);
-          } catch {
-            /* 창 없음 */
-          }
-        },
-        log: (m) => {
-          void import('./diag-log')
-            .then(({ diag }) => diag('local-exec', `converge: ${m}`))
-            .catch(() => {});
-        },
-        // 런타임 wheel 업그레이드 성공 → 캐시된 버전/건강 무효화 + 상주 사이드카 유휴 재기동
-        // (옛 코드를 든 프로세스가 다음 턴을 받지 않게, 감사 #17).
-        onRuntimeUpgraded: (info) => onLocalRuntimeUpgraded(info),
-      };
-    });
-  }
-  return localConverger;
-}
-/** 런타임 wheel 교체 후 — ensurer 캐시 무효화(버전·스모크 재확인) + 사이드카를 유휴 시점에 내린다. */
-function onLocalRuntimeUpgraded(info: { from?: string; to?: string }): void {
-  const log = (m: string) =>
-    void import('./diag-log').then(({ diag }) => diag('local-exec', m)).catch(() => {});
-  log(
-    `runtime upgraded ${info.from ?? '?'}→${info.to ?? '?'} — ensurer 캐시 무효화·사이드카 재기동 예약`,
-  );
-  const e = getLocalEnsurer();
-  e.invalidate();
-  void e.resolveActive().catch(() => undefined);
-  if (sidecarDaemon) void restartSidecarWhenIdle(sidecarDaemon, { log }).done;
-}
-/** 로그아웃/계정 전환 — 격리 홈의 CLI 자격증명 파일 삭제 + 상주 사이드카 종료(감사 #41). */
-function purgeLocalExecCredentials(why: string): void {
-  let note = '';
-  try {
-    const r = localCliPurgeCredentials({ runtimeDir: cliRuntimeDir() });
-    note = `removed=${r.removed.length}${r.errors.length ? ` errors=${r.errors.join('; ')}` : ''}`;
-  } catch (e) {
-    note = `purge 실패: ${e instanceof Error ? e.message : String(e)}`;
-  }
-  sidecarDaemon?.shutdown();
-  void import('./diag-log')
-    .then(({ diag }) => diag('local-exec', `credentials purge(${why}): ${note}; sidecar shutdown`))
-    .catch(() => {});
-}
-/** 로그인 직후/부팅 후 — 서버와 같은 버전으로(무소음, 실패는 상태로만). 미로그인이면 no-op. */
-async function convergeLocalRuntime(why: string): Promise<void> {
-  if (!client?.user) return;
-  try {
-    const st = await getLocalConverger().converge();
-    const { diag } = await import('./diag-log');
-    diag('local-exec', `converge(${why}): ${st.summary ?? st.lastError ?? 'done'}`);
-  } catch {
-    /* 상태로만 */
-  }
-}
-function convergeLocalRuntimeInBackground(why: string): void {
-  void convergeLocalRuntime(why);
-}
-
-// ── 독립 로컬 실행 환경 설치 ([설정 → 일반]) ─────────────────────────
-/** userData 아래 로컬 런타임 트리 루트. */
 /**
  * 통합 데이터 루트 정착(부팅 1회) — 인스톨러 선택(install-options.json)을 삼키고,
  * dataRoot 트리(workspace/·cloud/·local-runtime/)를 만들고, 미설정 경로 기본을
@@ -3125,77 +2968,16 @@ function settleDataRootOnBoot(): void {
     if (Object.keys(patch).length) saveConfig(patch);
     // 실효 루트 마커 — 인스톨러(업데이트 시 런타임 복사 대상)·언인스톨러가 읽는다.
     writeDataRootMarker(app.getPath('userData'), root);
-    // 설치 폴더 루트에 CLI 설치 스크립트 배치(부팅마다 최신으로 덮어씀) —
-    // runtime(기본 설치) + install-codex + install-claude-code 가 한 지붕 아래.
-    writeCliInstallScripts(root);
   } catch (e) {
     console.error('[data-root] 정착 실패(무시):', e);
   }
 }
-function localRuntimeDir(): string {
-  // 통합 루트 아래가 표준. 이전 버전(userData/local-runtime)에 이미 설치돼
-  // 있으면 그걸 계속 쓴다 — 마이그레이션으로 수 GB 를 다시 받게 하지 않는다.
-  const legacy = join(app.getPath('userData'), 'local-runtime');
-  const modern = runtimeDirOf(resolveDataRoot(loadConfig()));
-  try {
-    if (
-      !existsSync(localRuntimePythonExePath(modern)) &&
-      existsSync(localRuntimePythonExePath(legacy))
-    )
-      return legacy;
-  } catch {
-    /* 해석 실패 — modern */
-  }
-  return modern;
-}
-/**
- * 부팅 자동 프로비저닝 — 로컬 실행 런타임은 **기본으로 존재**해야 한다(서버의
- * apply_pin_on_boot 동형). 패키지 앱은 내장 번들이 이미 있으니 no-op; dev/구버전
- * 업데이트/손상 설치처럼 번들이 없을 때만 userData 에 백그라운드 자동 설치한다.
- * 진행률은 메인 창으로 push — 설정 화면이 열려 있으면 실시간 표시된다.
- * 실패해도 앱을 막지 않는다(로컬 턴은 서버 폴백; [설치] 버튼이 수동 재시도).
- */
 /**
  * 런타임 자가치유 사다리(설치 폴더 → 내장 번들 복사 → 네트워크 설치) — 서버와 무관하게
  * "항상 쓸 수 있는 런타임"을 보장하고, 상태/원인을 설정 화면에 그대로 드러낸다.
  * 진행은 메인 창으로 push(localRuntimeProgress).
  */
-let localEnsurer: LocalRuntimeEnsurer | null = null;
 /** 부팅 배선 단계 실패(있으면) — 설정 화면에 그대로 드러낸다. */
-const localExecBootErrors: string[] = [];
-function getLocalEnsurer(): LocalRuntimeEnsurer {
-  if (!localEnsurer) {
-    localEnsurer = new LocalRuntimeEnsurer({
-      installDir: () => runtimeDirOf(resolveDataRoot(loadConfig())),
-      // 앱 내장 번들 — isPackaged 와 무관하게 resources/python 이 실재하면 후보로 본다.
-      bundleDir: () => {
-        const rp = process.resourcesPath;
-        try {
-          return rp && existsSync(join(rp, 'python')) ? rp : null;
-        } catch {
-          return null;
-        }
-      },
-      legacyDir: () => join(app.getPath('userData'), 'local-runtime'),
-      autoRepair: () => loadConfig().localExec?.autoRuntime !== false,
-      fetch: mcpHttpFetch as unknown as typeof fetch,
-      onProgress: (p) => {
-        try {
-          mainWindow?.webContents.send(CHANNELS.localRuntimeProgress, p);
-        } catch {
-          /* 창 없음 */
-        }
-      },
-      log: (m) => {
-        void import('./diag-log')
-          .then(({ diag }) => diag('local-exec', `ensure: ${m}`))
-          .catch(() => {});
-        appendInstallLog(`[app] ensure: ${m}`);
-      },
-    });
-  }
-  return localEnsurer;
-}
 /** 설치 폴더의 install.log — 인스톨러(NSIS)와 앱이 **같은 파일**에 이어 쓴다. */
 function installLogPath(): string {
   return join(resolveDataRoot(loadConfig()), 'install.log');
@@ -3226,265 +3008,18 @@ function readInstallLogs(maxLines = 120): { path: string; lines: string[] }[] {
   }
   return out;
 }
-async function ensureLocalRuntimeOnBoot(): Promise<void> {
-  appendInstallLog(
-    `[app] boot v${app.getVersion()} isPackaged=${app.isPackaged} resourcesPath=${process.resourcesPath ?? '(none)'} dataRoot=${resolveDataRoot(loadConfig())} userData=${app.getPath('userData')}`,
-  );
-  // autoRuntime=false(인스톨러 체크 해제)는 사다리 안에서 게이트된다(복구 없이 상태만 파악).
-  await getLocalEnsurer().ensure('boot');
-}
 /**
  * 로컬 실행용 외부 MCP 서버 설정 해석 — cfg.mcp 가 켜져 있고 enabled 서버가 있을 때만.
  * connector.json 의 redacted 설정 + 키체인 시크릿(env/headers) + oauth 토큰(Authorization
  * Bearer)을 합쳐 **resolved** 설정 리스트를 만든다(사이드카가 런타임 MCP 매니저로 직접 연결).
  * 실패는 방어적으로 건너뛴다(그 서버만 제외).
  */
-async function resolveConnectorMcpServersForLocal(): Promise<McpServerConfig[]> {
-  const cfg = loadConfig();
-  if (!cfg.mcp) return [];
-  const servers = (cfg.mcpServers ?? []).filter((sv) => sv && sv.name && sv.enabled !== false);
-  if (servers.length === 0) return [];
-  const out: McpServerConfig[] = [];
-  for (const sv of servers) {
-    try {
-      const stored = await mcpSecretStore.get(sv.name).catch(() => null);
-      const resolved = withResolvedSecrets(sv, stored);
-      // oauth 서버는 저장된 액세스 토큰을 Authorization 헤더로 주입(사이드카는 oauth 흐름 없음).
-      if (
-        resolved.auth === 'oauth' &&
-        (resolved.transport === 'http' || resolved.transport === 'sse')
-      ) {
-        try {
-          const state = await mcpOAuthStore.load(sv.name);
-          const tok = (state?.tokens ?? null) as { access_token?: string } | null;
-          if (tok?.access_token) {
-            resolved.headers = {
-              ...(resolved.headers ?? {}),
-              Authorization: `Bearer ${tok.access_token}`,
-            };
-          } else {
-            continue; // 미인가 oauth 서버는 로컬에서 붙일 수 없다 — 제외(사용자가 브라우저 인가 필요).
-          }
-        } catch {
-          continue;
-        }
-      }
-      out.push(resolved);
-    } catch {
-      /* 이 서버만 제외 */
-    }
-  }
-  return out;
-}
 
-function localChatDeps(signal?: AbortSignal): LocalChatDeps {
-  return {
-    serverUrl: () => normalizeServerUrl(loadConfig().serverUrl),
-    token: () => liveAccessToken(),
-    fetch: mcpHttpFetch as unknown as NetworkFetch,
-    resolveWorkspaceDir: async (workflowId: string, workflowName?: string) => {
-      const r = await localSync?.ensureSynced(workflowId, workflowName || workflowId);
-      const dir = r?.dir ?? localSync?.dirFor(workflowId) ?? null;
-      if (!dir) throw new Error('로컬 동기화 폴더 없음');
-      // synced=false: 폴더는 있으나 하이드레이트가 제한시간 내 끝나지 않음 — 실행은 진행,
-      // 상태 이벤트에 '동기화 미완료' 안내(라우터가 detail 로 싣는다).
-      return { dir, synced: r?.synced === true };
-    },
-    // 사이드카 서버 브릿지 TLS — 커넥터의 사설 인증서 허용 설정과 동일 정책.
-    tlsVerify: () => loadConfig().allowPrivateCertificate !== true,
-    runtimeInstalled: async () => {
-      // 건강한 런타임 후보(설치 폴더 → 내장 번들 → 레거시)가 있으면 로컬 실행. 없으면
-      // 사다리를 한 번 돌려 본다(번들 복사/다운로드는 백그라운드로 이어진다).
-      const e = getLocalEnsurer();
-      if (e.activePython()) return true;
-      const active = await e.resolveActive().catch(() => undefined);
-      if (active) return true;
-      void e.ensure('turn');
-      return false;
-    },
-    // 설치된 런타임 버전 — CLI provider 로컬 턴의 최소 버전 게이트가 쓴다.
-    // (그 이전 런타임은 CLI 에게 도구를 못 줘서 Bash 하나로 도는 반쪽 실행이 된다.)
-    runtimeVersion: async () => {
-      const e = getLocalEnsurer();
-      const live = e.activePython();
-      if (live?.version) return live.version;
-      const active = await e.resolveActive().catch(() => undefined);
-      return active?.version;
-    },
-    runner: getSidecarDaemon(),
-    // 이 PC 에 설치된 CLI(codex/claude) 경로 + 격리 홈을 사이드카 settings 로 주입.
-    cliSettings: () => localCliSettings({ runtimeDir: cliRuntimeDir() }),
-    // CLI provider 턴 직전 바이너리 보장 — 없으면 공식 배포처에서 자동 설치(서버 목표 버전).
-    ensureCli: (tool) => ensureCliInstalled(tool),
-    flushSync: async (workflowId) => (await localSync?.flushSync(workflowId)) ?? false,
-    // 로컬 실행에서 에이전트가 쓸 외부 MCP 서버 — cfg.mcp 가 켜져 있고 enabled 서버가 있을 때만.
-    // 시크릿(키체인)·oauth 토큰(Bearer 헤더)을 여기서 주입해 resolved 설정으로 사이드카에 넘긴다.
-    connectorMcpServers: async () => resolveConnectorMcpServersForLocal(),
-    deviceName: () => defaultDeviceName(hostname(), userInfo().username),
-    diag: (m) => {
-      void import('./diag-log').then(({ diag }) => diag('local-exec', m)).catch(() => {});
-    },
-    signal,
-  };
-}
 /** CLI 바이너리 자동 보장 — 도구별 single-flight(연타 턴이 중복 설치하지 않게). */
 const cliEnsureInflight = new Map<string, Promise<boolean>>();
-function ensureCliInstalled(tool: 'codex' | 'claude'): Promise<boolean> {
-  const deps = { runtimeDir: cliRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch };
-  const st = localCliGetStatus(deps);
-  // 이미 있으면(버튼/스크립트/이전 설치) 그대로 쓴다 — 인스톨러 체크 해제는 **자동 설치만** 끈다.
-  if ((tool === 'codex' ? st.codex : st.claude).installed) return Promise.resolve(true);
-  const le = loadConfig().localExec ?? {};
-  if ((tool === 'codex' ? le.autoCodex : le.autoClaude) === false) return Promise.resolve(false);
-  const inflight = cliEnsureInflight.get(tool);
-  if (inflight) return inflight;
-  const p = (async () => {
-    // 무소음 — 자동 경로는 UI 로 진행을 보내지 않는다(diag 만; 버튼 경로는 자체 표시).
-    const emit = () => {};
-    // 서버 매니페스트가 있으면 **서버와 같은 버전**으로 — 이번 세션에 못 받았어도 마지막
-    // 매니페스트(디스크 캐시)의 목표 버전을 쓴다(감사 #40).
-    const m = getLocalConverger().status().manifest ?? null;
-    const version = (tool === 'codex' ? m?.codex?.target : m?.claude?.target) ?? undefined;
-    const r =
-      tool === 'codex'
-        ? await installCodexCli(deps, emit, { version })
-        : await installClaudeCli(deps, emit, { version });
-    return r.ok;
-  })().finally(() => cliEnsureInflight.delete(tool));
-  cliEnsureInflight.set(tool, p);
-  return p;
-}
-function localExecStatus() {
-  // 유일한 진실 = **설치 폴더**. 인스톨러(NSIS 복사)와 부팅 안전망(cpSync)이
-  // <설치폴더>/local-runtime 을 반드시 채우므로, 여기 존재 여부만 본다(레거시
-  // userData 는 폴백). 상태 판정은 라우팅(localChatDeps.runtimeInstalled)과 같다.
-  const fast = localRuntimeGetStatusFast({ runtimeDir: localRuntimeDir() });
-  const active = getLocalEnsurer().activePython();
-  // installed = 지금 라우팅이 쓸 수 있는 건강한 런타임이 있다(설치 폴더/번들/레거시).
-  const st = active
-    ? {
-        ...fast,
-        installed: true,
-        pythonPath: active.python,
-        version: active.version ?? fast.version,
-      }
-    : fast;
-  const conv = localConverger?.status() ?? { manifest: null, running: false };
-  const m = conv.manifest;
-  return {
-    enabled: loadConfig().localExec?.enabled !== false,
-    ...st,
-    runtimeDir: localRuntimeDir(),
-    daemon: sidecarDaemon?.status() ?? { running: false, activeTurns: 0 },
-    cli: localCliGetStatus({ runtimeDir: cliRuntimeDir() }),
-    server: m
-      ? {
-          runtime: m.runtime?.version,
-          claude: m.claude?.target ?? m.claude?.pinned ?? null,
-          codex: m.codex?.target ?? m.codex?.pinned ?? null,
-          claudeEnabled: m.claude?.enabled,
-          codexEnabled: m.codex?.enabled,
-          claudeAuth: m.claude
-            ? {
-                mode: m.claude.auth_mode,
-                ready: m.claude.auth_ready,
-                source: m.claude.auth_source ?? null,
-              }
-            : null,
-          codexAuth: m.codex
-            ? {
-                mode: m.codex.auth_mode,
-                ready: m.codex.auth_ready,
-                source: m.codex.auth_source ?? null,
-              }
-            : null,
-          manifestAt: conv.manifestAt,
-        }
-      : null,
-    converge: {
-      running: conv.running,
-      lastRunAt: conv.lastRunAt,
-      lastError: conv.lastError,
-      summary: conv.summary,
-    },
-    ensure: getLocalEnsurer().status(),
-    bootErrors: [...localExecBootErrors],
-    bundlePath: process.resourcesPath ? join(process.resourcesPath, 'python') : null,
-    isPackaged: app.isPackaged,
-    logs: readInstallLogs(),
-  };
-}
-ipcMain.handle(CHANNELS.localRuntimeOpenLog, async () => {
-  // 앱 로그가 없으면 인스톨러 로그, 둘 다 없으면 설치 폴더를 연다.
-  const candidates = [installLogPath(), join(app.getPath('userData'), 'install.log')];
-  const target = candidates.find((p) => existsSync(p)) ?? resolveDataRoot(loadConfig());
-  const err = await shell.openPath(target);
-  return { ok: !err, path: target, error: err || undefined };
-});
-ipcMain.handle(CHANNELS.localRuntimeSync, async () => {
-  if (client?.user) await getLocalConverger().converge();
-  return localExecStatus();
-});
-ipcMain.handle(CHANNELS.localRuntimeStatus, async () => {
-  // 상태 조회가 곧 진실 동기화 — 부팅 사다리가 어떤 이유로든 안 돌았거나(idle) 후보가
-  // 비어 있으면 여기서 한 번 더 돌린다(백그라운드). 화면은 '검증 중'으로 보이고 곧 갱신된다.
-  const e = getLocalEnsurer();
-  const es = e.status();
-  if (es.phase === 'idle' || (es.phase !== 'checking' && es.candidates.length === 0)) {
-    void e.ensure('status');
-  } else if (es.active) {
-    // 사다리가 멈춘 뒤 미검증으로 남은 후보(번들/레거시)를 백그라운드 스모크(스로틀·캐시) — 설정
-    // 화면의 "미검증" 이 "있음/손상" 으로 확정되게. 라우팅과 무관, 응답을 막지 않는다.
-    void e.verifyOtherCandidates().catch(() => undefined);
-  }
-  const st = localExecStatus();
-  if (!st.installed) {
-    // 원인 확정용 진단(무 UI) — 스토리지 탭 [진단 로그 복사]로 회수된다.
-    try {
-      const { diag } = await import('./diag-log');
-      const { readdirSync } = await import('node:fs');
-      const rp = process.resourcesPath ?? '(none)';
-      const listing = existsSync(rp) ? readdirSync(rp).join(',') : '(missing)';
-      diag(
-        'local-exec',
-        `런타임 미검출: dir=${localRuntimeDir()} resources=${rp} [${listing.slice(0, 300)}]`,
-      );
-    } catch {
-      /* 진단 실패 무시 */
-    }
-  }
-  return st;
-});
-ipcMain.handle(CHANNELS.localRuntimeInstall, async () => {
-  // [지금 설치/복구] — 자가치유 사다리(설치 폴더 → 내장 번들 복사 → 네트워크 설치).
-  const st = await getLocalEnsurer().ensure('button');
-  return { ok: st.phase === 'ready' && !!st.active, status: st, error: st.lastError };
-});
 
 // CLI 바이너리(codex / Claude Code) 프로비저닝 — 진행률은 localRuntimeProgress 재사용.
 /** CLI 는 항상 설치 폴더 하위(local-runtime/bin) — 설치 스크립트와 같은 목적지. */
-function cliRuntimeDir(): string {
-  return runtimeDirOf(resolveDataRoot(loadConfig()));
-}
-ipcMain.handle(CHANNELS.localCliStatus, () => localCliGetStatus({ runtimeDir: cliRuntimeDir() }));
-ipcMain.handle(CHANNELS.localCliInstall, async (event, tool: unknown) => {
-  // CLI 는 항상 설치 폴더 하위 — 상태/라우팅(cliRuntimeDir)과 같은 곳(레거시 userData
-  // 런타임이 있어도 여기). 서버 매니페스트가 있으면 그 버전으로.
-  const deps = { runtimeDir: cliRuntimeDir(), fetch: mcpHttpFetch as unknown as typeof fetch };
-  const m = localConverger?.status().manifest ?? null;
-  const emit = (p: unknown) => {
-    try {
-      event.sender.send(CHANNELS.localRuntimeProgress, p);
-    } catch {
-      /* 렌더러 사라짐 */
-    }
-  };
-  if (tool === 'codex')
-    return installCodexCli(deps, emit, { version: m?.codex?.target ?? undefined });
-  if (tool === 'claude')
-    return installClaudeCli(deps, emit, { version: m?.claude?.target ?? undefined });
-  return { ok: false, error: `알 수 없는 도구: ${String(tool)}` };
-});
 
 ipcMain.handle(CHANNELS.syncStatus, () => {
   return localSync?.status() ?? { enabled: false, reason: 'disabled', agents: [] };
@@ -3805,13 +3340,14 @@ if (!gotLock) {
     createWindow();
     if (startHidden) mainWindow?.removeAllListeners('ready-to-show');
     // 부팅 배선 — 한 단계가 던져도 다음 단계(특히 로컬 실행 런타임 보장)가 멈추지 않게,
-    // 각 단계를 격리하고 실패를 install.log + 상태(bootErrors)에 남긴다.
+    // 각 단계를 격리하고 실패를 install.log 에 남긴다.
+    const bootErrors: string[] = [];
     const bootStep = (name: string, fn: () => void) => {
       try {
         fn();
       } catch (e) {
         const msg = e instanceof Error ? (e.stack ?? e.message) : String(e);
-        localExecBootErrors.push(`${name}: ${msg.split('\n')[0]}`);
+        bootErrors.push(`${name}: ${msg.split('\n')[0]}`);
         appendInstallLog(
           `[app] boot step ${name} FAILED: ${msg.split('\n').slice(0, 3).join(' | ')}`,
         );
@@ -3821,26 +3357,6 @@ if (!gotLock) {
     bootStep('settleDataRoot', () => settleDataRootOnBoot()); // 통합 루트 정착 — 아래 배선들이 새 기본을 읽는다.
     bootStep('wireWorkspaceManager', () => wireWorkspaceManager());
     bootStep('wireLocalSync', () => wireLocalSync());
-    // 부팅 자동 프로비저닝: 런타임 → CLI(체크된 것) 순차 백그라운드.
-    void ensureLocalRuntimeOnBoot()
-      .catch((e) => {
-        localExecBootErrors.push(
-          `ensureLocalRuntime: ${e instanceof Error ? e.message : String(e)}`,
-        );
-        appendInstallLog(
-          `[app] ensureLocalRuntimeOnBoot FAILED: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`,
-        );
-      })
-      .then(async () => {
-        // ⚠ 순서: 매니페스트 수렴(로그인 상태면 서버 목표 버전으로 런타임·CLI) **먼저**, CLI
-        // 자동 설치 안전망은 그 뒤 — 그래야 CLI 가 latest 가 아니라 서버 목표 버전으로 깔린다
-        // (감사 #40). 미로그인이면 수렴은 no-op 이고, 안전망은 디스크에 남은 마지막
-        // 매니페스트의 목표 버전을 쓴다.
-        await convergeLocalRuntime('boot');
-        const le = loadConfig().localExec ?? {};
-        if (le.autoCodex !== false) await ensureCliInstalled('codex').catch(() => false);
-        if (le.autoClaude !== false) await ensureCliInstalled('claude').catch(() => false);
-      });
     if (cfg.avatarOverlay) createOverlay();
     if (cfg.quickChat) {
       createQuickChat();
@@ -3868,7 +3384,6 @@ if (!gotLock) {
     /* stay resident in the tray */
   });
   app.on('before-quit', () => {
-    sidecarDaemon?.shutdown();
     appQuitting = true;
     saveOverlayGeometry(true); // don't drop a pending move/resize on quit
   });

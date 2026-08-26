@@ -14,7 +14,6 @@ import {
   runtimeDirOf,
   settleDataRoot,
   workspaceDirOf,
-  writeCliInstallScripts,
 } from '../src/main/data-root';
 import type { ConnectorConfig } from '../src/main/config';
 
@@ -62,6 +61,8 @@ test('consumeInstallOptions: 1회 소비(파일 삭제) + 패치 매핑, 없으�
     assert.equal(consumeInstallOptions(ud), null);
     writeFileSync(
       join(ud, INSTALL_OPTIONS_FILE),
+      // 구버전 인스톨러가 남긴 로컬 실행 옵션이 섞여 있어도 무시한다 —
+      // 그 스위치는 없어졌고(에이전트는 서버에서 돈다) dataRoot 만 의미가 있다.
       JSON.stringify({
         dataRoot: 'D:\\xgen-dex',
         autoRuntime: true,
@@ -70,10 +71,7 @@ test('consumeInstallOptions: 1회 소비(파일 삭제) + 패치 매핑, 없으�
       }),
     );
     const patch = consumeInstallOptions(ud);
-    assert.deepEqual(patch, {
-      dataRoot: 'D:\\xgen-dex',
-      localExec: { autoRuntime: true, autoCodex: false, autoClaude: true },
-    });
+    assert.deepEqual(patch, { dataRoot: 'D:\\xgen-dex' });
     // 소비됐다 — 파일 삭제 + 재호출 null.
     assert.equal(existsSync(join(ud, INSTALL_OPTIONS_FILE)), false);
     assert.equal(consumeInstallOptions(ud), null);
@@ -83,34 +81,6 @@ test('consumeInstallOptions: 1회 소비(파일 삭제) + 패치 매핑, 없으�
     assert.equal(existsSync(join(ud, INSTALL_OPTIONS_FILE)), false);
   } finally {
     rmSync(ud, { recursive: true, force: true });
-  }
-});
-
-test('writeCliInstallScripts: OS 별 스크립트를 루트에 배치(공식 소스·설치 폴더 하위 목적지)', () => {
-  const root = mkdtempSync(join(tmpdir(), 'scripts-'));
-  try {
-    const posix = writeCliInstallScripts(root, 'linux');
-    assert.deepEqual(
-      posix.map((p) => p.split(/[\\/]/).pop()),
-      ['install-codex.sh', 'install-claude-code.sh'],
-    );
-    const codexSh = readFileSync(join(root, 'install-codex.sh'), 'utf-8');
-    assert.match(codexSh, /releases\/latest\/download\/install\.sh/);
-    assert.match(codexSh, /CODEX_INSTALL_DIR/);
-    assert.match(codexSh, /local-runtime\/bin/);
-    const claudeSh = readFileSync(join(root, 'install-claude-code.sh'), 'utf-8');
-    assert.match(claudeSh, /downloads\.claude\.ai\/claude-code-releases/);
-
-    const win = writeCliInstallScripts(root, 'win32');
-    assert.deepEqual(
-      win.map((p) => p.split(/[\\/]/).pop()),
-      ['install-codex.cmd', 'install-claude-code.cmd'],
-    );
-    const codexCmd = readFileSync(join(root, 'install-codex.cmd'), 'utf-8');
-    assert.match(codexCmd, /pc-windows-msvc\.exe\.zip/);
-    assert.match(codexCmd, /local-runtime\\bin/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
