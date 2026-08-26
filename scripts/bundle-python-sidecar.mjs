@@ -65,7 +65,7 @@ const PBS_PYTHON = process.env.PBS_PYTHON || '3.12.11';
 // 저장소만 체크아웃돼 로컬 경로가 없다).
 // ⚠ src/main/local-runtime-install.ts 의 RUNTIME_WHEEL_VERSION 과 같은 버전이어야 한다
 //   (test/bundle-layout.test.ts 가 잠근다 — .mjs 는 TS 상수를 import 하지 못한다).
-const RELEASED_RUNTIME_VERSION = '3.9.0';
+const RELEASED_RUNTIME_VERSION = '3.10.0';
 const RELEASED_RUNTIME_WHEEL = `https://github.com/PlateerLab/xgen-agent-runtime/releases/download/v${RELEASED_RUNTIME_VERSION}/xgen_agent_runtime-${RELEASED_RUNTIME_VERSION}-py3-none-any.whl`;
 const localRuntimePath = join(WORKSPACE, 'xgen-agent-runtime');
 const RUNTIME_SPEC =
