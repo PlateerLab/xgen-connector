@@ -110,6 +110,9 @@ export interface Span {
   duration_ms?: number;
   error_message?: string;
   created_at?: string;
+  /** 서버가 붙인 부가 정보(JSON 문자열 또는 객체). info span 은 여기에 실행 환경
+   *  ``detail`` 을 담는다 — 이 턴의 대화 출처와 붙은 로컬 도구 목록. */
+  metadata?: unknown;
 }
 
 export interface TraceListResult {

@@ -147,7 +147,21 @@ const SpanRow: React.FC<{ span: Span; idx: number }> = ({ span, idx }) => {
   const [open, setOpen] = useState(false);
   const input = pretty(span.input_data);
   const output = pretty(span.output_data);
-  const hasDetail = !!(input || output || span.error_message);
+  // 서버는 metadata 를 JSON **문자열**로 내려준다(컬럼이 text) — 한 번 파싱해
+  // 보고, 아니면 원문 그대로 보여 준다.
+  const meta = useMemo(() => {
+    const raw = span.metadata;
+    if (raw === undefined || raw === null || raw === '') return '';
+    if (typeof raw === 'string') {
+      try {
+        return pretty(JSON.parse(raw));
+      } catch {
+        return raw;
+      }
+    }
+    return pretty(raw);
+  }, [span.metadata]);
+  const hasDetail = !!(input || output || meta || span.error_message);
   return (
     <div className={`viewer-span ${span.error_message ? 'err' : ''}`}>
       <button className="viewer-span-row" onClick={() => hasDetail && setOpen((o) => !o)}>
@@ -182,6 +196,12 @@ const SpanRow: React.FC<{ span: Span; idx: number }> = ({ span, idx }) => {
             <>
               <div className="viewer-label">출력 (result)</div>
               <pre>{output}</pre>
+            </>
+          )}
+          {meta && (
+            <>
+              <div className="viewer-label">부가 정보</div>
+              <pre>{meta}</pre>
             </>
           )}
         </div>
