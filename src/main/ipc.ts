@@ -109,6 +109,7 @@ export const CHANNELS = {
   browserState: 'browser:state',
   browserStateEvent: 'browser:stateEvent',
   browserConnectionEvent: 'browser:connectionEvent',
+  browserRevealEvent: 'browser:revealEvent',
   browserCreate: 'browser:create',
   browserEnsureShared: 'browser:ensureShared',
   browserBindShared: 'browser:bindShared',

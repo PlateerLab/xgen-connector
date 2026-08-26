@@ -33,6 +33,7 @@ import {
   findTab,
   newWorkspaceLayout,
   normalizeWorkspaceLayout,
+  placeBrowserBesideChat,
   removeWorkspaceTab,
   selectWorkspaceTab,
   setWorkspaceRatio,
@@ -343,6 +344,24 @@ export const Workspace: React.FC<{
           if (event.phase === 'required' || event.phase === 'timeout') return event;
           return current?.pageId === event.pageId ? null : current;
         });
+      }),
+    [],
+  );
+
+  // A shared page created by an agent is an explicit request for visible UI.
+  // Main raises the app window; this listener places it beside its workflow chat.
+  useEffect(
+    () =>
+      xgen.browser.onReveal((page) => {
+        const tabId = `browser:${page.workflowId}`;
+        setLayout((current) =>
+          placeBrowserBesideChat(current, {
+            id: tabId,
+            kind: 'browser',
+            workflowId: page.workflowId,
+            workflowName: page.workflowName,
+          }),
+        );
       }),
     [],
   );

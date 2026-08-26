@@ -21,7 +21,11 @@
  */
 import WebSocket from 'ws';
 import { getMcpManager, type McpServerAdvert } from './mcp-manager';
-import { getLocalToolProvider, LOCAL_SERVER } from './local-tools';
+import {
+  getLocalToolProvider,
+  localToolCallContext,
+  LOCAL_SERVER,
+} from './local-tools';
 import { appendMcpRuntimeLog } from './mcp-runtime-log';
 import { xgenWebSocketTlsOptions } from './connection-security';
 
@@ -370,6 +374,7 @@ export class McpBridge {
       server?: string;
       tool?: string;
       args?: unknown;
+      context?: unknown;
       catalog_id?: string;
       tool_count?: number;
     };
@@ -395,6 +400,7 @@ export class McpBridge {
     }
     if (msg.type === 'mcp_call') {
       const { request_id, server, tool, args } = msg;
+      const context = localToolCallContext(msg.context);
       const startedAt = Date.now();
       appendMcpRuntimeLog({
         kind: 'call',
@@ -409,7 +415,7 @@ export class McpBridge {
         // goes to the configured MCP server via MCPManager. Same wire contract.
         const local = getLocalToolProvider();
         const result = local.owns(String(server))
-          ? await local.callTool(String(tool), args ?? {})
+          ? await local.callTool(String(tool), args ?? {}, context)
           : await getMcpManager().callTool(String(server), String(tool), args ?? {});
         payload = { request_id, ok: true, result };
       } catch (e) {

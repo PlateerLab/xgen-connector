@@ -404,6 +404,11 @@ const api = {
       ipcRenderer.on(CHANNELS.browserConnectionEvent, handler);
       return () => ipcRenderer.removeListener(CHANNELS.browserConnectionEvent, handler);
     },
+    onReveal: (cb: (page: BrowserPageInfo) => void): (() => void) => {
+      const handler = (_event: unknown, page: BrowserPageInfo) => cb(page);
+      ipcRenderer.on(CHANNELS.browserRevealEvent, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.browserRevealEvent, handler);
+    },
   },
 
   chat: {

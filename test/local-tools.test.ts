@@ -22,6 +22,7 @@ import {
   shellConfig,
   shellEnabled,
   isDangerousShellCommand,
+  localToolCallContext,
   shellInvocation,
   shellToolSchema,
   resolveWithinRoots,
@@ -34,6 +35,26 @@ import {
 } from '../src/main/local-tools';
 
 const isWin = platform() === 'win32';
+
+test('MCP 호출 컨텍스트는 도구 호출 시점의 workflow 식별자를 정규화한다', () => {
+  assert.deepEqual(
+    localToolCallContext({
+      workflow_id: ' wf-25 ',
+      workflow_name: ' Agentflow (25) ',
+      interaction_id: ' conv-1 ',
+    }),
+    {
+      workflowId: 'wf-25',
+      workflowName: 'Agentflow (25)',
+      interactionId: 'conv-1',
+    },
+  )
+  assert.deepEqual(localToolCallContext(undefined), {
+    workflowId: undefined,
+    workflowName: undefined,
+    interactionId: undefined,
+  })
+})
 
 test('기본은 꺼짐(opt-in) — enabled 미지정이면 셸 접근 OFF', () => {
   assert.equal(shellEnabled(undefined), false);

@@ -106,10 +106,35 @@ export interface LocalToolResult {
   isError?: boolean;
 }
 
+/** Server-attested identity of the workflow that initiated a local tool call. */
+export interface LocalToolCallContext {
+  workflowId?: string;
+  workflowName?: string;
+  interactionId?: string;
+}
+
+/** Normalize snake/camel-case caller identity from an authenticated bridge frame. */
+export function localToolCallContext(raw: unknown): LocalToolCallContext {
+  const value = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const text = (input: unknown): string | undefined => {
+    const normalized = String(input ?? '').trim();
+    return normalized || undefined;
+  };
+  return {
+    workflowId: text(value.workflow_id ?? value.workflowId),
+    workflowName: text(value.workflow_name ?? value.workflowName),
+    interactionId: text(value.interaction_id ?? value.interactionId),
+  };
+}
+
 export interface LocalToolDelegate {
   advertise(): LocalToolSchema[];
   owns(tool: string): boolean;
-  callTool(tool: string, args: unknown): Promise<LocalToolResult>;
+  callTool(
+    tool: string,
+    args: unknown,
+    context?: LocalToolCallContext,
+  ): Promise<LocalToolResult>;
 }
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 10분 — 긴 설치/빌드/스크립트 기본 허용
@@ -913,8 +938,12 @@ export class LocalToolProvider {
     return [...shell, ...bridge, ...mcpAdmin, ...(this.delegate?.advertise() ?? [])];
   }
 
-  async callTool(tool: string, args: unknown): Promise<LocalToolResult> {
-    if (this.delegate?.owns(tool)) return this.delegate.callTool(tool, args);
+  async callTool(
+    tool: string,
+    args: unknown,
+    context?: LocalToolCallContext,
+  ): Promise<LocalToolResult> {
+    if (this.delegate?.owns(tool)) return this.delegate.callTool(tool, args, context);
     // MCP 자기관리 도구는 로컬 셸 게이트 이전에 처리(로컬 MCP 스위치로만 게이트됨).
     if (this.mcpAdmin?.owns(tool)) return this.mcpAdmin.callTool(tool, args);
     if (!this.cfg.enabled) throw new Error('로컬 도구 접근이 꺼져 있습니다 (설정 > 로컬 도구).');

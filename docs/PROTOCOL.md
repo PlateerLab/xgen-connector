@@ -120,3 +120,31 @@ Events: `started` · `chunk` · `tool` · `canvas_command` · `meta` · **`usage
 ```
 The connector stores it as `TurnReport.usage` and sends it verbatim as `report-turn.usage` (the server records
 `output_data.usage` and the input/output token columns). It is not rendered in the chat.
+
+## Connector-hosted local MCP — caller context
+
+The connector advertises local tools over
+`/api/tools/ws/connector-mcp/{user_id}`. A browser tool must be able to create
+its first page without putting internal workflow identifiers in every chat
+message, so the backend includes the authenticated execution identity only in
+the corresponding `mcp_call` frame:
+
+```json
+{
+  "type": "mcp_call",
+  "request_id": "call-1",
+  "server": "local",
+  "tool": "BrowserTabs",
+  "args": { "action": "create", "mode": "shared", "url": "https://example.com" },
+  "context": {
+    "workflow_id": "wf_abc",
+    "workflow_name": "Sales Agent",
+    "interaction_id": "conv-1"
+  }
+}
+```
+
+`context.workflow_id` must come from the authenticated server-side execution,
+not from model-generated tool arguments. The connector temporarily accepts an
+argument-level `workflow_id` for compatibility with older servers, but rejects
+it when it disagrees with the server context.

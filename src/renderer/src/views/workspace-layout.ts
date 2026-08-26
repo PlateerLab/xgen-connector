@@ -167,6 +167,60 @@ export function addWorkspaceTab(
   };
 }
 
+/**
+ * Reveal an agent-created browser beside a chat from the same workflow.
+ *
+ * A one-group layout becomes a left(chat)/right(browser) split. When the user
+ * already has two groups, the group opposite the chat is reused so the hard
+ * two-group limit is preserved.
+ */
+export function placeBrowserBesideChat(
+  layout: WorkspaceLayout,
+  browserTab: WorkspaceTab,
+): WorkspaceLayout {
+  const matchingChats = layout.groups.flatMap((group) =>
+    group.tabs
+      .filter(
+        (tab) =>
+          tab.kind === 'chat' &&
+          !!browserTab.workflowId &&
+          tab.workflowId === browserTab.workflowId,
+      )
+      .map((tab) => ({ group, tab })),
+  );
+  const chat =
+    matchingChats.find(({ group, tab }) => group.activeTabId === tab.id) ?? matchingChats[0];
+  const existing = findTab(layout, browserTab.id);
+  if (!chat) {
+    return existing
+      ? selectWorkspaceTab(layout, existing.group.id, existing.tab.id)
+      : addWorkspaceTab(layout, layout.focusedGroupId, browserTab);
+  }
+
+  let next = selectWorkspaceTab(layout, chat.group.id, chat.tab.id);
+  let browser = findTab(next, browserTab.id);
+  if (next.groups.length === 1) {
+    if (!browser) next = addWorkspaceTab(next, chat.group.id, browserTab);
+    next = dropWorkspaceTab(next, browserTab.id, chat.group.id, 'right');
+  } else {
+    const chatNow = findTab(next, chat.tab.id)!;
+    const opposite = next.groups.find((group) => group.id !== chatNow.group.id)!;
+    browser = findTab(next, browserTab.id);
+    next = browser
+      ? browser.group.id === opposite.id
+        ? selectWorkspaceTab(next, opposite.id, browserTab.id)
+        : dropWorkspaceTab(next, browserTab.id, opposite.id, 'center')
+      : addWorkspaceTab(next, opposite.id, browserTab);
+    next = { ...next, direction: 'horizontal' };
+  }
+
+  const chatNow = findTab(next, chat.tab.id);
+  browser = findTab(next, browserTab.id);
+  if (chatNow) next = selectWorkspaceTab(next, chatNow.group.id, chatNow.tab.id);
+  if (browser) next = selectWorkspaceTab(next, browser.group.id, browser.tab.id);
+  return next;
+}
+
 export function removeWorkspaceTab(layout: WorkspaceLayout, tabId: string): WorkspaceLayout {
   const groups = layout.groups
     .map((group) => {

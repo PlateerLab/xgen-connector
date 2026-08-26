@@ -2,7 +2,11 @@ import { BrowserWindow, dialog } from 'electron';
 import type { BrowserPageInfo } from '../core/browser';
 import { browserPathWithinRoots } from './browser-security';
 import { BrowserRuntime, BrowserRuntimeError } from './browser-runtime';
-import type { LocalToolResult, LocalToolSchema } from './local-tools';
+import type {
+  LocalToolCallContext,
+  LocalToolResult,
+  LocalToolSchema,
+} from './local-tools';
 
 export const BROWSER_TABS_TOOL = 'BrowserTabs';
 export const BROWSER_NAVIGATE_TOOL = 'BrowserNavigate';
@@ -23,7 +27,8 @@ export const BROWSER_TOOL_NAMES = new Set([
 const commonPageProperties = {
   workflow_id: {
     type: 'string',
-    description: 'Owning workflow id. Required when page_id is omitted.',
+    description:
+      'Legacy compatibility only; omit when the connector supplies caller context automatically.',
   },
   page_id: {
     type: 'string',
@@ -36,7 +41,7 @@ export function browserToolSchemas(): LocalToolSchema[] {
     {
       name: BROWSER_TABS_TOOL,
       description:
-        'Manage XGEN browser pages on the user desktop. list/create/close/activate; mode shared is visible, background is agent-only. ' +
+        'Manage XGEN browser pages on the user desktop. Use create with mode shared to open and reveal a visible browser tab without asking the user to open it first; background is agent-only. ' +
         'A missing page_id on other browser tools uses the workflow default background page.',
       inputSchema: {
         type: 'object',
@@ -44,7 +49,12 @@ export function browserToolSchemas(): LocalToolSchema[] {
           action: { type: 'string', enum: ['list', 'create', 'close', 'activate'] },
           ...commonPageProperties,
           workflow_name: { type: 'string' },
-          mode: { type: 'string', enum: ['shared', 'background'] },
+          mode: {
+            type: 'string',
+            enum: ['shared', 'background'],
+            description:
+              'shared opens a visible XGEN browser tab; background stays hidden for autonomous work.',
+          },
           url: { type: 'string' },
         },
         required: ['action'],
@@ -227,8 +237,36 @@ function objectArgs(args: unknown): Record<string, unknown> {
   return args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
 }
 
-function workflow(args: Record<string, unknown>): string {
-  return String(args.workflow_id ?? args.workflowId ?? '').trim();
+function workflow(
+  args: Record<string, unknown>,
+  context?: LocalToolCallContext,
+): string {
+  const trusted = String(context?.workflowId ?? '').trim();
+  const requested = String(args.workflow_id ?? args.workflowId ?? '').trim();
+  if (trusted && requested && trusted !== requested) {
+    throw new BrowserRuntimeError(
+      'browser_denied',
+      '호출 workflow와 브라우저 workflow_id가 일치하지 않습니다.',
+    );
+  }
+  const resolved = trusted || requested;
+  if (!resolved) {
+    throw new BrowserRuntimeError(
+      'browser_no_page',
+      '브라우저 호출 컨텍스트가 없습니다. 서버가 mcp_call.context.workflow_id를 전달해야 합니다.',
+    );
+  }
+  return resolved;
+}
+
+function workflowName(
+  args: Record<string, unknown>,
+  context: LocalToolCallContext | undefined,
+  workflowId: string,
+): string {
+  return String(
+    context?.workflowName ?? args.workflow_name ?? args.workflowName ?? workflowId,
+  ).trim() || workflowId;
 }
 
 function pageId(args: Record<string, unknown>): string | undefined {
@@ -271,12 +309,18 @@ function appendValue(command: string[], value: unknown): void {
 export class BrowserToolProvider {
   private enabled = false;
   private allowedRoots: string[] = [];
+  private revealSharedPage: (page: BrowserPageInfo) => void = () => {};
 
   constructor(private runtime: BrowserRuntime) {}
 
-  configure(enabled: boolean, allowedRoots: string[] = []): void {
+  configure(
+    enabled: boolean,
+    allowedRoots: string[] = [],
+    revealSharedPage: (page: BrowserPageInfo) => void = () => {},
+  ): void {
     this.enabled = enabled;
     this.allowedRoots = allowedRoots;
+    this.revealSharedPage = revealSharedPage;
   }
 
   advertise(): LocalToolSchema[] {
@@ -287,37 +331,45 @@ export class BrowserToolProvider {
     return BROWSER_TOOL_NAMES.has(tool);
   }
 
-  async callTool(tool: string, raw: unknown): Promise<LocalToolResult> {
+  async callTool(
+    tool: string,
+    raw: unknown,
+    context?: LocalToolCallContext,
+  ): Promise<LocalToolResult> {
     if (!this.enabled)
       throw new BrowserRuntimeError('browser_disabled', '브라우저 접근이 꺼져 있습니다.');
     const args = objectArgs(raw);
-    if (tool === BROWSER_TABS_TOOL) return this.tabs(args);
-    if (tool === BROWSER_NAVIGATE_TOOL) return this.navigate(args);
-    if (tool === BROWSER_SNAPSHOT_TOOL) return this.snapshot(args);
-    if (tool === BROWSER_INTERACT_TOOL) return this.interact(args);
-    if (tool === BROWSER_CAPTURE_TOOL) return this.capture(args);
-    if (tool === BROWSER_ADVANCED_TOOL) return this.advanced(args);
+    if (tool === BROWSER_TABS_TOOL) return this.tabs(args, context);
+    if (tool === BROWSER_NAVIGATE_TOOL) return this.navigate(args, context);
+    if (tool === BROWSER_SNAPSHOT_TOOL) return this.snapshot(args, context);
+    if (tool === BROWSER_INTERACT_TOOL) return this.interact(args, context);
+    if (tool === BROWSER_CAPTURE_TOOL) return this.capture(args, context);
+    if (tool === BROWSER_ADVANCED_TOOL) return this.advanced(args, context);
     throw new Error(`unknown browser tool: ${tool}`);
   }
 
-  private async tabs(args: Record<string, unknown>): Promise<LocalToolResult> {
+  private async tabs(
+    args: Record<string, unknown>,
+    context?: LocalToolCallContext,
+  ): Promise<LocalToolResult> {
     const action = String(args.action ?? 'list');
-    const wid = workflow(args);
+    const wid = workflow(args, context);
     if (action === 'list') return result(null, this.runtime.list(wid || undefined));
     if (action === 'create') {
-      if (!wid) throw new BrowserRuntimeError('browser_no_page', 'workflow_id가 필요합니다.');
+      const mode = args.mode === 'shared' ? 'shared' : 'background';
       const page = await this.runtime.create({
         workflowId: wid,
-        workflowName: String(args.workflow_name ?? args.workflowName ?? wid),
-        mode: args.mode === 'shared' ? 'shared' : 'background',
+        workflowName: workflowName(args, context, wid),
+        mode,
         url: typeof args.url === 'string' ? args.url : undefined,
       });
+      if (mode === 'shared') this.revealSharedPage(page);
       return result(page, { created: true });
     }
     const id = pageId(args);
     if (!id) throw new BrowserRuntimeError('browser_no_page', 'page_id가 필요합니다.');
     const page = this.runtime.get(id);
-    if (!page)
+    if (!page || (wid && page.workflowId !== wid))
       throw new BrowserRuntimeError('browser_page_not_found', `페이지 ${id}를 찾지 못했습니다.`);
     if (action === 'close') {
       await this.runtime.close(id);
@@ -327,8 +379,11 @@ export class BrowserToolProvider {
     throw new BrowserRuntimeError('browser_denied', `지원하지 않는 BrowserTabs action: ${action}`);
   }
 
-  private async navigate(args: Record<string, unknown>): Promise<LocalToolResult> {
-    const wid = workflow(args);
+  private async navigate(
+    args: Record<string, unknown>,
+    context?: LocalToolCallContext,
+  ): Promise<LocalToolResult> {
+    const wid = workflow(args, context);
     const id = pageId(args);
     const action = String(args.action ?? 'goto');
     const page = await this.runtime.resolvePage(wid, id, true);
@@ -346,14 +401,17 @@ export class BrowserToolProvider {
     return result(run.page, run.result);
   }
 
-  private async snapshot(args: Record<string, unknown>): Promise<LocalToolResult> {
+  private async snapshot(
+    args: Record<string, unknown>,
+    context?: LocalToolCallContext,
+  ): Promise<LocalToolResult> {
     const command = ['snapshot'];
     if (args.interactive_only !== false) command.push('-i');
     if (args.compact === true) command.push('-c');
     if (Number.isFinite(Number(args.depth)))
       command.push('--depth', String(Math.trunc(Number(args.depth))));
     const run = await this.runtime.runAgentCommand(
-      workflow(args),
+      workflow(args, context),
       pageId(args),
       command,
       timeout(args),
@@ -361,7 +419,10 @@ export class BrowserToolProvider {
     return result(run.page, run.result);
   }
 
-  private async interact(args: Record<string, unknown>): Promise<LocalToolResult> {
+  private async interact(
+    args: Record<string, unknown>,
+    context?: LocalToolCallContext,
+  ): Promise<LocalToolResult> {
     const action = String(args.action ?? 'click');
     const ref = String(args.ref ?? '').trim();
     let command: string[];
@@ -402,7 +463,7 @@ export class BrowserToolProvider {
       ? Number(args.generation)
       : undefined;
     const run = await this.runtime.runAgentCommand(
-      workflow(args),
+      workflow(args, context),
       pageId(args),
       command,
       timeout(args),
@@ -418,7 +479,10 @@ export class BrowserToolProvider {
     return path;
   }
 
-  private async capture(args: Record<string, unknown>): Promise<LocalToolResult> {
+  private async capture(
+    args: Record<string, unknown>,
+    context?: LocalToolCallContext,
+  ): Promise<LocalToolResult> {
     const action = String(args.action ?? 'screenshot');
     let command: string[];
     if (action === 'screenshot' || action === 'full_screenshot' || action === 'pdf') {
@@ -436,7 +500,7 @@ export class BrowserToolProvider {
       );
     }
     const run = await this.runtime.runAgentCommand(
-      workflow(args),
+      workflow(args, context),
       pageId(args),
       command,
       timeout(args),
@@ -444,7 +508,10 @@ export class BrowserToolProvider {
     return result(run.page, run.result);
   }
 
-  private async advanced(args: Record<string, unknown>): Promise<LocalToolResult> {
+  private async advanced(
+    args: Record<string, unknown>,
+    context?: LocalToolCallContext,
+  ): Promise<LocalToolResult> {
     const action = String(args.action ?? '');
     if (!(await approve(action, JSON.stringify(args)))) {
       throw new BrowserRuntimeError('browser_denied', `사용자가 ${action} 작업을 거부했습니다.`);
@@ -459,7 +526,7 @@ export class BrowserToolProvider {
       for (const path of paths) command.push(this.scopedPath(path));
     } else if (action === 'download') {
       const path = this.scopedPath(args.path);
-      const page = await this.runtime.resolvePage(workflow(args), pageId(args), true);
+      const page = await this.runtime.resolvePage(workflow(args, context), pageId(args), true);
       this.runtime.allowNextDownload(page.info.pageId, path);
       command = ['download', String(args.ref ?? ''), path];
       args = { ...args, page_id: page.info.pageId };
@@ -530,7 +597,7 @@ export class BrowserToolProvider {
       ? Number(args.generation)
       : undefined;
     const run = await this.runtime.runAgentCommand(
-      workflow(args),
+      workflow(args, context),
       pageId(args),
       command,
       timeout(args),
