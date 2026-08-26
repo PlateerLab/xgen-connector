@@ -11,6 +11,68 @@
  */
 import { HttpClient } from './client';
 
+
+/** 에이전트 뷰어의 하위 탭 — **단일 정의**.
+ *
+ * 렌더러(workspace-layout)와 main(config 의 레이아웃 영속 스키마)이 둘 다 쓴다.
+ * 예전엔 두 곳에 유니온이 복제돼 있어서, 탭을 하나 늘리면 저장 스키마 쪽이 조용히
+ * 안 맞고 레이아웃 복원에서 그 탭만 사라졌다. */
+export type AgentViewerSub = 'basic' | 'memory' | 'tasks' | 'tools' | 'storage' | 'fulllog';
+
+// ── 기본정보(basic-info) ───────────────────────────────────────────
+//
+// 실행 없이 재구성한 턴 프롬프트 + 도구 표면. 서버는 두 표면(web/connector)을
+// 모두 돌려주고 **커넥터 뷰어는 connector 만** 보여 준다 — 이 앱에서 도는 턴이
+// 그 표면이기 때문이다. 웹 화면은 반대로 web 만 보여 준다.
+
+export interface BasicInfoPromptSection {
+  key: string;
+  title: string;
+  source: string;
+  text: string;
+  dynamic: boolean;
+  template?: string;
+}
+
+export interface BasicInfoToolEntry {
+  name: string;
+  description: string;
+  gateway?: boolean;
+}
+
+export interface BasicInfoGroup {
+  key: string;
+  title: string;
+  kind: string;
+  gateway?: string | null;
+  disclosure?: string | null;
+  note?: string;
+  tools: BasicInfoToolEntry[];
+}
+
+export interface BasicInfoSurface {
+  available: boolean;
+  note: string;
+  prompt: { sections: BasicInfoPromptSection[]; full_prompt: string };
+  provision?: {
+    exposure: string;
+    mode_note: string;
+    stages: { key: string; title: string; groups: BasicInfoGroup[] }[];
+  };
+  tools: BasicInfoToolEntry[];
+  native_tools?: { kept: string[]; removed: string[]; note: string } | null;
+  skills: { name: string; description: string }[];
+}
+
+export interface AgentBasicInfo {
+  workflow_id: string;
+  provider: string;
+  model: string;
+  is_cli: boolean;
+  surfaces?: { web: BasicInfoSurface; connector: BasicInfoSurface };
+  errors: string[];
+}
+
 // ── 전체로그(trace) ────────────────────────────────────────────────
 export type SpanType =
   | 'agent_input'
@@ -280,6 +342,14 @@ export class AgentDataApi {
   taskOutput(workflowId: string, runId: string): Promise<TaskOutput> {
     return this.http.get<TaskOutput>(
       `/api/agentflow/geny-tasks/${encodeURIComponent(workflowId)}/task/${encodeURIComponent(runId)}/output`,
+    );
+  }
+
+  // ── 기본정보 ──────────────────────────────────────────────────
+  /** 실행 없이 재구성한 턴 프롬프트 + 도구 표면(web/connector 둘 다). */
+  basicInfo(workflowId: string): Promise<AgentBasicInfo> {
+    return this.http.get<AgentBasicInfo>(
+      `/api/agentflow/${encodeURIComponent(workflowId)}/basic-info`,
     );
   }
 

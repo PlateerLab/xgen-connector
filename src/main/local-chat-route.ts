@@ -56,6 +56,13 @@ export interface LocalChatDeps {
   ) => Promise<{ dir: string; synced: boolean }>;
   /** 독립 로컬 런타임이 설치돼 있나(설치 폴더). */
   runtimeInstalled: () => Promise<boolean>;
+  /** 설치된 로컬 런타임 버전(``3.15.0``). 모르면 undefined.
+   *
+   *  CLI provider(claude_code/codex) 로컬 턴은 런타임이 **자기 도구 레지스트리를
+   *  루프백 MCP 로 CLI 에 내줄 수 있어야** 성립한다(MIN_RUNTIME_FOR_LOCAL_CLI).
+   *  그 이전 런타임은 CLI 네이티브 도구(사실상 Bash 하나)로만 돌아서, 에이전트가
+   *  파일·문서·브라우저·메모리 도구를 하나도 못 쓴 채 "셸밖에 없다"고 답한다. */
+  runtimeVersion?: () => Promise<string | undefined>;
   /** 사이드카 실행기(상주 데몬). */
   runner: TurnRunner;
   /** 이 PC 의 CLI 경로/격리 홈 settings(CODEX_BINARY_PATH·XGEN_LOCAL_CODEX_HOME 등) — 사이드카 주입. */
@@ -95,6 +102,7 @@ export type LocalFallbackReason =
   | 'cli_auth_missing'
   | 'local_start_failed'
   | 'graph_suppliers'
+  | 'runtime_outdated'
   | 'preflight';
 
 export interface LocalRouteResult {
@@ -112,6 +120,35 @@ export const WORKSPACE_UNSYNCED_DETAIL = '동기화 미완료 — 일부 파일�
  *  상태 이벤트 detail 로 부착하는 안내. 폴백이 아니라 무기억으로 계속 진행한다. */
 export const MEMORY_OFFLINE_DETAIL = '메모리 서버 연결 실패 — 이번 턴은 무기억으로 진행';
 
+/** CLI provider 로컬 턴에 필요한 **최소 런타임 버전**.
+ *
+ *  3.14.0 에서 런타임이 자기 도구 레지스트리를 루프백 MCP 로 CLI 에 내주기 시작했다.
+ *  그 전 런타임은 CLI 네이티브 도구만 쓸 수 있어 로컬 CLI 턴의 도구가 사실상 Bash
+ *  하나였다. 이 바닥값을 올릴 때는 그 표면을 실제로 바꾼 버전만 쓴다 — 아무 릴리스나
+ *  적으면 멀쩡히 돌던 PC 가 이유 없이 서버로 밀린다. */
+export const MIN_RUNTIME_FOR_LOCAL_CLI = '3.14.0';
+
+/** ``have >= want`` (semver 숫자 3자리 비교). 모르면 false — 확신 없이 로컬로 돌리지 않는다.
+ *  프리릴리스 꼬리(``3.14.0rc1``)는 숫자만 취해 비교한다. */
+export function isRuntimeAtLeast(have: string | undefined, want: string): boolean {
+  const parse = (v: string): number[] =>
+    v
+      .trim()
+      .replace(/^v/, '')
+      .split('.')
+      .slice(0, 3)
+      .map((p) => Number.parseInt(p, 10) || 0);
+  if (!have || !have.trim()) return false;
+  const a = parse(have);
+  const b = parse(want);
+  for (let i = 0; i < 3; i += 1) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+
 /** 사람이 읽는 폴백 사유(상태 이벤트/진단용). */
 export function describeFallback(reason: LocalFallbackReason, detail?: string): string {
   const base: Record<LocalFallbackReason, string> = {
@@ -125,6 +162,8 @@ export function describeFallback(reason: LocalFallbackReason, detail?: string): 
       '서버에 이 CLI 의 인증(API 키/중앙 토큰/자격증명)이 설정되어 있지 않아 서버에서 실행합니다 (관리자 설정 → LLM)',
     local_start_failed: '로컬 실행이 시작되지 못해 서버 sandbox 에서 실행합니다',
     graph_suppliers: '캔버스 공급 노드(도구·RAG 등)는 서버에서 실행',
+    runtime_outdated:
+      '이 PC 의 로컬 런타임이 낡아 CLI 에이전트에게 도구를 줄 수 없습니다 — 이번 턴은 서버에서 실행합니다 (설정 → 로컬 실행에서 업데이트)',
     preflight: '사전 점검 실패(모델 미선택·비활성·미인가) — 서버가 같은 안내 문구를 냅니다',
   };
   return detail ? `${base[reason]} (${detail})` : base[reason];
@@ -250,6 +289,18 @@ export async function runLocalChatTurn(
   // 설치**한다(부팅 자동 프로비저닝과 동형; 아직 아무것도 emit 안 한 시점이라
   // 실패하면 깨끗이 서버로 폴백된다).
   const cliTool = provider === 'codex' ? 'codex' : provider === 'claude_code' ? 'claude' : null;
+  // CLI provider 는 런타임이 **자기 도구 레지스트리를 루프백 MCP 로 CLI 에 내줄 수
+  // 있어야** 성립한다. 그 이전 런타임에서는 CLI 네이티브 도구(사실상 Bash 하나)로만
+  // 돌아, 에이전트가 파일·문서·브라우저·메모리 도구를 하나도 못 쓴 채 "셸밖에 없다"고
+  // 답한다 — 조용한 반쪽 실행이라 사용자는 원인을 짚을 수 없다. 그럴 바엔 서버에서
+  // 온전한 표면으로 도는 게 낫다(수렴기가 런타임을 올리면 다음 턴부터 로컬).
+  // SDK provider 는 레지스트리를 직접 보므로 이 제약이 없다.
+  if (cliTool && deps.runtimeVersion) {
+    const have = await deps.runtimeVersion().catch(() => undefined);
+    if (!isRuntimeAtLeast(have, MIN_RUNTIME_FOR_LOCAL_CLI)) {
+      return fallback('runtime_outdated', `${have ?? '알 수 없음'} < ${MIN_RUNTIME_FOR_LOCAL_CLI}`);
+    }
+  }
   if (cliTool && deps.ensureCli) {
     const ready = await deps.ensureCli(cliTool).catch(() => false);
     if (!ready) return fallback('cli_missing', cliTool);

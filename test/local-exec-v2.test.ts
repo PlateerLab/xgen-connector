@@ -19,6 +19,8 @@ import {
   MEMORY_OFFLINE_DETAIL,
   type LocalChatDeps,
   serverCliAuth,
+  isRuntimeAtLeast,
+  MIN_RUNTIME_FOR_LOCAL_CLI,
 } from '../src/main/local-chat-route';
 import { QuotaExceededError } from '../src/main/local-agent-server-client';
 import { SessionStore, type SessionTransport } from '../src/renderer/src/session-store';
@@ -1040,4 +1042,74 @@ test('[LOCAL MCP] deps.connectorMcpServers → context.connector_mcp_servers 전
     undefined,
     '서버가 없으면 connector_mcp_servers 키를 넣지 않는다',
   );
+});
+
+
+// ── CLI provider 로컬 턴의 런타임 최소 버전 게이트 ──────────────────────────
+//
+// 런타임 3.14.0 에서 자기 도구 레지스트리를 루프백 MCP 로 CLI 에 내주기 시작했다.
+// 그 이전 런타임은 CLI 네이티브 도구만 쓸 수 있어 로컬 CLI 턴의 도구가 사실상 Bash
+// 하나였다 — 에이전트가 파일·문서·브라우저·메모리를 하나도 못 쓴 채 "셸밖에 없다"고
+// 답한다. 조용한 반쪽 실행보다 서버의 온전한 표면이 낫다(수렴기가 런타임을 올리면
+// 다음 턴부터 다시 로컬).
+
+test('isRuntimeAtLeast: 숫자 비교이지 문자열 비교가 아니다', () => {
+  assert.equal(isRuntimeAtLeast('3.15.0', '3.14.0'), true);
+  assert.equal(isRuntimeAtLeast('3.14.0', '3.14.0'), true);
+  assert.equal(isRuntimeAtLeast('3.13.0', '3.14.0'), false);
+  // 문자열 비교였다면 '3.9.0' > '3.14.0' 으로 통과했을 함정
+  assert.equal(isRuntimeAtLeast('3.9.0', '3.14.0'), false);
+  assert.equal(isRuntimeAtLeast('4.0.0', '3.14.0'), true);
+  assert.equal(isRuntimeAtLeast('3.14.0rc1', '3.14.0'), true);
+  // 모르면 로컬로 돌리지 않는다 — 확신 없이 반쪽 실행을 시작하는 것보다 낫다
+  assert.equal(isRuntimeAtLeast(undefined, '3.14.0'), false);
+  assert.equal(isRuntimeAtLeast('', '3.14.0'), false);
+});
+
+test('낡은 런타임의 CLI provider 턴은 서버로 폴백한다', async () => {
+  const r = await runLocalChatTurn(
+    REQ,
+    baseDeps({ runtimeVersion: async () => '3.13.0' }),
+    () => {},
+  );
+  assert.equal(r.handled, false);
+  assert.equal(r.reason, 'runtime_outdated');
+  assert.match(String(r.detail), /3\.13\.0/);
+  // 사람이 읽는 문구에 '무엇을 해야 하는지'가 있어야 한다
+  assert.match(describeFallback('runtime_outdated'), /업데이트/);
+});
+
+test('버전을 모르면(구 커넥터 배선) CLI 턴은 서버로 간다', async () => {
+  const r = await runLocalChatTurn(
+    REQ,
+    baseDeps({ runtimeVersion: async () => undefined }),
+    () => {},
+  );
+  assert.equal(r.reason, 'runtime_outdated');
+});
+
+test('충족하는 런타임은 로컬로 실행된다', async () => {
+  const r = await runLocalChatTurn(
+    REQ,
+    baseDeps({ runtimeVersion: async () => MIN_RUNTIME_FOR_LOCAL_CLI }),
+    () => {},
+  );
+  assert.equal(r.handled, true);
+});
+
+test('SDK provider 는 이 게이트를 지나지 않는다 — 레지스트리를 직접 본다', async () => {
+  const r = await runLocalChatTurn(
+    REQ,
+    baseDeps({
+      runtimeVersion: async () => '3.13.0',
+      server: fakeServer({
+        fetchLocalTurnContext: async () => ({
+          ...CTX,
+          agent: { provider: 'openai', model: 'gpt-4o' },
+        }),
+      }),
+    }),
+    () => {},
+  );
+  assert.notEqual(r.reason, 'runtime_outdated');
 });

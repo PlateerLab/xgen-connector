@@ -2037,6 +2037,7 @@ ipcMain.handle(CHANNELS.agentTaskRuns, (_e, wf: string, sessionId?: string) =>
 ipcMain.handle(CHANNELS.agentTaskOutput, (_e, wf: string, runId: string) =>
   getClient().agentData.taskOutput(wf, runId),
 );
+ipcMain.handle(CHANNELS.agentBasicInfo, (_e, wf: string) => getClient().agentData.basicInfo(wf));
 ipcMain.handle(CHANNELS.agentToolsList, (_e, wf: string) => getClient().agentData.toolsList(wf));
 ipcMain.handle(CHANNELS.agentToolGet, (_e, wf: string, functionId: string) =>
   getClient().agentData.toolGet(wf, functionId),
@@ -3300,6 +3301,15 @@ function localChatDeps(signal?: AbortSignal): LocalChatDeps {
       if (active) return true;
       void e.ensure('turn');
       return false;
+    },
+    // 설치된 런타임 버전 — CLI provider 로컬 턴의 최소 버전 게이트가 쓴다.
+    // (그 이전 런타임은 CLI 에게 도구를 못 줘서 Bash 하나로 도는 반쪽 실행이 된다.)
+    runtimeVersion: async () => {
+      const e = getLocalEnsurer();
+      const live = e.activePython();
+      if (live?.version) return live.version;
+      const active = await e.resolveActive().catch(() => undefined);
+      return active?.version;
     },
     runner: getSidecarDaemon(),
     // 이 PC 에 설치된 CLI(codex/claude) 경로 + 격리 홈을 사이드카 settings 로 주입.

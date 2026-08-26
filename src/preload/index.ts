@@ -31,6 +31,7 @@ import type {
   TasksResult,
   JobRunsResult,
   TaskOutput,
+  AgentBasicInfo,
   ToolsResult,
   ForgedTool,
   WorkspaceListResult,
@@ -370,6 +371,8 @@ const api = {
       ipcRenderer.invoke(CHANNELS.agentTaskRuns, wf, sessionId),
     taskOutput: (wf: string, runId: string): Promise<TaskOutput> =>
       ipcRenderer.invoke(CHANNELS.agentTaskOutput, wf, runId),
+    basicInfo: (wf: string): Promise<AgentBasicInfo> =>
+      ipcRenderer.invoke(CHANNELS.agentBasicInfo, wf),
     toolsList: (wf: string): Promise<ToolsResult> =>
       ipcRenderer.invoke(CHANNELS.agentToolsList, wf),
     toolGet: (wf: string, functionId: string): Promise<ForgedTool> =>

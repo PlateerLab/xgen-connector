@@ -9,6 +9,7 @@ import { app } from 'electron';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrowserAddressSearchConfig, BrowserPopupPermissions } from '../core/browser';
+import type { AgentViewerSub } from '../core/agent-data';
 import { DEPLOYMENT_DEFAULTS } from './deployment-defaults';
 
 /** A local MCP server the connector hosts + proxies to the user's XGEN agents. */
@@ -189,7 +190,7 @@ export interface WorkspaceLayoutPersistConfig {
       workflowName?: string;
       roomId?: string;
       roomName?: string;
-      viewerSub?: 'memory' | 'tasks' | 'tools' | 'storage' | 'fulllog';
+      viewerSub?: AgentViewerSub;
     }>;
     activeTabId: string | null;
   }>;
