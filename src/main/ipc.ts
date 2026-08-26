@@ -94,6 +94,7 @@ export const CHANNELS = {
   agentTasksList: 'agent:tasksList',
   agentTaskRuns: 'agent:taskRuns',
   agentTaskOutput: 'agent:taskOutput',
+  agentBasicInfo: 'agent:basicInfo',
   agentToolsList: 'agent:toolsList',
   agentToolGet: 'agent:toolGet',
   agentWsTree: 'agent:wsTree',

@@ -1,9 +1,13 @@
 /**
  * AgentViewer — 한 에이전트(workflow)의 **읽기 전용** 관측 뷰어.
  *
- * 채팅 헤더의 [...] 메뉴에서 새 탭으로 열린다. 다섯 하위 탭(메모리/작업/도구/
- * 스토리지/전체로그)을 두고, 각 하위 뷰는 `window.xgen.agentData.*`(전부 GET)로
+ * 채팅 헤더의 [...] 메뉴에서 새 탭으로 열린다. 여섯 하위 탭(기본정보/메모리/작업/
+ * 도구/스토리지/전체로그)을 두고, 각 하위 뷰는 `window.xgen.agentData.*`(전부 GET)로
  * 서버 데이터를 읽어 상세 뷰처럼 보여 준다. 생성/삭제/변경은 없다.
+ *
+ * [기본정보] 는 **커넥터 표면만** 보여 준다 — 이 앱에서 도는 턴이 그 표면이기
+ * 때문이다. 웹 화면은 반대로 web 표면만 보여 준다. 한 화면에서 둘을 토글하던
+ * 예전 방식은 지금 보고 있는 게 어느 실행의 것인지 매번 확인해야 했다.
  *
  * 시각 언어는 커넥터 기존 것을 따른다(ToolLogModal 의 배지·펼침 행, --panel/
  * --border/--text-dim 토큰, --font-mono 코드 블록).
@@ -33,6 +37,7 @@ interface Props {
 }
 
 const SUBS: [AgentViewerSub, string][] = [
+  ['basic', '기본정보'],
   ['memory', '메모리'],
   ['tasks', '작업'],
   ['tools', '도구'],
@@ -521,6 +526,145 @@ const TasksView: React.FC<{ workflowId: string }> = ({ workflowId }) => {
 // ─────────────────────────────────────────────────────────────
 // 도구 (forged tools)
 // ─────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────────────
+// 기본정보 — 이 앱에서 도는 턴의 **실제** 프롬프트 + 도구 표면
+//
+// 서버는 두 표면(web/connector)을 다 돌려주지만 여기서는 **connector 만** 쓴다.
+// 이 창에서 시작한 턴이 그 표면으로 돌기 때문이다. 웹 화면은 반대로 web 만
+// 보여 준다 — 한 화면에서 토글하던 예전 방식은 지금 보는 게 어느 실행의 것인지
+// 매번 확인해야 했다.
+
+const BasicInfoView: React.FC<{ workflowId: string }> = ({ workflowId }) => {
+  const loader = useLoader(() => xgen.agentData.basicInfo(workflowId), [workflowId]);
+  const [tab, setTab] = useState<'prompt' | 'tools'>('prompt');
+  const [raw, setRaw] = useState(false);
+
+  const info = loader.data;
+  const view = info?.surfaces?.connector ?? null;
+  const groups = useMemo(
+    () => (view?.provision?.stages ?? []).flatMap((st) => st.groups),
+    [view],
+  );
+  const toolCount = useMemo(
+    () => groups.reduce((n, g) => n + (g.tools?.length ?? 0), 0),
+    [groups],
+  );
+
+  return (
+    <div className="viewer-pane">
+      <div className="viewer-toolbar">
+        <div className="viewer-filters">
+          {([
+            ['prompt', '프롬프트'],
+            ['tools', `연결된 도구${toolCount ? ` ${toolCount}` : ''}`],
+          ] as const).map(([k, label]) => (
+            <button
+              key={k}
+              className={`viewer-chip ${tab === k ? 'active' : ''}`}
+              onClick={() => setTab(k)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {tab === 'prompt' && view && (
+            <>
+              <button className="viewer-btn" onClick={() => setRaw((v) => !v)}>
+                {raw ? '섹션 보기' : '원문 전체 보기'}
+              </button>
+              <button
+                className="viewer-btn"
+                onClick={() => void copyText(view.prompt?.full_prompt ?? '')}
+              >
+                <CopyIcon /> 복사
+              </button>
+            </>
+          )}
+          <button className="viewer-btn" onClick={loader.reload} disabled={loader.loading}>
+            새로고침
+          </button>
+        </div>
+      </div>
+      <div className="viewer-scroll">
+        <StateNote loading={loader.loading} error={loader.error} />
+        {!loader.loading && !loader.error && !view && (
+          <div className="viewer-note">
+            이 서버는 커넥터 표면 정보를 제공하지 않습니다 (서버 업데이트가 필요합니다).
+          </div>
+        )}
+        {view && (
+          <>
+            <div className="viewer-kv">
+              <span className="viewer-label">실행</span>
+              <span>
+                {info?.provider ?? '?'} · {info?.model || '모델 미지정'}
+              </span>
+            </div>
+            {view.provision?.mode_note && (
+              <div className="viewer-note">{view.provision.mode_note}</div>
+            )}
+            {(info?.errors?.length ?? 0) > 0 && (
+              <div className="viewer-note err">
+                일부 항목을 재구성하지 못했습니다: {info?.errors.join(' · ')}
+              </div>
+            )}
+
+            {tab === 'prompt' ? (
+              raw ? (
+                <pre className="viewer-body">{view.prompt?.full_prompt || '(비어 있음)'}</pre>
+              ) : (
+                (view.prompt?.sections ?? []).map((sec) => (
+                  <div key={sec.key} className="viewer-run">
+                    <div className="viewer-run-head">
+                      <span className="viewer-listitem-title">{sec.title}</span>
+                      {sec.dynamic && <span className="viewer-badge">실행 시 주입</span>}
+                      <span className="viewer-listitem-sub">{sec.source}</span>
+                    </div>
+                    <pre className="viewer-body">{sec.text || sec.template || '(비어 있음)'}</pre>
+                  </div>
+                ))
+              )
+            ) : (
+              <>
+                {groups.length === 0 && (
+                  <div className="viewer-note">이 턴에 노출되는 도구가 없습니다.</div>
+                )}
+                {groups.map((g) => (
+                  <div key={g.key} className="viewer-run">
+                    <div className="viewer-run-head">
+                      <span className="viewer-listitem-title">{g.title}</span>
+                      <span className="viewer-badge">{g.tools?.length ?? 0}</span>
+                    </div>
+                    {g.note && <div className="viewer-note">{g.note}</div>}
+                    {g.disclosure && <div className="viewer-note">{g.disclosure}</div>}
+                    {(g.tools ?? []).map((t) => (
+                      <div key={t.name} className="viewer-kv">
+                        <span className="viewer-path">{t.name}</span>
+                        <span className="viewer-listitem-sub">{t.description}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                {view.native_tools && (
+                  <div className="viewer-run">
+                    <div className="viewer-run-head">
+                      <span className="viewer-listitem-title">CLI 네이티브 도구</span>
+                      <span className="viewer-badge">차단 {view.native_tools.removed.length}</span>
+                    </div>
+                    <div className="viewer-note">{view.native_tools.note}</div>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const ToolsView: React.FC<{ workflowId: string }> = ({ workflowId }) => {
   const list = useLoader(() => xgen.agentData.toolsList(workflowId), [workflowId]);
   const [sel, setSel] = useState<string | null>(null);
@@ -796,6 +940,7 @@ export const AgentViewer: React.FC<Props> = ({ workflowId, workflowName, initial
         </div>
       </div>
       <div className="viewer-content">
+        {sub === 'basic' && <BasicInfoView workflowId={workflowId} />}
         {sub === 'fulllog' && <FullLogView workflowId={workflowId} />}
         {sub === 'memory' && <MemoryView workflowId={workflowId} />}
         {sub === 'tasks' && <TasksView workflowId={workflowId} />}

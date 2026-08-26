@@ -8,8 +8,10 @@ export type WorkspaceTabKind =
   | 'settings'
   | 'agent-viewer';
 
-/** 에이전트 뷰어가 처음 열 하위 탭. */
-export type AgentViewerSub = 'memory' | 'tasks' | 'tools' | 'storage' | 'fulllog';
+/** 에이전트 뷰어가 처음 열 하위 탭 — 정의는 core(main 의 영속 스키마와 공유). */
+import type { AgentViewerSub } from '../../../core/index';
+
+export type { AgentViewerSub };
 export type SplitDirection = 'horizontal' | 'vertical';
 export type DropEdge = 'center' | 'left' | 'right' | 'top' | 'bottom';
 
