@@ -5981,6 +5981,19 @@ button.sm {
   color: var(--text);
   font-weight: 600;
 }
+.viewer-chip-count {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text-dim, #8a8f98);
+  font-size: 10px;
+  font-weight: 600;
+}
+.viewer-chip.active .viewer-chip-count {
+  background: color-mix(in srgb, var(--primary-soft-border) 60%, transparent);
+  color: var(--text);
+}
 .viewer-btn {
   display: inline-flex;
   align-items: center;
@@ -6139,6 +6152,256 @@ button.sm {
   border-radius: 999px;
   padding: 1px 7px;
 }
+.viewer-tag-btn {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+.viewer-tag-btn:hover {
+  background: var(--primary-soft);
+  color: var(--text);
+}
+/* ── 메모리: 검색 · 태그 필터 · 카테고리 트리 ── */
+.viewer-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+}
+.viewer-search:focus {
+  outline: none;
+  border-color: var(--primary-soft-border);
+}
+.viewer-tag-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.viewer-tag-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.viewer-tag-filter span {
+  color: var(--text-dim, #8a8f98);
+  font-size: 9.5px;
+}
+.viewer-tag-filter.active {
+  background: var(--primary-soft);
+  border-color: var(--primary-soft-border);
+  color: var(--text);
+  font-weight: 600;
+}
+.viewer-memcat {
+  margin-bottom: 2px;
+}
+.viewer-memcat-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.viewer-memcat-head:hover:not(.empty) {
+  background: var(--panel-2);
+}
+.viewer-memcat-head.empty {
+  color: var(--text-dim, #8a8f98);
+  cursor: default;
+  opacity: 0.55;
+}
+.viewer-memcat-icon {
+  flex: none;
+  opacity: 0.8;
+}
+.viewer-memcat-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+}
+.viewer-memcat-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.viewer-memcat-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.viewer-note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.viewer-note-body {
+  margin-top: 8px;
+}
+.viewer-backlinks {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+/* ── 메모리: 마크다운 렌더 ── */
+.viewer-markdown {
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text);
+}
+.viewer-markdown :first-child {
+  margin-top: 0;
+}
+.viewer-markdown h1,
+.viewer-markdown h2,
+.viewer-markdown h3 {
+  margin: 14px 0 6px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.viewer-markdown h1 {
+  font-size: 16px;
+}
+.viewer-markdown h2 {
+  font-size: 14px;
+}
+.viewer-markdown h3 {
+  font-size: 12.5px;
+}
+.viewer-markdown p {
+  margin: 6px 0;
+}
+.viewer-markdown ul,
+.viewer-markdown ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.viewer-markdown li {
+  margin: 2px 0;
+}
+.viewer-markdown code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+}
+.viewer-markdown pre {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  overflow-x: auto;
+}
+.viewer-markdown pre code {
+  padding: 0;
+  background: none;
+}
+.viewer-markdown blockquote {
+  margin: 6px 0;
+  padding: 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim, #8a8f98);
+}
+.viewer-markdown table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 11.5px;
+}
+.viewer-markdown th,
+.viewer-markdown td {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+}
+.viewer-markdown a {
+  color: var(--primary);
+}
+.viewer-wikilink {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.viewer-wikilink:hover {
+  background: var(--primary-soft-border);
+}
+/* ── 메모리: 대화(rollup) 노트 채팅형 렌더 ── */
+.viewer-convo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.viewer-convo-turn {
+  display: flex;
+}
+.viewer-convo-turn.user {
+  justify-content: flex-end;
+}
+.viewer-convo-bubble {
+  max-width: 85%;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.viewer-convo-turn.user .viewer-convo-bubble {
+  background: var(--primary-soft);
+}
+.viewer-convo-meta {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 3px;
+  color: var(--text-dim, #8a8f98);
+  font-size: 10.5px;
+}
+.viewer-convo-role {
+  font-weight: 600;
+  color: var(--muted);
+}
+.viewer-convo-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
 .viewer-note {
   padding: 20px;
   text-align: center;
@@ -6151,6 +6414,19 @@ button.sm {
 }
 .viewer-note.err {
   color: #b91c1c;
+}
+.viewer-mode-note {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text-dim, #8a8f98);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 .viewer-label {
   margin: 8px 0 3px;
@@ -6202,7 +6478,8 @@ button.sm {
   max-height: calc(100vh - 260px);
   object-fit: contain;
 }
-.viewer-detail pre.err {
+.viewer-detail pre.err,
+.viewer-body.err {
   border-color: color-mix(in srgb, #ef4444 40%, var(--border));
   color: #b91c1c;
 }
