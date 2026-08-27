@@ -92,6 +92,40 @@ function mockXgen(): Promise<{ server: Server; baseUrl: string }> {
         );
         return;
       }
+      if (
+        url.pathname === '/api/agentflow/geny-workspace/wf_abc/storage/text' &&
+        req.method === 'GET'
+      ) {
+        if (bearer !== 'ACCESS.jwt') {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end('{"detail":"unauthorized"}');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            workflow_id: 'wf_abc',
+            path: url.searchParams.get('path'),
+            content: 'workspace note',
+            encoding: 'utf-8',
+          }),
+        );
+        return;
+      }
+      if (
+        decodeURIComponent(url.pathname) ===
+          '/api/agentflow/geny-workspace/wf_abc/storage-raw/workspace/uploads/image 1.png' &&
+        req.method === 'GET'
+      ) {
+        if (bearer !== 'ACCESS.jwt') {
+          res.writeHead(401);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+        return;
+      }
       if (url.pathname === '/api/agentflow/execute/based-id/stream' && req.method === 'POST') {
         const body = await readBody();
         if (bearer !== 'ACCESS.jwt') {
@@ -144,6 +178,19 @@ test('login → list agents → stream chat (e2e against mock)', async () => {
     assert.equal(items[0].workflowId, 'wf_abc');
     assert.equal(items[0].isShared, false);
     assert.equal(pagination.totalCount, 1);
+
+    const text = await xgen.agentData.workspaceFile('wf_abc', 'uploads/note.txt');
+    assert.equal(text.path, 'workspace/uploads/note.txt');
+    assert.equal(text.content, 'workspace note');
+    const alreadyPrefixed = await xgen.agentData.workspaceFile(
+      'wf_abc',
+      'workspace/uploads/note.txt',
+    );
+    assert.equal(alreadyPrefixed.path, 'workspace/uploads/note.txt');
+
+    const image = await xgen.agentData.workspaceBinary('wf_abc', 'uploads/image 1.png');
+    assert.equal(image.contentType, 'image/png');
+    assert.deepEqual([...image.bytes], [0x89, 0x50, 0x4e, 0x47]);
 
     const events: string[] = [];
     const result = await xgen.chat.complete(
