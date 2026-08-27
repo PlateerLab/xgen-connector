@@ -28,13 +28,7 @@ import {
 } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import {
-  appendFileSync,
-  chmodSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, sep } from 'node:path';
 import {
@@ -2305,6 +2299,28 @@ ipcMain.handle(CHANNELS.browserNavigate, (_e, request) => getBrowserRuntime().na
 ipcMain.handle(CHANNELS.browserActivate, (_e, pageId: string) =>
   getBrowserRuntime().activate(pageId),
 );
+ipcMain.handle(CHANNELS.browserSelectionBegin, (event, request) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('browser_denied: 허용되지 않은 브라우저 선택 요청입니다.');
+  }
+  return getBrowserRuntime().beginSelection(request, event.sender.id);
+});
+ipcMain.handle(CHANNELS.browserSelectionInspect, (event, request) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('browser_denied: 허용되지 않은 브라우저 검사 요청입니다.');
+  }
+  return getBrowserRuntime().inspectSelection(request, event.sender.id);
+});
+ipcMain.handle(CHANNELS.browserSelectionComplete, (event, request) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('browser_denied: 허용되지 않은 브라우저 캡처 요청입니다.');
+  }
+  return getBrowserRuntime().completeSelection(request, event.sender.id);
+});
+ipcMain.handle(CHANNELS.browserSelectionCancel, (event, token: string) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return false;
+  return getBrowserRuntime().cancelSelection(token, event.sender.id);
+});
 ipcMain.handle(CHANNELS.browserPopupResolve, (event, request: BrowserPopupResolveRequest) => {
   if (!mainWindow || event.sender !== mainWindow.webContents) {
     throw new Error('browser_denied: 허용되지 않은 팝업 권한 요청입니다.');

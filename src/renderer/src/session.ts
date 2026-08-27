@@ -17,9 +17,12 @@ const HISTORY_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'i
 export const sessionStore = new SessionStore({
   // 컨텍스트 봉투는 **바깥쪽이 브라우저**가 되도록 겹친다. 히스토리를 다시 읽을 때
   // 벗기는 순서(`session-store.ts`: browser → teams)와 짝이 맞아야 한다.
-  stream: (req, onEvent) =>
+  stream: (req, onEvent, context) =>
     xgen.chat.stream(
-      browserStateStore.contextualize(teamsContextStore.contextualize(req)),
+      browserStateStore.contextualize(
+        teamsContextStore.contextualize(req),
+        context?.browserSelections,
+      ),
       onEvent,
     ),
   historyTurns: (workflowId, interactionId, name) =>
@@ -60,14 +63,7 @@ export const sessionStore = new SessionStore({
     mimeType,
     bytes,
   }) =>
-    xgen.agentData.workspaceUpload(
-      workflowId,
-      bytes,
-      name,
-      mimeType,
-      interactionId,
-      attachmentId,
-    ),
+    xgen.agentData.workspaceUpload(workflowId, bytes, name, mimeType, interactionId, attachmentId),
 });
 
 /** Subscribe a component to the whole session snapshot. */

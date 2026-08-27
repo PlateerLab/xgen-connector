@@ -109,6 +109,88 @@ export interface BrowserNavigateRequest {
   url?: string;
 }
 
+export type BrowserSelectionMode = 'element' | 'region';
+
+export interface BrowserSelectionPoint {
+  x: number;
+  y: number;
+}
+
+export interface BrowserSelectionRect extends BrowserSelectionPoint {
+  width: number;
+  height: number;
+}
+
+export interface BrowserSelectionBeginRequest {
+  pageId: string;
+  generation: number;
+  mode: BrowserSelectionMode;
+}
+
+/** One-shot, main-process-owned permission to inspect and capture one visible page. */
+export interface BrowserSelectionSession {
+  token: string;
+  pageId: string;
+  generation: number;
+  mode: BrowserSelectionMode;
+  expiresAt: number;
+}
+
+export interface BrowserSelectionInspectRequest {
+  token: string;
+  point: BrowserSelectionPoint;
+}
+
+export interface BrowserSelectionCompleteRequest {
+  token: string;
+  point?: BrowserSelectionPoint;
+  rect?: BrowserSelectionRect;
+}
+
+export interface BrowserSelectionPreview {
+  tag: string;
+  label: string;
+  rect: BrowserSelectionRect;
+}
+
+export interface BrowserElementContext {
+  tag: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  selector?: string;
+  href?: string;
+  /** A short allowlisted reconstruction, never the page's raw outerHTML. */
+  html?: string;
+  rect: BrowserSelectionRect;
+}
+
+export interface BrowserSelectionResult {
+  id: string;
+  workflowId: string;
+  pageId: string;
+  generation: number;
+  kind: BrowserSelectionMode;
+  title: string;
+  url: string;
+  rect: BrowserSelectionRect;
+  viewport: {
+    width: number;
+    height: number;
+    scrollX: number;
+    scrollY: number;
+  };
+  elements: BrowserElementContext[];
+  image: {
+    dataUrl: string;
+    name: string;
+    mime: 'image/png' | 'image/jpeg';
+    size: number;
+    width: number;
+    height: number;
+  };
+}
+
 export type BrowserPopupPermission = 'allow' | 'block';
 
 /** Persisted popup rules keyed first by the account-hashed browser partition. */
@@ -182,6 +264,7 @@ export function prependBrowserContext(
   input: string,
   workflowId: string,
   state: BrowserState,
+  selections: BrowserSelectionResult[] = [],
 ): string {
   if (!state.enabled) return input;
   const pages = state.pages
@@ -193,7 +276,26 @@ export function prependBrowserContext(
       title: page.title,
       url: sanitizedBrowserUrl(page.url),
     }));
-  if (!pages.length) return input;
-  const envelope = JSON.stringify({ workflow_id: workflowId, pages });
+  const selected = selections
+    .filter((selection) => selection.workflowId === workflowId)
+    .map((selection) => ({
+      id: selection.id,
+      page_id: selection.pageId,
+      generation: selection.generation,
+      kind: selection.kind,
+      title: selection.title,
+      url: sanitizedBrowserUrl(selection.url),
+      rect: selection.rect,
+      viewport: selection.viewport,
+      elements: selection.elements,
+      image_name: selection.image.name,
+    }));
+  if (!pages.length && !selected.length) return input;
+  const envelope = JSON.stringify({
+    version: selected.length ? 2 : 1,
+    workflow_id: workflowId,
+    pages,
+    ...(selected.length ? { selections: selected } : {}),
+  });
   return `${BROWSER_CONTEXT_START}\n${envelope}\n${BROWSER_CONTEXT_END}\n${input}`;
 }

@@ -9,10 +9,21 @@ import type {
   BrowserPopupPermissions,
   BrowserPopupRequest,
   BrowserPopupResolveRequest,
+  BrowserSelectionBeginRequest,
+  BrowserSelectionCompleteRequest,
+  BrowserSelectionInspectRequest,
+  BrowserSelectionPreview,
+  BrowserSelectionResult,
+  BrowserSelectionSession,
   BrowserState,
 } from '../core/browser';
 import { browserOrigin, sanitizedBrowserUrl } from '../core/browser';
 import { AgentBrowserRunner } from './agent-browser-runner';
+import {
+  captureBrowserSelection,
+  collectBrowserSelection,
+  inspectBrowserSelection,
+} from './browser-selection';
 import { CdpPageProxy } from './cdp-page-proxy';
 import { allowedBrowserUrl, browserPartition } from './browser-security';
 
@@ -40,8 +51,13 @@ interface PendingBrowserPopup {
   timeoutTimer: ReturnType<typeof setTimeout>;
 }
 
+interface PendingBrowserSelection extends BrowserSelectionSession {
+  ownerId: number;
+}
+
 const POPUP_REQUEST_TTL_MS = 60_000;
 const MAX_PENDING_POPUPS = 12;
+const BROWSER_SELECTION_TTL_MS = 60_000;
 
 export class BrowserRuntimeError extends Error {
   constructor(
@@ -81,6 +97,7 @@ export class BrowserRuntime {
   private popupPermissions = new Map<string, BrowserPopupPermission>();
   private sessionPopupPermissions = new Set<string>();
   private pendingPopups = new Map<string, PendingBrowserPopup>();
+  private pendingSelections = new Map<string, PendingBrowserSelection>();
 
   setStateListener(listener: (state: BrowserState) => void): void {
     this.notify = listener;
@@ -112,6 +129,7 @@ export class BrowserRuntime {
       this.enabled = false;
       this.popupPermissions.clear();
       this.sessionPopupPermissions.clear();
+      this.pendingSelections.clear();
       this.clearPendingPopups(false);
       void this.closeAll();
       this.accountPartition = '';
@@ -671,6 +689,137 @@ export class BrowserRuntime {
     return { ...runtime.info };
   }
 
+  async beginSelection(
+    request: BrowserSelectionBeginRequest,
+    ownerId: number,
+  ): Promise<BrowserSelectionSession> {
+    const runtime = await this.resolvePage('', request.pageId, false);
+    if (runtime.info.mode !== 'shared') {
+      throw new BrowserRuntimeError(
+        'browser_denied',
+        '보이는 공유 페이지에서만 선택할 수 있습니다.',
+      );
+    }
+    if (this.activeByWorkflow.get(runtime.info.workflowId) !== runtime.info.pageId) {
+      throw new BrowserRuntimeError('browser_denied', '현재 활성 브라우저 페이지가 아닙니다.');
+    }
+    if (request.generation !== runtime.info.generation) {
+      throw new BrowserRuntimeError(
+        'browser_stale_ref',
+        '페이지가 변경되었습니다. 다시 선택해 주세요.',
+      );
+    }
+    if (request.mode !== 'element' && request.mode !== 'region') {
+      throw new BrowserRuntimeError('browser_denied', '지원하지 않는 브라우저 선택 방식입니다.');
+    }
+    await this.requireConnectedContents(runtime);
+    for (const [token, pending] of this.pendingSelections) {
+      if (pending.ownerId === ownerId && pending.pageId === request.pageId) {
+        this.pendingSelections.delete(token);
+      }
+    }
+    const session: PendingBrowserSelection = {
+      token: randomUUID(),
+      pageId: runtime.info.pageId,
+      generation: runtime.info.generation,
+      mode: request.mode,
+      expiresAt: Date.now() + BROWSER_SELECTION_TTL_MS,
+      ownerId,
+    };
+    this.pendingSelections.set(session.token, session);
+    const { ownerId: _ownerId, ...publicSession } = session;
+    return publicSession;
+  }
+
+  private selectionRuntime(token: string, ownerId: number): BrowserPageRuntime {
+    const pending = this.pendingSelections.get(String(token ?? ''));
+    if (!pending || pending.ownerId !== ownerId) {
+      throw new BrowserRuntimeError(
+        'browser_denied',
+        '브라우저 선택 권한이 없거나 만료되었습니다.',
+      );
+    }
+    if (pending.expiresAt < Date.now()) {
+      this.pendingSelections.delete(pending.token);
+      throw new BrowserRuntimeError('browser_timeout', '브라우저 선택 시간이 만료되었습니다.');
+    }
+    const runtime = this.pages.get(pending.pageId);
+    if (!runtime || runtime.info.mode !== 'shared') {
+      this.pendingSelections.delete(pending.token);
+      throw new BrowserRuntimeError('browser_page_not_found', '선택하던 페이지가 닫혔습니다.');
+    }
+    if (runtime.info.generation !== pending.generation) {
+      this.pendingSelections.delete(pending.token);
+      throw new BrowserRuntimeError(
+        'browser_stale_ref',
+        '페이지가 변경되었습니다. 다시 선택해 주세요.',
+      );
+    }
+    if (this.activeByWorkflow.get(runtime.info.workflowId) !== runtime.info.pageId) {
+      this.pendingSelections.delete(pending.token);
+      throw new BrowserRuntimeError(
+        'browser_denied',
+        '선택하던 페이지가 더 이상 활성 상태가 아닙니다.',
+      );
+    }
+    return runtime;
+  }
+
+  async inspectSelection(
+    request: BrowserSelectionInspectRequest,
+    ownerId: number,
+  ): Promise<BrowserSelectionPreview | null> {
+    const runtime = this.selectionRuntime(request.token, ownerId);
+    const pending = this.pendingSelections.get(request.token)!;
+    if (pending.mode !== 'element') return null;
+    const contents = await this.requireConnectedContents(runtime);
+    return inspectBrowserSelection(contents, request.point);
+  }
+
+  async completeSelection(
+    request: BrowserSelectionCompleteRequest,
+    ownerId: number,
+  ): Promise<BrowserSelectionResult> {
+    const runtime = this.selectionRuntime(request.token, ownerId);
+    const pending = this.pendingSelections.get(request.token)!;
+    this.pendingSelections.delete(request.token);
+    const contents = await this.requireConnectedContents(runtime);
+    const dom = await collectBrowserSelection(contents, pending.mode, {
+      point: request.point,
+      rect: request.rect,
+    });
+    if (!dom || !dom.elements.length) {
+      throw new BrowserRuntimeError(
+        'browser_denied',
+        pending.mode === 'element'
+          ? '선택한 위치에서 전송할 요소를 찾지 못했습니다.'
+          : '선택 영역에서 전송할 요소를 찾지 못했습니다.',
+      );
+    }
+    const id = randomUUID();
+    const image = await captureBrowserSelection(contents, dom, `browser-selection-${id}`);
+    return {
+      id,
+      workflowId: runtime.info.workflowId,
+      pageId: runtime.info.pageId,
+      generation: runtime.info.generation,
+      kind: pending.mode,
+      title: runtime.info.title,
+      url: sanitizedBrowserUrl(runtime.info.url),
+      rect: dom.rect,
+      viewport: dom.viewport,
+      elements: dom.elements,
+      image,
+    };
+  }
+
+  cancelSelection(token: string, ownerId: number): boolean {
+    const pending = this.pendingSelections.get(String(token ?? ''));
+    if (!pending || pending.ownerId !== ownerId) return false;
+    this.pendingSelections.delete(pending.token);
+    return true;
+  }
+
   async resolvePage(
     workflowId: string,
     pageId?: string,
@@ -784,6 +933,9 @@ export class BrowserRuntime {
   async close(pageId: string): Promise<void> {
     const runtime = this.pages.get(pageId);
     if (!runtime) return;
+    for (const [token, pending] of this.pendingSelections) {
+      if (pending.pageId === pageId) this.pendingSelections.delete(token);
+    }
     this.rejectPendingConnection(runtime);
     this.clearPendingPopupsForPage(pageId, false);
     this.pages.delete(pageId);
@@ -829,6 +981,7 @@ export class BrowserRuntime {
     this.downloadPermit = null;
     this.allowedSharedContents.clear();
     this.sessionPopupPermissions.clear();
+    this.pendingSelections.clear();
     this.clearPendingPopups(false);
     await Promise.all(pages.map((runtime) => runtime.automationReset));
     await this.runner.closeAll();

@@ -111,6 +111,20 @@ export const BackIcon: React.FC<P> = ({ size = 16, className }) => (
     <path d="M19 12H5" />
   </svg>
 );
+export const ElementSelectIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="m4 3 7.5 17 2.1-6.4L20 11.5Z" />
+    <path d="m14 14 5 5" />
+  </svg>
+);
+export const RegionSelectIcon: React.FC<P> = ({ size = 16, className }) => (
+  <svg {...base(size)} className={className}>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+    <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+    <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+    <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+  </svg>
+);
 export const PencilIcon: React.FC<P> = ({ size = 14, className }) => (
   <svg {...base(size)} className={className}>
     <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />

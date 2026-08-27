@@ -264,6 +264,19 @@ class TeamsContextStore {
       });
       return applied ? { ...request, input } : request;
     }
+    if (
+      request.input &&
+      typeof request.input === 'object' &&
+      typeof (request.input as Record<string, unknown>).input_str === 'string'
+    ) {
+      return {
+        ...request,
+        input: {
+          ...(request.input as Record<string, unknown>),
+          input_str: decorate(String((request.input as Record<string, unknown>).input_str)),
+        },
+      };
+    }
     return request;
   }
 }
