@@ -478,6 +478,17 @@ export class MCPManager {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async callTool(name: string, tool: string, args: any): Promise<any> {
+    // 턴이 도는 도중에 사용자가 이 서버를 지웠거나 로컬 MCP 스위치를 껐을 수 있다
+    // (그러면 configure() 가 상태를 통째로 비운다). 그때 connect() 의
+    // "unknown MCP server" 는 모델에게 **자기가 이름을 잘못 지어냈다**는 신호로
+    // 읽힌다 — 같은 호출을 이름만 바꿔 반복하게 만든다. 무엇이 바뀌었는지 말해 준다.
+    if (!this.states.has(name)) {
+      throw new Error(
+        `로컬 MCP 서버 '${name}' 가 지금은 커넥터에 없습니다 ` +
+          `(설정에서 제거됐거나 로컬 MCP 스위치가 꺼졌습니다). 도구 이름 문제가 아니므로 ` +
+          `재시도해도 같습니다 — 이 서버 없이 진행하거나 사용자에게 확인하세요.`,
+      );
+    }
     await this.connect(name);
     const st = this.states.get(name);
     if (!st?.client) throw new Error(`MCP server ${name} not connected`);
