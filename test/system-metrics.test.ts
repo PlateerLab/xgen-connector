@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  buildAppMemoryProcesses,
   cpuPercentBetween,
   parseDarwinDefaultInterface,
   parseDarwinMemoryUsage,
@@ -9,8 +10,13 @@ import {
   parseLinuxDefaultInterface,
   parseLinuxMemoryUsage,
   parseLinuxNetworkCounters,
+  parseUnixProcessMemoryRows,
+  parseWindowsProcessMemoryRows,
 } from '../src/main/system-metrics';
-import { formatNetworkRate } from '../src/renderer/src/views/system-monitor-model';
+import {
+  formatMemorySize,
+  formatNetworkRate,
+} from '../src/renderer/src/views/system-monitor-model';
 
 test('CPU usage is calculated from idle and total counter deltas', () => {
   assert.equal(cpuPercentBetween({ idle: 100, total: 400 }, { idle: 125, total: 500 }), 75);
@@ -52,6 +58,54 @@ test('GPU utilization and network rate display are normalized', () => {
   assert.equal(formatNetworkRate(900), '900 B/s');
   assert.equal(formatNetworkRate(1536), '1.5 KB/s');
   assert.equal(formatNetworkRate(2.5 * 1024 ** 2), '2.5 MB/s');
+  assert.equal(formatMemorySize(768 * 1024 ** 2), '768.0 MB');
+  assert.equal(formatMemorySize(1.5 * 1024 ** 3), '1.50 GB');
+});
+
+test('Unix and Windows process memory rows are normalized to bytes', () => {
+  assert.deepEqual(
+    parseUnixProcessMemoryRows('  100   1  2048 /Applications/XGen Dex\n101 100 512 python3\n'),
+    [
+      { pid: 100, parentPid: 1, memoryBytes: 2048 * 1024, name: '/Applications/XGen Dex' },
+      { pid: 101, parentPid: 100, memoryBytes: 512 * 1024, name: 'python3' },
+    ],
+  );
+  assert.deepEqual(parseWindowsProcessMemoryRows('100\t1\t2097152\tXGen Dex.exe\r\n'), [
+    { pid: 100, parentPid: 1, memoryBytes: 2097152, name: 'XGen Dex.exe' },
+  ]);
+});
+
+test('app RAM merges Electron metrics and recursive external children without double counting', () => {
+  const mib = 1024 ** 2;
+  const rows = [
+    { pid: 100, parentPid: 1, memoryBytes: 90 * mib, name: 'XGen Dex' },
+    { pid: 101, parentPid: 100, memoryBytes: 70 * mib, name: 'XGen Dex Helper' },
+    { pid: 200, parentPid: 100, memoryBytes: 40 * mib, name: '/usr/bin/python3' },
+    { pid: 201, parentPid: 200, memoryBytes: 20 * mib, name: '/usr/bin/node' },
+    // The sampler and anything it spawns must not inflate app RAM.
+    { pid: 300, parentPid: 100, memoryBytes: 5 * mib, name: '/bin/ps' },
+    { pid: 301, parentPid: 300, memoryBytes: 3 * mib, name: 'collector-helper' },
+    { pid: 400, parentPid: 1, memoryBytes: 500 * mib, name: 'unrelated' },
+  ];
+  const electron = [
+    { pid: 100, type: 'Browser', memoryBytes: 100 * mib },
+    { pid: 101, type: 'Tab', name: 'Workspace', memoryBytes: 80 * mib },
+  ];
+
+  const processes = buildAppMemoryProcesses(rows, electron, 100, [300]);
+  assert.deepEqual(
+    processes.map(({ pid, kind, name }) => ({ pid, kind, name })),
+    [
+      { pid: 100, kind: 'main', name: '메인 프로세스' },
+      { pid: 101, kind: 'renderer', name: 'Workspace' },
+      { pid: 200, kind: 'external', name: 'python3' },
+      { pid: 201, kind: 'external', name: 'node' },
+    ],
+  );
+  assert.equal(
+    processes.reduce((total, item) => total + item.memoryBytes, 0),
+    240 * mib,
+  );
 });
 
 test('reclaimable cache is excluded from macOS and Linux RAM usage', () => {
