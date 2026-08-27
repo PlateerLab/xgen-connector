@@ -21,7 +21,14 @@
  * transport by injection, so the whole lifecycle is unit-testable. The renderer
  * wires the real bridge + a React subscription in `session.ts`.
  */
-import type { Agent, ChatEvent, ChatRequest, Citation, ToolEvent } from '../../core/index';
+import type {
+  Agent,
+  ChatEvent,
+  ChatRequest,
+  Citation,
+  HistoryAttachment,
+  ToolEvent,
+} from '../../core/index';
 import { stripBrowserContext } from '../../core/browser';
 import { stripTeamsContext } from '../../core/teams-bridge';
 import { xgen } from './bridge';
@@ -36,7 +43,7 @@ export interface ChatMsg {
   error?: boolean;
   /** 이 메시지와 함께 보낸 화면 캡처 — 무엇을 찍었는지(창 이름). */
   screenshot?: { sourceName: string; width: number; height: number };
-  /** 사용자가 + 버튼/클립보드로 직접 붙인 그림. data URL 은 이 열린 세션에서만 보관한다. */
+  /** 사용자가 붙였거나 이력에서 복원한 그림. 미리보기 URL은 열린 세션에서만 보관한다. */
   images?: ChatImageAttachment[];
   /** 이 턴의 실행 환경(커넥터 전용 status 이벤트) — 이 PC / 서버 sandbox / 차단(blocked). */
   surface?: 'connector_local' | 'server_sandbox' | 'blocked';
@@ -105,7 +112,7 @@ export interface OutgoingShot {
   height?: number;
 }
 
-/** 작성기에 대기했다가 멀티모달 content 로 함께 나가는 그림 한 장. */
+/** 작성기 또는 이력에 속한 그림 한 장. dataUrl은 data: 또는 renderer blob: URL이다. */
 export interface ChatImageAttachment {
   dataUrl: string;
   name: string;
@@ -135,7 +142,14 @@ export interface SessionTransport {
     workflowId: string,
     interactionId: string,
     name?: string,
-  ): Promise<Array<{ input: string; output: string }>>;
+  ): Promise<Array<{ input: string; output: string; attachments?: HistoryAttachment[] }>>;
+  /** Download one server-issued XGeny history reference into a renderer preview URL. */
+  historyImage?: (
+    workflowId: string,
+    attachment: HistoryAttachment,
+  ) => Promise<ChatImageAttachment | null>;
+  /** Release renderer resources created by historyImage (normally a blob: URL). */
+  releaseHistoryImage?: (previewUrl: string) => void;
 }
 
 function imageBytes(dataUrl: string): { mimeType: string; bytes: Uint8Array } {
@@ -152,6 +166,7 @@ interface Runtime {
   cancel: (() => void) | null;
   tools: ToolEvent[];
   citations: Citation[];
+  historyImageUrls: Set<string>;
 }
 
 export function newInteractionId(workflowId: string, now: number): string {
@@ -270,7 +285,7 @@ export class SessionStore {
       createdAt: t,
       updatedAt: t,
     });
-    this.rt.set(iid, { cancel: null, tools: [], citations: [] });
+    this.rt.set(iid, { cancel: null, tools: [], citations: [], historyImageUrls: new Set() });
     this._active = iid;
     this.emit();
     return iid;
@@ -301,7 +316,12 @@ export class SessionStore {
       createdAt: t,
       updatedAt: t,
     });
-    this.rt.set(interactionId, { cancel: null, tools: [], citations: [] });
+    this.rt.set(interactionId, {
+      cancel: null,
+      tools: [],
+      citations: [],
+      historyImageUrls: new Set(),
+    });
     this._active = interactionId;
     this.emit();
     void this.loadHistory(interactionId, agent, workflowName);
@@ -309,6 +329,7 @@ export class SessionStore {
   }
 
   private async loadHistory(key: string, agent: Agent, name?: string): Promise<void> {
+    const loadedUrls: string[] = [];
     try {
       const turns = await this.transport.historyTurns(
         agent.workflowId,
@@ -328,25 +349,69 @@ export class SessionStore {
         );
         const output =
           typeof tn.output === 'string' ? tn.output : tn.output == null ? '' : String(tn.output);
-        if (input) msgs.push({ role: 'user', text: input });
+        const images: ChatImageAttachment[] = [];
+        if (this.transport.historyImage) {
+          for (const attachment of tn.attachments ?? []) {
+            if (attachment.type !== 'picture') continue;
+            try {
+              const image = await this.transport.historyImage(agent.workflowId, attachment);
+              if (!image) continue;
+              const runtime = this.rt.get(key);
+              if (!runtime) {
+                this.transport.releaseHistoryImage?.(image.dataUrl);
+                continue;
+              }
+              runtime.historyImageUrls.add(image.dataUrl);
+              loadedUrls.push(image.dataUrl);
+              images.push(image);
+            } catch {
+              // A deleted/expired image must not prevent the text transcript or
+              // the other attachments in this conversation from reopening.
+            }
+          }
+        }
+        if (input || images.length > 0) {
+          msgs.push({ role: 'user', text: input, images: images.length > 0 ? images : undefined });
+        }
         if (output) msgs.push({ role: 'assistant', text: output });
       }
       // Only overwrite the transcript if a live turn hasn't started meanwhile.
-      this.patch(key, (s) =>
-        s.streaming || s.messages.length > 0
-          ? { ...s, loadingHistory: false, historyLoaded: true }
-          : {
-              ...s,
-              messages: msgs,
-              loadingHistory: false,
-              historyLoaded: true,
-              updatedAt: this.now(),
-            },
-      );
+      const current = this.map.get(key);
+      if (!current || current.streaming || current.messages.length > 0) {
+        this.releaseLoadedHistoryUrls(key, loadedUrls);
+        this.patch(key, (s) => ({ ...s, loadingHistory: false, historyLoaded: true }));
+      } else {
+        this.patch(key, (s) => ({
+          ...s,
+          messages: msgs,
+          loadingHistory: false,
+          historyLoaded: true,
+          updatedAt: this.now(),
+        }));
+      }
     } catch {
+      this.releaseLoadedHistoryUrls(key, loadedUrls);
       this.patch(key, (s) => ({ ...s, loadingHistory: false, historyLoaded: true }));
     }
     this.emit();
+  }
+
+  private releaseLoadedHistoryUrls(key: string, urls: Iterable<string>): void {
+    const runtime = this.rt.get(key);
+    for (const url of urls) {
+      runtime?.historyImageUrls.delete(url);
+      try {
+        this.transport.releaseHistoryImage?.(url);
+      } catch {
+        /* best-effort renderer resource cleanup */
+      }
+    }
+  }
+
+  private releaseHistoryImages(key: string): void {
+    const runtime = this.rt.get(key);
+    if (!runtime) return;
+    this.releaseLoadedHistoryUrls(key, [...runtime.historyImageUrls]);
   }
 
   // ── Focus / GC ─────────────────────────────────────────────────────
@@ -370,6 +435,7 @@ export class SessionStore {
     if (!s) return;
     if (!s.streaming && !s.loadingHistory && s.messages.length === 0) {
       this.rt.get(key)?.cancel?.();
+      this.releaseHistoryImages(key);
       this.rt.delete(key);
       this.map.delete(key);
       if (this._active === key) this._active = null;
@@ -582,6 +648,7 @@ export class SessionStore {
       }
     }
     this.rt.get(key)?.cancel?.();
+    this.releaseHistoryImages(key);
     this.rt.delete(key);
     this.map.delete(key);
     if (this._active === key) {
@@ -595,7 +662,10 @@ export class SessionStore {
 
   /** Tear everything down (logout / auth failure). */
   reset(): void {
-    for (const rt of this.rt.values()) rt.cancel?.();
+    for (const [key, rt] of this.rt.entries()) {
+      rt.cancel?.();
+      this.releaseHistoryImages(key);
+    }
     this.map.clear();
     this.rt.clear();
     this._active = null;

@@ -11,7 +11,7 @@ import {
   type SessionState,
   type SessionTransport,
 } from '../src/renderer/src/session-store'
-import type { Agent, ChatEvent } from '../src/core/index'
+import type { Agent, ChatEvent, HistoryAttachment } from '../src/core/index'
 
 function agent(workflowId: string, name = workflowId): Agent {
   return {
@@ -38,7 +38,9 @@ interface FakeStream {
   cancelled: boolean
 }
 
-function makeStore(history: Record<string, Array<{ input: string; output: string }>> = {}) {
+function makeStore(
+  history: Record<string, Array<{ input: string; output: string; attachments?: HistoryAttachment[] }>> = {},
+) {
   const streams: FakeStream[] = []
   let historyCalls = 0
   const transport: SessionTransport = {
@@ -265,6 +267,94 @@ test('openResume 는 히스토리를 불러오고, 이미 열려 있으면 다�
   store.openResume(agent('A'), 'iid-1')
   await flush()
   assert.equal(historyCalls(), 1, '히스토리는 한 번만 로드')
+})
+
+test('openResume 는 XGeny 이력 이미지를 복원하고 세션 종료 때 미리보기 URL을 해제한다', async () => {
+  const restored: HistoryAttachment[] = []
+  const released: string[] = []
+  const attachment: HistoryAttachment = {
+    id: 7,
+    name: 'red-drop.png',
+    size: 4,
+    contentType: 'image/png',
+    type: 'picture',
+    path: 'geny-workspace:uploads/users/42/iid-image/att-1/red-drop.png',
+    bucket: 'geny-workspace',
+  }
+  const transport: SessionTransport = {
+    stream() {
+      return { cancel() {} }
+    },
+    async historyTurns() {
+      return [{ input: '이 그림을 설명해줘', output: '빨간 그림입니다.', attachments: [attachment] }]
+    },
+    async historyImage(_workflowId, item) {
+      restored.push(item)
+      return {
+        dataUrl: 'blob:history/red-drop',
+        name: item.name,
+        mime: item.contentType,
+        size: item.size,
+      }
+    },
+    releaseHistoryImage(url) {
+      released.push(url)
+    },
+  }
+  const store = new SessionStore(transport, () => 1000)
+  store.openResume(agent('geny'), 'iid-image')
+  await flush()
+
+  const user = store.get('iid-image')!.messages[0]
+  assert.equal(restored.length, 1)
+  assert.equal(user.text, '이 그림을 설명해줘')
+  assert.deepEqual(user.images, [
+    {
+      dataUrl: 'blob:history/red-drop',
+      name: 'red-drop.png',
+      mime: 'image/png',
+      size: 4,
+    },
+  ])
+
+  store.endChat('iid-image')
+  assert.deepEqual(released, ['blob:history/red-drop'])
+})
+
+test('이력 이미지 하나를 내려받지 못해도 대화 본문은 복원한다', async () => {
+  const transport: SessionTransport = {
+    stream() {
+      return { cancel() {} }
+    },
+    async historyTurns() {
+      return [
+        {
+          input: '질문',
+          output: '답변',
+          attachments: [
+            {
+              name: 'missing.png',
+              size: 10,
+              contentType: 'image/png',
+              type: 'picture',
+              path: 'geny-workspace:uploads/users/42/iid-missing/a/missing.png',
+              bucket: 'geny-workspace',
+            },
+          ],
+        },
+      ]
+    },
+    async historyImage() {
+      throw new Error('404')
+    },
+  }
+  const store = new SessionStore(transport, () => 1000)
+  store.openResume(agent('geny'), 'iid-missing')
+  await flush()
+  assert.deepEqual(
+    store.get('iid-missing')!.messages.map((message) => message.text),
+    ['질문', '답변'],
+  )
 })
 
 test('진행 중 턴이 히스토리 로드를 덮어쓰지 않는다', async () => {

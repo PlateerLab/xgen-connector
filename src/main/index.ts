@@ -2019,8 +2019,10 @@ ipcMain.handle(CHANNELS.agentWsTree, (_e, wf: string, path?: string) =>
 ipcMain.handle(CHANNELS.agentWsFile, (_e, wf: string, path: string) =>
   getClient().agentData.workspaceFile(wf, path),
 );
-ipcMain.handle(CHANNELS.agentWsBinary, (_e, wf: string, path: string) =>
-  getClient().agentData.workspaceBinary(wf, path),
+ipcMain.handle(
+  CHANNELS.agentWsBinary,
+  (_e, wf: string, path: string, purpose?: 'chat_attachment') =>
+    getClient().agentData.workspaceBinary(wf, path, purpose),
 );
 ipcMain.handle(
   CHANNELS.agentWsUpload,

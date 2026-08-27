@@ -5,7 +5,7 @@
  * - interactions: the list of past conversations for a sidebar.
  */
 import { HttpClient } from './client';
-import type { Conversation, HistoryTurn } from './types';
+import type { Conversation, HistoryAttachment, HistoryTurn } from './types';
 import { stripBrowserContext } from './browser';
 
 interface RawIoLog {
@@ -21,7 +21,60 @@ interface RawIoLog {
   // (기존 채팅 불러오기 크래시의 근본 원인). ``toDisplayText`` 로 항상 문자열화.
   input_data: unknown;
   output_data: unknown;
+  attachments?: unknown;
   updated_at: string;
+}
+
+/** Keep the history boundary tolerant of both the current camelCase response
+ * and older/raw DB-style keys. Invalid entries are ignored instead of making
+ * the whole conversation impossible to reopen. */
+export function toHistoryAttachments(value: unknown): HistoryAttachment[] {
+  if (!Array.isArray(value)) return [];
+  const result: HistoryAttachment[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const raw = item as Record<string, unknown>;
+    const path = String(raw.minioPath ?? raw.filePath ?? raw.object_name ?? raw.path ?? '').trim();
+    if (!path) continue;
+    const name = String(raw.name ?? raw.original_name ?? path.split('/').pop() ?? 'attachment');
+    const contentType = String(raw.contentType ?? raw.content_type ?? 'application/octet-stream')
+      .split(';', 1)[0]
+      .trim()
+      .toLowerCase();
+    const type = raw.type === 'picture' || contentType.startsWith('image/') ? 'picture' : 'file';
+    const numericSize = Number(raw.size ?? raw.file_size ?? 0);
+    result.push({
+      id: typeof raw.id === 'string' || typeof raw.id === 'number' ? raw.id : undefined,
+      name,
+      size: Number.isFinite(numericSize) && numericSize > 0 ? numericSize : 0,
+      contentType,
+      type,
+      path,
+      bucket: String(raw.bucket ?? ''),
+    });
+  }
+  return result;
+}
+
+/** Resolve only the server-issued XGeny chat-workspace reference. The server
+ * still performs the authoritative current-user path/access check. */
+export function xgenyHistoryWorkspacePath(attachment: HistoryAttachment): string | null {
+  const marker = 'geny-workspace:';
+  const rawPath = String(attachment.path ?? '')
+    .replace(/\\/g, '/')
+    .trim();
+  if (!rawPath.startsWith(marker) && attachment.bucket !== 'geny-workspace') return null;
+  let path = rawPath.startsWith(marker) ? rawPath.slice(marker.length) : rawPath;
+  path = path.replace(/^\/+/, '');
+  if (path.startsWith('workspace/')) path = path.slice('workspace/'.length);
+  const parts = path.split('/');
+  if (
+    !path.startsWith('uploads/users/') ||
+    parts.some((part) => !part || part === '.' || part === '..')
+  ) {
+    return null;
+  }
+  return path;
 }
 
 /** 서버가 준 turn 값(문자열/멀티모달 배열/구조화 dict)을 **표시용 문자열**로.
@@ -87,6 +140,7 @@ export class HistoryApi {
       workflowName: r.workflow_name,
       input: toDisplayText(r.input_data),
       output: toDisplayText(r.output_data),
+      attachments: toHistoryAttachments(r.attachments),
       updatedAt: r.updated_at,
     }));
   }
