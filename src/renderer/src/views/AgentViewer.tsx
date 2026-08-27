@@ -661,7 +661,14 @@ const BasicInfoView: React.FC<{ workflowId: string }> = ({ workflowId }) => {
                     {g.disclosure && <div className="viewer-note">{g.disclosure}</div>}
                     {(g.tools ?? []).map((t) => (
                       <div key={t.name} className="viewer-kv">
-                        <span className="viewer-path">{t.name}</span>
+                        <span className="viewer-tool-name">
+                          <span className="viewer-path">{t.name}</span>
+                          {/* 이 군체의 입구. 표시가 없으면 게이트웨이가 멤버 도구와
+                              똑같이 보여, 어디서 시작해야 하는지 화면이 말해 주지 않는다.
+                              웹 [기본정보] 와 같은 낱말을 쓴다 — 두 화면이 다른 말을 하면
+                              같은 것을 두 개로 배우게 된다. */}
+                          {t.gateway && <span className="viewer-badge gray">시작점</span>}
+                        </span>
                         <span className="viewer-listitem-sub">{t.description}</span>
                       </div>
                     ))}
