@@ -620,6 +620,90 @@ button {
   background: var(--primary-grad);
   transition: width 0.35s ease;
 }
+.system-memory-metric {
+  position: relative;
+  outline: none;
+}
+.system-memory-value {
+  min-width: 174px;
+}
+.system-memory-tooltip {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  z-index: 120;
+  width: 300px;
+  max-height: min(420px, calc(100vh - 64px));
+  padding: 11px 12px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 22%);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+.system-memory-metric:hover .system-memory-tooltip,
+.system-memory-metric:focus-visible .system-memory-tooltip,
+.system-memory-metric:focus-within .system-memory-tooltip {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.system-memory-tooltip-title {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.system-memory-tooltip-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 2px 0;
+}
+.system-memory-tooltip-row > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.system-memory-tooltip-row > span:last-child {
+  flex-shrink: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.system-memory-tooltip-total {
+  font-weight: 650;
+}
+.system-memory-tooltip-divider {
+  height: 1px;
+  margin: 7px 0;
+  background: var(--border-soft);
+}
+.system-memory-tooltip-section {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.system-memory-process-row small {
+  color: var(--muted);
+  font-size: 9px;
+}
+.system-memory-tooltip-empty {
+  color: var(--muted);
+}
 .system-network {
   gap: 8px;
   padding-right: 2px;
@@ -644,6 +728,9 @@ button {
   }
   .system-meter {
     display: none;
+  }
+  .system-memory-value {
+    min-width: 0;
   }
   .system-monitor-state > span:last-child {
     display: none;

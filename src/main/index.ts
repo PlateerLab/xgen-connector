@@ -2390,7 +2390,17 @@ ipcMain.handle(CHANNELS.updaterSetEnabled, (_e, enabled: boolean) => {
 });
 ipcMain.handle(CHANNELS.openExternal, (_e, url: string) => shell.openExternal(url));
 ipcMain.handle(CHANNELS.appVersion, () => app.getVersion());
-ipcMain.handle(CHANNELS.systemMetrics, () => systemMetricsSampler.sample());
+ipcMain.handle(CHANNELS.systemMetrics, () =>
+  systemMetricsSampler.sample(
+    app.getAppMetrics().map((metric) => ({
+      pid: metric.pid,
+      type: metric.type,
+      name: metric.name,
+      // Electron reports ProcessMetric memory fields in KiB.
+      memoryBytes: metric.memory.workingSetSize * 1024,
+    })),
+  ),
+);
 
 // ── IPC: floating avatar overlay ─────────────────────────────────
 ipcMain.handle(CHANNELS.overlayGetEnabled, () => !!loadConfig().avatarOverlay);

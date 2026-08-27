@@ -1,10 +1,28 @@
 import React, { useEffect, useState } from 'react';
-import type { SystemMetrics } from '../../../core/system-metrics';
+import type { AppMemoryProcessKind, SystemMetrics } from '../../../core/system-metrics';
 import { xgen } from '../bridge';
-import { formatNetworkRate } from './system-monitor-model';
+import { formatMemorySize, formatNetworkRate } from './system-monitor-model';
 
 const POLL_INTERVAL_MS = 1_500;
 const GIB = 1024 ** 3;
+
+const MEMORY_KIND_LABELS: Record<AppMemoryProcessKind, string> = {
+  main: '메인',
+  renderer: '렌더러',
+  gpu: 'GPU',
+  utility: '유틸리티',
+  other: 'Electron 기타',
+  external: '외부 자식 프로세스',
+};
+
+const MEMORY_KIND_ORDER: AppMemoryProcessKind[] = [
+  'main',
+  'renderer',
+  'gpu',
+  'utility',
+  'other',
+  'external',
+];
 
 function percent(value: number): string {
   return `${Math.round(value)}%`;
@@ -24,6 +42,84 @@ const UsageMetric: React.FC<{
     </span>
   </div>
 );
+
+const MemoryMetric: React.FC<{ metrics: SystemMetrics | null }> = ({ metrics }) => {
+  const systemMemory = metrics
+    ? `${(metrics.memoryUsedBytes / GIB).toFixed(1)}/${(metrics.memoryTotalBytes / GIB).toFixed(0)} GB`
+    : '—';
+  const appMemory = metrics ? formatMemorySize(metrics.appMemoryUsedBytes) : '—';
+  const grouped = new Map<AppMemoryProcessKind, number>();
+  for (const item of metrics?.appMemoryProcesses ?? []) {
+    grouped.set(item.kind, (grouped.get(item.kind) ?? 0) + item.memoryBytes);
+  }
+  const externalProcesses =
+    metrics?.appMemoryProcesses.filter((item) => item.kind === 'external') ?? [];
+
+  return (
+    <div
+      className="system-metric system-memory-metric"
+      tabIndex={0}
+      aria-label={
+        metrics ? `전체 RAM ${systemMemory}, 앱 RAM ${appMemory}` : 'RAM 사용량을 수집하는 중입니다'
+      }
+      aria-describedby="system-memory-tooltip"
+    >
+      <span className="system-metric-label">RAM</span>
+      <span className="system-metric-value system-memory-value">
+        전체 {systemMemory} · 앱 {appMemory}
+      </span>
+      <span className="system-meter" aria-hidden>
+        <span style={{ width: `${metrics?.memoryPercent ?? 0}%` }} />
+      </span>
+      <div id="system-memory-tooltip" className="system-memory-tooltip" role="tooltip">
+        <div className="system-memory-tooltip-title">RAM 상세</div>
+        {metrics ? (
+          <>
+            <div className="system-memory-tooltip-row system-memory-tooltip-total">
+              <span>전체 사용량</span>
+              <span>
+                {(metrics.memoryUsedBytes / GIB).toFixed(1)} /{' '}
+                {(metrics.memoryTotalBytes / GIB).toFixed(0)} GB ({percent(metrics.memoryPercent)})
+              </span>
+            </div>
+            <div className="system-memory-tooltip-row system-memory-tooltip-total">
+              <span>앱 합계</span>
+              <span>
+                {formatMemorySize(metrics.appMemoryUsedBytes)} ({percent(metrics.appMemoryPercent)})
+              </span>
+            </div>
+            <div className="system-memory-tooltip-divider" />
+            {MEMORY_KIND_ORDER.filter((kind) => (grouped.get(kind) ?? 0) > 0).map((kind) => (
+              <div className="system-memory-tooltip-row" key={kind}>
+                <span>{MEMORY_KIND_LABELS[kind]}</span>
+                <span>{formatMemorySize(grouped.get(kind) ?? 0)}</span>
+              </div>
+            ))}
+            {externalProcesses.length > 0 && (
+              <>
+                <div className="system-memory-tooltip-divider" />
+                <div className="system-memory-tooltip-section">외부 프로세스</div>
+                {externalProcesses.map((item) => (
+                  <div
+                    className="system-memory-tooltip-row system-memory-process-row"
+                    key={item.pid}
+                  >
+                    <span title={item.name}>
+                      {item.name} <small>PID {item.pid}</small>
+                    </span>
+                    <span>{formatMemorySize(item.memoryBytes)}</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </>
+        ) : (
+          <div className="system-memory-tooltip-empty">수집 중…</div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export const SystemMonitorFooter: React.FC = () => {
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
@@ -54,10 +150,6 @@ export const SystemMonitorFooter: React.FC = () => {
 
   const cpu = metrics ? percent(metrics.cpuPercent) : '—';
   const gpu = metrics ? (metrics.gpuPercent === null ? 'N/A' : percent(metrics.gpuPercent)) : '—';
-  const memory = metrics
-    ? `${(metrics.memoryUsedBytes / GIB).toFixed(1)} / ${(metrics.memoryTotalBytes / GIB).toFixed(0)} GB`
-    : '—';
-
   return (
     <footer className="system-monitor-footer" aria-label="시스템 리소스 사용량">
       <div className={`system-monitor-state ${available ? '' : 'offline'}`}>
@@ -76,14 +168,7 @@ export const SystemMonitorFooter: React.FC = () => {
         usage={metrics?.gpuPercent ?? null}
         title={`GPU 사용량 ${gpu}`}
       />
-      <UsageMetric
-        label="RAM"
-        value={memory}
-        usage={metrics?.memoryPercent ?? null}
-        title={
-          metrics ? `메모리 사용량 ${memory} (${percent(metrics.memoryPercent)})` : '메모리 사용량'
-        }
-      />
+      <MemoryMetric metrics={metrics} />
       <div className="system-metric system-network" title="현재 네트워크 다운로드 및 업로드 속도">
         <span className="system-metric-label">NET</span>
         <span className="system-metric-value network-down">
