@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrowserAddressSearchConfig, BrowserPopupPermissions } from '../core/browser';
 import type { AgentViewerSub } from '../core/agent-data';
+import type { NotificationSettings } from '../core/notifications';
 import { DEPLOYMENT_DEFAULTS } from './deployment-defaults';
 
 /** A local MCP server the connector hosts + proxies to the user's XGEN agents. */
@@ -157,6 +158,8 @@ export interface ConnectorConfig {
     /** 새 메시지 OS 알림 전체 스위치. 미설정 = 켜짐. */
     notifications?: boolean;
   };
+  /** 계정(serverUrl+userId)별 OS 알림 정책. teams.* 알림 필드는 v1 마이그레이션 입력이다. */
+  notifications?: NotificationSettings;
 }
 
 export interface BrowserPersistConfig {

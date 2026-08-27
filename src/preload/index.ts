@@ -39,6 +39,12 @@ import type {
   WorkspaceBinary,
   WorkspaceBinaryPurpose,
   WorkspaceUploadResult,
+  NotificationPreferenceUpdate,
+  NotificationProfile,
+  NotificationRendererContext,
+  NotificationTarget,
+  NotificationDeliveryResult,
+  NotificationSystemStatus,
 } from '../core/index';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
@@ -569,6 +575,26 @@ const api = {
       const h = (_e: unknown, event: TeamsEvent) => cb(event);
       ipcRenderer.on(CHANNELS.teamsEvent, h);
       return () => ipcRenderer.removeListener(CHANNELS.teamsEvent, h);
+    },
+  },
+
+  /** 계정별 공통 OS 알림. 실제 정책 판정과 표시는 main 한 곳에서 한다. */
+  notifications: {
+    preferences: (): Promise<NotificationProfile> =>
+      ipcRenderer.invoke(CHANNELS.notificationPreferences),
+    update: (update: NotificationPreferenceUpdate): Promise<NotificationProfile> =>
+      ipcRenderer.invoke(CHANNELS.notificationUpdate, update),
+    test: (): Promise<NotificationDeliveryResult> => ipcRenderer.invoke(CHANNELS.notificationTest),
+    status: (): Promise<NotificationSystemStatus> =>
+      ipcRenderer.invoke(CHANNELS.notificationStatus),
+    setContext: (context: NotificationRendererContext): void =>
+      ipcRenderer.send(CHANNELS.notificationContext, context),
+    consumeTarget: (): Promise<NotificationTarget | null> =>
+      ipcRenderer.invoke(CHANNELS.notificationConsumeTarget),
+    onNavigate: (cb: (target: NotificationTarget) => void): (() => void) => {
+      const h = (_e: unknown, target: NotificationTarget) => cb(target);
+      ipcRenderer.on(CHANNELS.notificationNavigate, h);
+      return () => ipcRenderer.removeListener(CHANNELS.notificationNavigate, h);
     },
   },
 

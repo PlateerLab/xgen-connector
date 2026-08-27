@@ -232,6 +232,7 @@ export class XgenClient {
 
 export * from './types';
 export * from './agent-data';
+export * from './notifications';
 export { ApiError } from './client';
 export { SseParser } from './sse';
 export { frameToChatEvent } from './chat';

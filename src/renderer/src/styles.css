@@ -3927,6 +3927,25 @@ button {
   font-size: 13px;
   font-weight: 500;
 }
+.notification-event-hint {
+  display: block;
+  margin-top: 3px;
+  font-weight: 400;
+}
+.notification-scope-menu {
+  min-width: 250px;
+}
+.notification-scope-hint {
+  padding: 8px 12px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  border-top: 1px solid var(--border-soft);
+}
+.switch input:disabled + .track {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 /* Toggle switch */
 .switch {

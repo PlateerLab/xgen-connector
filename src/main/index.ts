@@ -13,7 +13,6 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
-  Notification,
   shell,
   nativeTheme,
   screen,
@@ -39,6 +38,16 @@ import {
   type ChatRequest,
   type TeamsAttachment,
   type TtsSpeakOptions,
+  applyNotificationPreferenceUpdate,
+  notificationProfileForAccount,
+  shareBodyOf,
+  withNotificationProfile,
+  type NotificationEvent,
+  type NotificationPreferenceUpdate,
+  type NotificationProfile,
+  type NotificationRendererContext,
+  type NotificationTarget,
+  type TeamsEvent,
 } from '../core/index';
 import {
   loadConfig,
@@ -127,6 +136,7 @@ import type {
 } from '../core/browser';
 import { systemMetricsSampler } from './system-metrics';
 import { TeamsSocketHub } from './teams-ws';
+import { NotificationCenter } from './notification-center';
 import {
   openAttachmentTemp,
   pickFilesToAttach,
@@ -143,6 +153,9 @@ import {
 // keychain.ts 에서 별도로 'xgen-connector' 로 고정돼 있어 이 값과 무관하다).
 // app.getPath 를 부르는 어떤 코드보다도 먼저 실행돼야 하므로 파일 최상단에 둔다.
 app.setName('XGEN-Connector');
+// NSIS 가 만드는 Start Menu shortcut 의 AUMID(electron-builder appId)와 반드시
+// 같아야 Windows 알림 아이콘/클릭 활성화가 안정적으로 연결된다.
+if (process.platform === 'win32') app.setAppUserModelId('com.plateerlab.xgen.connector');
 
 let browserHistoryStore: BrowserHistoryStore | null = null;
 function getBrowserHistoryStore(): BrowserHistoryStore {
@@ -1335,6 +1348,68 @@ function applyMcpHttpCertificatePolicy(): void {
 function currentUserId(): string | null {
   return client?.user?.userId ?? null;
 }
+
+function currentNotificationAccountKey(): string | null {
+  const userId = currentUserId();
+  const serverUrl = normalizeServerUrl(loadConfig().serverUrl);
+  return userId && serverUrl ? accountKey(serverUrl, userId) : null;
+}
+
+/** 현재 계정 설정. 아직 로그인 전이면 저장하지 않는 안전한 기본값을 돌려준다. */
+function currentNotificationProfile(): NotificationProfile {
+  const cfg = loadConfig();
+  const key = currentNotificationAccountKey();
+  if (!key) return notificationProfileForAccount(undefined, '');
+  // 새 계정 프로필이 생긴 뒤에는 legacy teams.mutedRooms 를 다시 합치지 않는다.
+  // 그러지 않으면 새 설정에서 방 음소거를 풀어도 legacy 값이 매번 되살아난다.
+  const legacy = cfg.notifications?.accounts?.[key] ? undefined : cfg.teams;
+  return notificationProfileForAccount(cfg.notifications, key, legacy);
+}
+
+function saveCurrentNotificationPreference(
+  update: NotificationPreferenceUpdate,
+): NotificationProfile {
+  const key = currentNotificationAccountKey();
+  if (!key) throw new Error('로그인 후 알림 설정을 변경할 수 있습니다.');
+  const cfg = loadConfig();
+  const current = currentNotificationProfile();
+  const profile = applyNotificationPreferenceUpdate(current, update);
+  const next = saveConfig({
+    notifications: withNotificationProfile(cfg.notifications, key, profile),
+  });
+  broadcastConfig(next);
+  return profile;
+}
+
+const notificationCenter = new NotificationCenter({
+  profile: currentNotificationProfile,
+  isWindowFocused: () => !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused(),
+  revealWindow: showMain,
+  navigate: (target) => safeSend(mainWindow, CHANNELS.notificationNavigate, target),
+});
+getLocalToolProvider().configureNotificationHandler(async (title, body, context) => {
+  const target: NotificationTarget =
+    context?.workflowId && context.interactionId
+      ? {
+          kind: 'chat',
+          workflowId: context.workflowId,
+          workflowName: context.workflowName || context.workflowId,
+          interactionId: context.interactionId,
+        }
+      : { kind: 'none' };
+  return notificationCenter.publish({
+    id: `agent-notify-${context?.workflowId || 'unknown'}-${randomUUID()}`,
+    type: 'agent.requested',
+    title,
+    body,
+    occurredAt: new Date().toISOString(),
+    workflowId: context?.workflowId,
+    workflowName: context?.workflowName,
+    interactionId: context?.interactionId,
+    groupKey: context?.workflowId ? `agent:${context.workflowId}` : 'agent:unknown',
+    target,
+  }).shown;
+});
 /**
  * 현재 유효한 액세스 토큰 — **라이브 클라이언트(회전 반영) 우선**, 없으면 keychain.
  * WS 브릿지·워크스페이스 동기화가 keychain 만 읽으면, 세션 중 회전 시점과
@@ -1366,6 +1441,54 @@ async function refreshAuthToken(): Promise<string | null> {
 const teamsHub = new TeamsSocketHub();
 let teamsHubConfigured = false;
 
+function publishTeamsNotification(event: TeamsEvent): void {
+  if (
+    event.kind === 'rooms_changed' &&
+    (event.reason === 'invited' || event.reason === 'removed')
+  ) {
+    const invited = event.reason === 'invited';
+    notificationCenter.publish({
+      id: `teams-${event.reason}-${event.roomId}`,
+      type: invited ? 'teams.invited' : 'teams.removed',
+      title: invited ? 'Teams 대화 초대' : 'Teams 대화 변경',
+      body: invited ? '새 대화방에 초대되었습니다.' : '대화방에서 제외되었습니다.',
+      occurredAt: new Date().toISOString(),
+      teamsRoomId: event.roomId,
+      groupKey: `teams:${event.roomId}`,
+      target: invited ? { kind: 'teams', roomId: event.roomId } : { kind: 'none' },
+    });
+    return;
+  }
+  if (event.kind !== 'notify') return;
+  const message = event.message;
+  if (message.senderType === 'system') return;
+  if (message.senderType === 'user' && message.senderId === currentUserId()) return;
+  const roomName = notificationCenter.roomName(event.roomId) || 'Teams 대화';
+  const body =
+    shareBodyOf(message.content).trim() ||
+    (message.attachments?.length ? `첨부 ${message.attachments.length}개` : '새 메시지');
+  notificationCenter.publish({
+    id: `teams-message-${event.roomId}-${message.id}`,
+    type: message.senderType === 'agent' ? 'teams.agent_message' : 'teams.message',
+    title: roomName,
+    body: `${message.senderName}: ${body}`,
+    occurredAt: message.createdAt,
+    workflowId: message.senderType === 'agent' ? message.senderId : undefined,
+    workflowName: message.senderType === 'agent' ? message.senderName : undefined,
+    teamsRoomId: event.roomId,
+    teamsMessageId: message.id,
+    senderId: message.senderId,
+    senderName: message.senderName,
+    groupKey: `teams:${event.roomId}`,
+    target: {
+      kind: 'teams',
+      roomId: event.roomId,
+      roomName,
+      messageId: message.id,
+    },
+  });
+}
+
 /** 로그인/로그아웃/서버변경 후 Teams 소켓을 현재 상태에 맞춘다. */
 function syncTeams(): void {
   const cfg = loadConfig();
@@ -1376,7 +1499,10 @@ function syncTeams(): void {
       token: async () => (await liveAccessToken()) || '',
       refreshAuth: refreshAuthToken,
       allowPrivateCertificate: () => loadConfig().allowPrivateCertificate === true,
-      emit: (event) => safeSend(mainWindow, CHANNELS.teamsEvent, event),
+      emit: (event) => {
+        publishTeamsNotification(event);
+        safeSend(mainWindow, CHANNELS.teamsEvent, event);
+      },
     });
   }
   if (currentUserId() && normalizeServerUrl(cfg.serverUrl)) {
@@ -1689,6 +1815,18 @@ ipcMain.handle(CHANNELS.configSet, async (_e, patch: Partial<ConnectorConfig>) =
   if (serverChanged) safeSend(mainWindow, CHANNELS.authFailed); // → 로그인 화면
   return next;
 });
+
+// ── IPC: 공통 OS 알림 ───────────────────────────────────────────
+ipcMain.handle(CHANNELS.notificationPreferences, () => currentNotificationProfile());
+ipcMain.handle(CHANNELS.notificationUpdate, (_e, update: NotificationPreferenceUpdate) =>
+  saveCurrentNotificationPreference(update),
+);
+ipcMain.handle(CHANNELS.notificationTest, () => notificationCenter.test());
+ipcMain.handle(CHANNELS.notificationStatus, () => notificationCenter.status());
+ipcMain.on(CHANNELS.notificationContext, (_e, context: NotificationRendererContext) =>
+  notificationCenter.setContext(context),
+);
+ipcMain.handle(CHANNELS.notificationConsumeTarget, () => notificationCenter.consumePendingTarget());
 
 // ── IPC: auth ────────────────────────────────────────────────────
 // Persist the rotated tokens + wake dependent subsystems after any successful sign-in.
@@ -2112,23 +2250,19 @@ ipcMain.handle(CHANNELS.teamsDeleteRoom, async (_e, roomId: string) => {
 ipcMain.handle(
   CHANNELS.teamsNotify,
   (_e, payload: { roomId: string; roomName: string; sender: string; body: string }) => {
-    if (!Notification.isSupported()) return false;
-    const n = new Notification({
-      title: payload.roomName || 'XGEN Teams',
-      body: `${payload.sender}: ${payload.body}`.slice(0, 300),
-      silent: false,
-    });
-    n.on('click', () => {
-      const win = mainWindow;
-      if (win) {
-        if (win.isMinimized()) win.restore();
-        win.show();
-        win.focus();
-      }
-      safeSend(win, CHANNELS.teamsNotificationClick, payload.roomId);
-    });
-    n.show();
-    return true;
+    // 구 renderer 와의 한 릴리스 호환 경로. 새 renderer 는 Teams WS 이벤트를
+    // main 의 NotificationCenter 가 직접 처리하므로 이 IPC 를 호출하지 않는다.
+    return notificationCenter.publish({
+      id: `legacy-teams-${payload.roomId}-${payload.sender}-${payload.body.slice(0, 40)}`,
+      type: 'teams.message',
+      title: payload.roomName || 'Teams 대화',
+      body: `${payload.sender}: ${payload.body}`,
+      occurredAt: new Date().toISOString(),
+      teamsRoomId: payload.roomId,
+      senderName: payload.sender,
+      groupKey: `teams:${payload.roomId}`,
+      target: { kind: 'teams', roomId: payload.roomId, roomName: payload.roomName },
+    }).shown;
   },
 );
 
@@ -2255,6 +2389,35 @@ ipcMain.handle(CHANNELS.chatStart, async (e, streamId: string, req) => {
   aborters.set(streamId, controller);
   const sender = e.sender;
   (async () => {
+    const serverReq: ChatRequest = { ...(req as ChatRequest) };
+    let preview = '';
+    let terminal = false;
+    const publishTerminal = (kind: 'completed' | 'failed', detail?: string): void => {
+      const event: NotificationEvent = {
+        id: `chat-${kind}-${streamId}`,
+        type: kind === 'completed' ? 'chat.completed' : 'chat.failed',
+        title:
+          kind === 'completed'
+            ? `${serverReq.workflowName || '에이전트'} 답변 완료`
+            : `${serverReq.workflowName || '에이전트'} 응답 실패`,
+        body:
+          kind === 'completed'
+            ? preview.trim().slice(-180) || '답변이 완료되었습니다.'
+            : detail || '응답 중 오류가 발생했습니다.',
+        occurredAt: new Date().toISOString(),
+        workflowId: serverReq.workflowId,
+        workflowName: serverReq.workflowName,
+        interactionId: serverReq.interactionId,
+        groupKey: `chat:${serverReq.workflowId}:${serverReq.interactionId}`,
+        target: {
+          kind: 'chat',
+          workflowId: serverReq.workflowId,
+          workflowName: serverReq.workflowName,
+          interactionId: serverReq.interactionId,
+        },
+      };
+      notificationCenter.publish(event);
+    };
     try {
       // 에이전트 턴은 **언제나 서버에서** 돈다 — 서버가 workflow 세션을 만들고
       // 그 세션의 sandbox 안에서 실행한다. 커넥터는 그 실행을 호출하는 접속기다.
@@ -2264,19 +2427,34 @@ ipcMain.handle(CHANNELS.chatStart, async (e, streamId: string, req) => {
       // 돌아, 모든 기능을 두 번 만들어야 했고 두 번째 구현은 늘 뒤처졌다.
       // 사용자 PC 는 이제 **도구**로만 참여한다(브라우저·Shell·로컬 MCP —
       // 서버 에이전트가 reverse-WS 카탈로그로 호출한다).
-      const serverReq: ChatRequest = { ...(req as ChatRequest) };
       for await (const ev of getClient().chat.stream(serverReq, controller.signal)) {
         if (sender.isDestroyed()) break;
+        if (ev.kind === 'text') preview = (preview + ev.content).slice(-2_000);
+        else if (ev.kind === 'summary' && !preview) preview = ev.text;
         sender.send(CHANNELS.chatEvent, streamId, ev satisfies ChatEvent);
-        if (ev.kind === 'end') break;
+        if (ev.kind === 'end') {
+          terminal = true;
+          publishTerminal('completed');
+          break;
+        }
+        if (ev.kind === 'error') {
+          terminal = true;
+          publishTerminal('failed', ev.detail);
+          break;
+        }
       }
-      if (!sender.isDestroyed()) sender.send(CHANNELS.chatEvent, streamId, { kind: 'end' });
+      // 일부 서버는 end 프레임 없이 정상 EOF 로 닫는다. 취소가 아니라면 같은 완료다.
+      if (!terminal && !controller.signal.aborted && !sender.isDestroyed()) {
+        sender.send(CHANNELS.chatEvent, streamId, { kind: 'end' });
+        publishTerminal('completed');
+      }
     } catch (err) {
-      if (!sender.isDestroyed())
-        sender.send(CHANNELS.chatEvent, streamId, {
-          kind: 'error',
-          detail: err instanceof Error ? err.message : String(err),
-        });
+      // 사용자가 [중지]한 Abort 는 실패 알림이 아니다.
+      if (!controller.signal.aborted && !sender.isDestroyed()) {
+        const detail = err instanceof Error ? err.message : String(err);
+        sender.send(CHANNELS.chatEvent, streamId, { kind: 'error', detail });
+        publishTerminal('failed', detail);
+      }
     } finally {
       aborters.delete(streamId);
     }
@@ -3392,6 +3570,20 @@ if (!gotLock) {
       xgenToken: async () => (await liveAccessToken()) || null,
       onWillInstall: () => {
         appQuitting = true;
+      },
+      onUpdateAvailable: (version, onAccept) => {
+        notificationCenter.publish(
+          {
+            id: `update-ready-${version}`,
+            type: 'system.update_ready',
+            title: 'XGen Dex 업데이트',
+            body: `새 버전 v${version} — 클릭하면 지금 업데이트합니다.`,
+            occurredAt: new Date().toISOString(),
+            groupKey: 'system:update',
+            target: { kind: 'none' },
+          },
+          { onClick: onAccept, bypassVisibility: true },
+        );
       },
     });
     const trayOk = createTray();
