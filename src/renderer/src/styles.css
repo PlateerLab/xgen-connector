@@ -6090,6 +6090,19 @@ button.sm {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 도구 이름 + 시작점 배지 한 줄. viewer-kv 가 세로 스택이라 배지를 그냥 넣으면
+   이름 아래로 떨어진다. */
+.viewer-tool-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.viewer-tool-name .viewer-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .viewer-path {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 12px;
