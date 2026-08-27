@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   resolveBrowserAddress,
   type BrowserAddressSearchConfig,
+  type BrowserHistoryListResult,
+  type BrowserHistorySuggestion,
+  type BrowserHistoryVisit,
   type BrowserPageInfo,
   type BrowserPopupDecision,
   type BrowserSelectionMode,
@@ -14,12 +17,14 @@ import {
   BrowserIcon,
   CloseIcon,
   ForwardIcon,
+  HistoryIcon,
   ElementSelectIcon,
   PopupBlockedIcon,
   PlusIcon,
   RefreshIcon,
   RegionSelectIcon,
   StopIcon,
+  TrashIcon,
 } from '../brand/icons';
 
 export interface BrowserSurfaceRect {
@@ -27,6 +32,22 @@ export interface BrowserSurfaceRect {
   top: number;
   width: number;
   height: number;
+}
+
+const EMPTY_HISTORY: BrowserHistoryListResult = { items: [], total: 0 };
+
+function historyTime(timestamp: number): string {
+  try {
+    return new Intl.DateTimeFormat('ko-KR', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(timestamp));
+  } catch {
+    return '';
+  }
 }
 
 export const BrowserPane: React.FC<{
@@ -49,7 +70,21 @@ export const BrowserPane: React.FC<{
   const [popupExpanded, setPopupExpanded] = useState(false);
   const [popupBusy, setPopupBusy] = useState<BrowserPopupDecision | null>(null);
   const [popupError, setPopupError] = useState('');
+  const [addressFocused, setAddressFocused] = useState(false);
+  const [suggestions, setSuggestions] = useState<BrowserHistorySuggestion[]>([]);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [suggestionIndex, setSuggestionIndex] = useState(-1);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<BrowserHistoryListResult>(EMPTY_HISTORY);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historyBusy, setHistoryBusy] = useState('');
+  const [confirmHistoryClear, setConfirmHistoryClear] = useState(false);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const addressInputRef = useRef<HTMLInputElement | null>(null);
+  const previousPageId = useRef<string | null>(active?.pageId ?? null);
+  const suggestionRequest = useRef(0);
+  const clearConfirmationTimer = useRef<number | null>(null);
   const popupRequests = useMemo(
     () => state.popupRequests.filter((request) => request.pageId === active?.pageId),
     [active?.pageId, state.popupRequests],
@@ -62,11 +97,13 @@ export const BrowserPane: React.FC<{
   }, [state.enabled, pages.length, workflowId, workflowName]);
 
   useEffect(() => {
-    setAddress(active?.url ?? '');
+    const pageChanged = previousPageId.current !== (active?.pageId ?? null);
+    previousPageId.current = active?.pageId ?? null;
+    if (pageChanged || !addressFocused) setAddress(active?.url ?? '');
     setNavigationError('');
     setPopupExpanded(false);
     setPopupError('');
-  }, [active?.pageId, active?.url]);
+  }, [active?.pageId, active?.url, addressFocused]);
 
   useEffect(() => {
     if (popupRequest) return;
@@ -75,6 +112,10 @@ export const BrowserPane: React.FC<{
   }, [popupRequest]);
 
   useEffect(() => {
+    if (historyOpen) {
+      if (active) onSurface(active.pageId, null);
+      return;
+    }
     const element = surfaceRef.current;
     if (!element || !active) return;
     const report = () => {
@@ -95,7 +136,7 @@ export const BrowserPane: React.FC<{
       window.removeEventListener('resize', report);
       onSurface(active.pageId, null);
     };
-  }, [active?.pageId, onSurface]);
+  }, [active?.pageId, historyOpen, onSurface]);
 
   const navigate = useCallback(
     async (action: 'goto' | 'back' | 'forward' | 'reload' | 'stop', url?: string) => {
@@ -110,6 +151,126 @@ export const BrowserPane: React.FC<{
     },
     [active],
   );
+
+  const openAddress = useCallback(
+    (url: string) => {
+      setAddress(url);
+      setSuggestionsOpen(false);
+      setSuggestionIndex(-1);
+      setHistoryOpen(false);
+      addressInputRef.current?.blur();
+      void navigate('goto', url);
+    },
+    [navigate],
+  );
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      setHistory(await xgen.browser.historyList({ offset: 0, limit: 200 }));
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : '방문 기록을 불러오지 못했습니다.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!addressFocused || historyOpen || !state.enabled) {
+      setSuggestionsOpen(false);
+      setSuggestionIndex(-1);
+      return;
+    }
+    const sequence = ++suggestionRequest.current;
+    const timer = window.setTimeout(() => {
+      void xgen.browser
+        .historySuggestions({ query: address, limit: 8 })
+        .then((items) => {
+          if (sequence !== suggestionRequest.current) return;
+          setSuggestions(items);
+          setSuggestionsOpen(items.length > 0);
+          setSuggestionIndex(-1);
+        })
+        .catch(() => {
+          if (sequence !== suggestionRequest.current) return;
+          setSuggestions([]);
+          setSuggestionsOpen(false);
+          setSuggestionIndex(-1);
+        });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [address, addressFocused, historyOpen, state.enabled]);
+
+  useEffect(
+    () => () => {
+      if (clearConfirmationTimer.current !== null) {
+        window.clearTimeout(clearConfirmationTimer.current);
+      }
+    },
+    [],
+  );
+
+  const toggleHistory = useCallback(() => {
+    setHistoryOpen((open) => {
+      const next = !open;
+      if (next) void loadHistory();
+      return next;
+    });
+    setSuggestionsOpen(false);
+    setSuggestionIndex(-1);
+    setConfirmHistoryClear(false);
+  }, [loadHistory]);
+
+  const removeHistoryVisit = useCallback(
+    async (visit: BrowserHistoryVisit) => {
+      if (historyBusy) return;
+      setHistoryBusy(visit.visitId);
+      setHistoryError('');
+      try {
+        await xgen.browser.historyRemove({ visitId: visit.visitId });
+        await loadHistory();
+      } catch (error) {
+        setHistoryError(
+          error instanceof Error ? error.message : '방문 기록을 삭제하지 못했습니다.',
+        );
+      } finally {
+        setHistoryBusy('');
+      }
+    },
+    [historyBusy, loadHistory],
+  );
+
+  const clearHistory = useCallback(async () => {
+    if (!confirmHistoryClear) {
+      setConfirmHistoryClear(true);
+      if (clearConfirmationTimer.current !== null) {
+        window.clearTimeout(clearConfirmationTimer.current);
+      }
+      clearConfirmationTimer.current = window.setTimeout(() => {
+        clearConfirmationTimer.current = null;
+        setConfirmHistoryClear(false);
+      }, 4_000);
+      return;
+    }
+    if (clearConfirmationTimer.current !== null) {
+      window.clearTimeout(clearConfirmationTimer.current);
+      clearConfirmationTimer.current = null;
+    }
+    setHistoryBusy('clear');
+    setHistoryError('');
+    try {
+      await xgen.browser.historyClear();
+      setHistory(EMPTY_HISTORY);
+      setSuggestions([]);
+      setSuggestionsOpen(false);
+      setConfirmHistoryClear(false);
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : '방문 기록을 삭제하지 못했습니다.');
+    } finally {
+      setHistoryBusy('');
+    }
+  }, [confirmHistoryClear]);
 
   const addPage = useCallback(() => {
     void xgen.browser
@@ -187,6 +348,11 @@ export const BrowserPane: React.FC<{
         className="browser-toolbar"
         onSubmit={(event) => {
           event.preventDefault();
+          const selected = suggestionsOpen ? suggestions[suggestionIndex] : undefined;
+          if (selected) {
+            openAddress(selected.url);
+            return;
+          }
           const target = resolveBrowserAddress(address, addressSearch);
           if (!target) {
             setNavigationError(
@@ -196,6 +362,9 @@ export const BrowserPane: React.FC<{
             );
             return;
           }
+          setSuggestionsOpen(false);
+          setSuggestionIndex(-1);
+          addressInputRef.current?.blur();
           void navigate('goto', target);
         }}
       >
@@ -222,16 +391,91 @@ export const BrowserPane: React.FC<{
         >
           {active?.loading === 'loading' ? <StopIcon size={13} /> : <RefreshIcon size={15} />}
         </button>
-        <input
-          value={address}
-          onChange={(event) => {
-            setAddress(event.target.value);
-            setNavigationError('');
-          }}
-          aria-label="주소"
-          spellCheck={false}
-          placeholder={addressSearch?.enabled ? 'URL 또는 검색어 입력' : 'URL 입력'}
-        />
+        <div className="browser-address-shell">
+          <input
+            ref={addressInputRef}
+            value={address}
+            onFocus={() => setAddressFocused(true)}
+            onBlur={() => {
+              setAddressFocused(false);
+              setSuggestionsOpen(false);
+              setSuggestionIndex(-1);
+            }}
+            onChange={(event) => {
+              setAddress(event.target.value);
+              setNavigationError('');
+              setSuggestions([]);
+              setSuggestionsOpen(false);
+              setSuggestionIndex(-1);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown' && suggestions.length) {
+                event.preventDefault();
+                setSuggestionsOpen(true);
+                setSuggestionIndex((index) => Math.min(suggestions.length - 1, index + 1));
+              } else if (event.key === 'ArrowUp' && suggestionsOpen) {
+                event.preventDefault();
+                setSuggestionIndex((index) => Math.max(-1, index - 1));
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                setSuggestionsOpen(false);
+                setSuggestionIndex(-1);
+              }
+            }}
+            role="combobox"
+            aria-label="주소"
+            aria-autocomplete="list"
+            aria-expanded={suggestionsOpen}
+            aria-controls="browser-address-suggestions"
+            aria-activedescendant={
+              suggestionIndex >= 0 ? `browser-address-suggestion-${suggestionIndex}` : undefined
+            }
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={addressSearch?.enabled ? 'URL 또는 검색어 입력' : 'URL 입력'}
+          />
+          {suggestionsOpen && (
+            <div
+              id="browser-address-suggestions"
+              className="browser-address-suggestions"
+              role="listbox"
+              aria-label="방문 기록 자동완성"
+            >
+              {suggestions.map((suggestion, index) => (
+                <button
+                  id={`browser-address-suggestion-${index}`}
+                  key={suggestion.placeId}
+                  type="button"
+                  role="option"
+                  aria-selected={suggestionIndex === index}
+                  className={`browser-address-suggestion ${suggestionIndex === index ? 'active' : ''}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setSuggestionIndex(index)}
+                  onClick={() => openAddress(suggestion.url)}
+                >
+                  <HistoryIcon size={14} />
+                  <span className="browser-address-suggestion-copy">
+                    <strong>{suggestion.title || suggestion.url}</strong>
+                    <small>{suggestion.url}</small>
+                  </span>
+                  {suggestion.visitCount > 1 && (
+                    <span className="browser-address-visit-count">{suggestion.visitCount}회</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          className={historyOpen ? 'active' : ''}
+          disabled={!state.enabled}
+          aria-label={historyOpen ? '방문 기록 닫기' : '방문 기록 열기'}
+          title="방문 기록"
+          onClick={toggleHistory}
+        >
+          <HistoryIcon size={15} />
+        </button>
         <span className="browser-toolbar-divider" aria-hidden />
         <button
           type="button"
@@ -315,12 +559,76 @@ export const BrowserPane: React.FC<{
       )}
       {navigationError && <div className="browser-error">{navigationError}</div>}
       {active?.error && <div className="browser-error">{active.error}</div>}
-      <div ref={surfaceRef} className="browser-surface-anchor">
-        {!state.enabled && <div className="browser-empty">설정에서 브라우저 접근을 켜 주세요.</div>}
-        {state.enabled && !active && (
-          <div className="browser-empty">브라우저 페이지를 준비하는 중…</div>
-        )}
-      </div>
+      {historyOpen ? (
+        <section className="browser-history" aria-label="방문 기록">
+          <header className="browser-history-header">
+            <div>
+              <strong>방문 기록</strong>
+              <span>
+                {history.total > history.items.length
+                  ? `최근 ${history.items.length}개 · 전체 ${history.total}개`
+                  : `${history.total}개`}
+              </span>
+            </div>
+            <button
+              type="button"
+              className={confirmHistoryClear ? 'danger' : ''}
+              disabled={history.total === 0 || !!historyBusy}
+              onClick={() => void clearHistory()}
+            >
+              <TrashIcon size={13} />
+              {confirmHistoryClear ? '한 번 더 눌러 전체 삭제' : '전체 삭제'}
+            </button>
+          </header>
+          {historyError && <div className="browser-history-message error">{historyError}</div>}
+          {historyLoading ? (
+            <div className="browser-history-message">방문 기록을 불러오는 중…</div>
+          ) : history.items.length === 0 ? (
+            <div className="browser-history-message">저장된 방문 기록이 없습니다.</div>
+          ) : (
+            <div className="browser-history-list">
+              {history.items.map((visit) => (
+                <div className="browser-history-row" key={visit.visitId}>
+                  <button
+                    type="button"
+                    className="browser-history-link"
+                    onClick={() => openAddress(visit.url)}
+                    title={visit.url}
+                  >
+                    <HistoryIcon size={14} />
+                    <span className="browser-history-copy">
+                      <strong>{visit.title || visit.url}</strong>
+                      <small>{visit.url}</small>
+                    </span>
+                    <time dateTime={new Date(visit.visitedAt).toISOString()}>
+                      {historyTime(visit.visitedAt)}
+                    </time>
+                  </button>
+                  <button
+                    type="button"
+                    className="browser-history-remove"
+                    disabled={!!historyBusy}
+                    aria-label={`${visit.title || visit.url} 방문 기록 삭제`}
+                    title="이 방문 기록 삭제"
+                    onClick={() => void removeHistoryVisit(visit)}
+                  >
+                    <TrashIcon size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : (
+        <div ref={surfaceRef} className="browser-surface-anchor">
+          {!state.enabled && (
+            <div className="browser-empty">설정에서 브라우저 접근을 켜 주세요.</div>
+          )}
+          {state.enabled && !active && (
+            <div className="browser-empty">브라우저 페이지를 준비하는 중…</div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
