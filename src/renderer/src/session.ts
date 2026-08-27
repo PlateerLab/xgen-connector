@@ -10,6 +10,9 @@ import { xgen } from './bridge';
 import { SessionStore, type StoreSnapshot } from './session-store';
 import { browserStateStore } from './browser-state';
 import { teamsContextStore } from './teams-context';
+import { xgenyHistoryWorkspacePath } from '../../core/history';
+
+const HISTORY_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
 export const sessionStore = new SessionStore({
   // 컨텍스트 봉투는 **바깥쪽이 브라우저**가 되도록 겹친다. 히스토리를 다시 읽을 때
@@ -21,6 +24,34 @@ export const sessionStore = new SessionStore({
     ),
   historyTurns: (workflowId, interactionId, name) =>
     xgen.history.turns(workflowId, interactionId, name),
+  historyImage: async (workflowId, attachment) => {
+    const path = xgenyHistoryWorkspacePath(attachment);
+    if (!path) return null;
+    const file = await xgen.agentData.workspaceBinary(workflowId, path, 'chat_attachment');
+    const responseMime = String(file.contentType || '')
+      .split(';', 1)[0]
+      .trim()
+      .toLowerCase();
+    const attachmentMime = String(attachment.contentType || '').toLowerCase();
+    const mime = HISTORY_IMAGE_MIMES.has(responseMime)
+      ? responseMime
+      : HISTORY_IMAGE_MIMES.has(attachmentMime)
+        ? attachmentMime
+        : '';
+    if (!mime) return null;
+    const bytes = file.bytes;
+    const buffer = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+    return {
+      dataUrl: URL.createObjectURL(new Blob([buffer], { type: mime })),
+      name: attachment.name,
+      mime,
+      size: bytes.byteLength,
+    };
+  },
+  releaseHistoryImage: (previewUrl) => URL.revokeObjectURL(previewUrl),
   uploadWorkspaceImage: async ({
     workflowId,
     interactionId,

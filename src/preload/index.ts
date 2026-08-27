@@ -37,6 +37,7 @@ import type {
   WorkspaceListResult,
   WorkspaceFile,
   WorkspaceBinary,
+  WorkspaceBinaryPurpose,
   WorkspaceUploadResult,
 } from '../core/index';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
@@ -357,8 +358,11 @@ const api = {
       ipcRenderer.invoke(CHANNELS.agentWsTree, wf, path),
     workspaceFile: (wf: string, path: string): Promise<WorkspaceFile> =>
       ipcRenderer.invoke(CHANNELS.agentWsFile, wf, path),
-    workspaceBinary: (wf: string, path: string): Promise<WorkspaceBinary> =>
-      ipcRenderer.invoke(CHANNELS.agentWsBinary, wf, path),
+    workspaceBinary: (
+      wf: string,
+      path: string,
+      purpose?: WorkspaceBinaryPurpose,
+    ): Promise<WorkspaceBinary> => ipcRenderer.invoke(CHANNELS.agentWsBinary, wf, path, purpose),
     workspaceUpload: (
       wf: string,
       bytes: Uint8Array,

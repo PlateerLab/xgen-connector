@@ -202,6 +202,17 @@ export interface TtsSpeakOptions {
 }
 
 /** One past turn from the conversation history (io-logs). */
+export interface HistoryAttachment {
+  id?: string | number;
+  name: string;
+  size: number;
+  contentType: string;
+  type: 'picture' | 'file';
+  /** Storage reference returned by the chat history API. */
+  path: string;
+  bucket: string;
+}
+
 export interface HistoryTurn {
   logId: number;
   ioId: number;
@@ -210,6 +221,7 @@ export interface HistoryTurn {
   workflowName: string;
   input: string;
   output: string;
+  attachments: HistoryAttachment[];
   updatedAt: string;
 }
 

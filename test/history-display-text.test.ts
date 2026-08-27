@@ -9,7 +9,7 @@
  */
 import assert from 'assert'
 import { test } from 'node:test'
-import { toDisplayText } from '../src/core/history'
+import { toDisplayText, toHistoryAttachments, xgenyHistoryWorkspacePath } from '../src/core/history'
 
 test('문자열은 그대로', () => {
   assert.equal(toDisplayText('안녕하세요'), '안녕하세요')
@@ -52,4 +52,41 @@ test('어떤 입력이든 반환은 항상 string 타입이다 (렌더 안전 �
   for (const v of [null, undefined, 0, false, 'x', {}, [], [{ type: 'text', text: 'y' }], { a: 1 }, [1, 2]]) {
     assert.equal(typeof toDisplayText(v), 'string', `non-string 반환: ${JSON.stringify(v)}`)
   }
+})
+
+test('채팅 이력 첨부를 표시용 메타데이터로 정규화한다', () => {
+  const [attachment] = toHistoryAttachments([
+    {
+      id: 17,
+      name: 'red drop.png',
+      size: 1234,
+      contentType: 'image/png',
+      type: 'picture',
+      minioPath: 'geny-workspace:uploads/users/42/iid-1/att-1/red drop.png',
+      bucket: 'geny-workspace',
+    },
+  ])
+  assert.deepEqual(attachment, {
+    id: 17,
+    name: 'red drop.png',
+    size: 1234,
+    contentType: 'image/png',
+    type: 'picture',
+    path: 'geny-workspace:uploads/users/42/iid-1/att-1/red drop.png',
+    bucket: 'geny-workspace',
+  })
+  assert.equal(xgenyHistoryWorkspacePath(attachment), 'uploads/users/42/iid-1/att-1/red drop.png')
+})
+
+test('XGeny 사용자 업로드 경로가 아닌 이력 첨부는 workspace 원본으로 열지 않는다', () => {
+  const base = {
+    name: 'x.png',
+    size: 1,
+    contentType: 'image/png',
+    type: 'picture' as const,
+    bucket: 'geny-workspace',
+  }
+  assert.equal(xgenyHistoryWorkspacePath({ ...base, path: 'geny-workspace:../private/x.png' }), null)
+  assert.equal(xgenyHistoryWorkspacePath({ ...base, path: 'geny-workspace:workspace/memory/x.png' }), null)
+  assert.equal(xgenyHistoryWorkspacePath({ ...base, path: 'legacy-minio-object', bucket: 'chat' }), null)
 })

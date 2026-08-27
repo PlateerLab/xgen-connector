@@ -123,7 +123,11 @@ function mockXgen(): Promise<{ server: Server; baseUrl: string }> {
           return;
         }
         res.writeHead(200, { 'Content-Type': 'image/png' });
-        res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+        res.end(
+          url.searchParams.get('purpose') === 'chat_attachment'
+            ? Buffer.from([0x48, 0x49, 0x53, 0x54])
+            : Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+        );
         return;
       }
       if (url.pathname === '/api/agentflow/execute/based-id/stream' && req.method === 'POST') {
@@ -191,6 +195,12 @@ test('login → list agents → stream chat (e2e against mock)', async () => {
     const image = await xgen.agentData.workspaceBinary('wf_abc', 'uploads/image 1.png');
     assert.equal(image.contentType, 'image/png');
     assert.deepEqual([...image.bytes], [0x89, 0x50, 0x4e, 0x47]);
+    const historyImage = await xgen.agentData.workspaceBinary(
+      'wf_abc',
+      'uploads/image 1.png',
+      'chat_attachment',
+    );
+    assert.deepEqual([...historyImage.bytes], [0x48, 0x49, 0x53, 0x54]);
 
     const events: string[] = [];
     const result = await xgen.chat.complete(
