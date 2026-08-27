@@ -16,7 +16,7 @@
  * system proxy/cert aware — NOT the ambiguous global fetch) with a timeout, so a
  * check ALWAYS resolves and the UI never gets stuck on "확인 중…".
  */
-import { app, dialog, shell, BrowserWindow, Notification, net } from 'electron';
+import { app, dialog, shell, BrowserWindow, net } from 'electron';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -53,6 +53,7 @@ let timer: NodeJS.Timeout | null = null;
 let updaterRef: AppUpdater | null = null;
 let lastNotifiedVersion: string | null = null;
 let appWillInstall: () => void = () => {};
+let showUpdateNotification: (version: string, onAccept: () => void) => void = () => {};
 let busy = false; // guard against overlapping checks
 
 function isPackagedMac(): boolean {
@@ -513,14 +514,7 @@ async function runCheck(manual: boolean): Promise<void> {
 
 function notifyUpdateAvailable(version: string, onAccept: () => void): void {
   notify(`새 버전 v${version} 이(가) 있습니다.`);
-  if (Notification.isSupported()) {
-    const n = new Notification({
-      title: 'XGen Dex 업데이트',
-      body: `새 버전 v${version} — 클릭하면 지금 업데이트합니다.`,
-    });
-    n.on('click', onAccept);
-    n.show();
-  }
+  showUpdateNotification(version, onAccept);
 }
 
 export interface UpdaterOptions {
@@ -530,6 +524,7 @@ export interface UpdaterOptions {
   xgenServerUrl: () => string;
   xgenToken: () => Promise<string | null>;
   onWillInstall?: () => void;
+  onUpdateAvailable?: (version: string, onAccept: () => void) => void;
 }
 
 export function initUpdater(options: UpdaterOptions): void {
@@ -539,6 +534,7 @@ export function initUpdater(options: UpdaterOptions): void {
   getXgenServerUrl = options.xgenServerUrl;
   getXgenToken = options.xgenToken;
   if (options.onWillInstall) appWillInstall = options.onWillInstall;
+  if (options.onUpdateAvailable) showUpdateNotification = options.onUpdateAvailable;
   if (!app.isPackaged) return; // dev builds never check
   setTimeout(() => void runCheck(false), 8000);
   timer = setInterval(() => void runCheck(false), SIX_HOURS);

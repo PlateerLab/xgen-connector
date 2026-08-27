@@ -364,4 +364,8 @@ export type TeamsEvent =
   /** 내가 보고 있지 않은 방의 새 메시지 (user WS). 목록 배지/알림용. */
   | { kind: 'notify'; roomId: string; message: TeamsMessage }
   /** 방 목록 자체가 바뀜 (초대/강퇴/방 정보 변경) — 목록을 다시 부른다. */
-  | { kind: 'rooms_changed'; roomId: string };
+  | {
+      kind: 'rooms_changed';
+      roomId: string;
+      reason?: 'invited' | 'removed' | 'updated';
+    };

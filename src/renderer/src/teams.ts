@@ -19,12 +19,10 @@ import type {
   TeamsMessage,
   TeamsRoom,
 } from '../../core/index';
-import { shareBodyOf } from '../../core/teams-bridge';
 import {
   PENDING_PREFIX,
   applyEdit,
   applyReactions,
-  messagePreview,
   dropPending,
   mergeMessages,
   settlePending,
@@ -112,8 +110,6 @@ class TeamsLiveStore {
   private lastReadAt: Record<string, string> = {};
   /** 알림을 끈 방. 서버에 음소거 API 가 없어 이 PC 가 기억한다. */
   private muted = new Set<string>();
-  /** 새 메시지 OS 알림 전체 스위치. */
-  private notificationsOn = true;
   private myUserId = '';
   /** 화면에 떠 있는(= 읽고 있는) 방. 이 방의 메시지는 안 읽음으로 세지 않는다. */
   private activeRoomId: string | null = null;
@@ -162,7 +158,6 @@ class TeamsLiveStore {
     this.myUserId = myUserId;
     if (lastReadAt) this.lastReadAt = { ...lastReadAt };
     this.muted = new Set(prefs?.mutedRooms ?? []);
-    this.notificationsOn = prefs?.notifications !== false;
     this.emit({ mutedRooms: [...this.muted] });
     if (this.wired) return;
     this.wired = true;
@@ -444,38 +439,6 @@ class TeamsLiveStore {
     }
   }
 
-  /**
-   * 새 메시지 OS 알림을 띄울지 판정한다.
-   *
-   * 판정을 렌더러가 하는 이유: "지금 그 방을 보고 있는가" 와 "음소거인가" 는
-   * 여기에만 있는 상태다. main 이 따로 들고 있으면 두 곳이 어긋난다.
-   *
-   * 알리지 않는 경우:
-   *   · 전체 스위치가 꺼짐 / 이 방이 음소거
-   *   · **내가 보낸 메시지** — 내 말에 내가 알림을 받을 이유가 없다
-   *   · 시스템 안내(입장/퇴장)
-   *   · 지금 그 방을 보고 있음 (화면에 이미 떠 있다)
-   *
-   * `message` 이벤트가 아니라 `notify`(사용자 소켓)에서만 부른다. 방 소켓의
-   * `message` 는 그 방을 열어 둔 경우에만 오므로 알릴 대상이 아니다.
-   */
-  private maybeNotify(roomId: string, message: TeamsMessage): void {
-    if (!this.notificationsOn || this.muted.has(roomId)) return;
-    if (message.senderType === 'system') return;
-    if (message.senderType === 'user' && message.senderId === this.myUserId) return;
-    if (this.activeRoomId === roomId && document.hasFocus()) return;
-    const room = this.snapshot.rooms.find((r) => r.id === roomId);
-    const body = shareBodyOf(message.content).trim() || messagePreview(message);
-    void xgen.teams
-      .notify({
-        roomId,
-        roomName: room?.name || '대화',
-        sender: message.senderName,
-        body: body || '(첨부)',
-      })
-      .catch(() => undefined);
-  }
-
   /** 이 방의 알림이 꺼져 있는가. */
   isMuted(roomId: string): boolean {
     return this.muted.has(roomId);
@@ -597,7 +560,6 @@ class TeamsLiveStore {
         this.recount(event.roomId);
         // 목록에 없는 방에서 알림이 왔다 = 방금 초대됐다 — 목록을 다시 부른다.
         if (!this.snapshot.rooms.some((r) => r.id === event.roomId)) void this.loadRooms();
-        this.maybeNotify(event.roomId, event.message);
         return;
       }
       case 'message_edited': {

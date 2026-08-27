@@ -137,6 +137,12 @@ export interface LocalToolDelegate {
   ): Promise<LocalToolResult>;
 }
 
+export type LocalNotificationHandler = (
+  title: string,
+  body: string,
+  context?: LocalToolCallContext,
+) => Promise<boolean> | boolean;
+
 const DEFAULT_TIMEOUT_MS = 600_000; // 10분 — 긴 설치/빌드/스크립트 기본 허용
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 60 * 60_000;
@@ -889,6 +895,8 @@ export class LocalToolProvider {
   private delegate: LocalToolDelegate | null = null;
   /** 서버 런타임이 이 PC 를 실행 환경으로 쓰는 내부 브리지 (workspace-bridge-tools). */
   private workspaceBridge: LocalToolDelegate | null = null;
+  /** main 의 공통 NotificationCenter. 주입해 Node 단위 테스트는 Electron 을 요구하지 않는다. */
+  private notificationHandler: LocalNotificationHandler | null = null;
   /** 로컬 MCP 자기관리(McpAddServer/McpRemoveServer/McpListServers). 로컬 MCP 가 켜져
    *  있을 때만 도구를 광고한다 — 이 delegate 자신이 게이트를 판단한다. */
   private mcpAdmin: LocalToolDelegate | null = null;
@@ -901,6 +909,10 @@ export class LocalToolProvider {
   /** 워크스페이스 브리지 배선 — 로컬 동기화 매니저가 준비된 뒤 한 번 건다. */
   configureWorkspaceBridge(bridge: LocalToolDelegate | null): void {
     this.workspaceBridge = bridge;
+  }
+
+  configureNotificationHandler(handler: LocalNotificationHandler | null): void {
+    this.notificationHandler = handler;
   }
 
   /** 로컬 MCP 자기관리 delegate 배선(syncMcp 에서). null 이면 미노출. */
@@ -956,7 +968,7 @@ export class LocalToolProvider {
     if (tool === LIST_DIR_TOOL) return this.listDir(args);
     if (tool === SEARCH_TOOL) return this.search(args);
     if (tool === CLIPBOARD_TOOL) return this.clipboard(args);
-    if (tool === NOTIFY_TOOL) return this.notify(args);
+    if (tool === NOTIFY_TOOL) return this.notify(args, context);
     throw new Error(`unknown local tool: ${tool}`);
   }
 
@@ -1120,11 +1132,24 @@ export class LocalToolProvider {
     }
   }
 
-  private async notify(args: unknown): Promise<LocalToolResult> {
+  private async notify(args: unknown, context?: LocalToolCallContext): Promise<LocalToolResult> {
     const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
     const title = String(a.title ?? 'XGEN');
     const body = String(a.body ?? '');
     try {
+      if (this.notificationHandler) {
+        const shown = await this.notificationHandler(title, body, context);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: shown
+                ? '알림을 표시했습니다.'
+                : '사용자의 알림 설정에 따라 표시하지 않았습니다.',
+            },
+          ],
+        };
+      }
       const { Notification } = await import('electron');
       if (!Notification.isSupported()) {
         return {

@@ -13,8 +13,11 @@ import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
 import { Selector } from './Selector';
+import { notificationStore, useNotifications } from '../notifications';
+import type { NotificationEventType, NotificationPrivacy } from '../../../core/notifications';
 import {
   BrowserIcon,
+  BellIcon,
   CloseIcon,
   FolderIcon,
   MonitorIcon,
@@ -27,15 +30,40 @@ type Theme = NonNullable<ConnectorConfig['theme']>;
 // 비슷한 기능끼리 탭으로 묶는다 — 세로로만 길어지던 설정을 폭을 넓혀 분류한다.
 // 업데이트는 일반의 한 섹션이고(따로 탭일 만큼 크지 않다), 옛 [로컬 도구]는
 // 성격이 다른 두 기능이 섞여 있어 [PC 컨트롤](셸·파일)과 [MCP]로 가른다.
-type Tab = 'connection' | 'general' | 'avatar' | 'browser' | 'pc' | 'mcp' | 'storage';
+type Tab =
+  'connection' | 'general' | 'notifications' | 'avatar' | 'browser' | 'pc' | 'mcp' | 'storage';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'connection', label: '연결' },
   { id: 'general', label: '일반' },
+  { id: 'notifications', label: '알림' },
   { id: 'avatar', label: '아바타' },
   { id: 'browser', label: '브라우저' },
   { id: 'pc', label: 'PC 컨트롤' },
   { id: 'mcp', label: 'MCP' },
   { id: 'storage', label: '스토리지' },
+];
+
+const NOTIFICATION_EVENTS: Array<{
+  id: NotificationEventType;
+  label: string;
+  hint: string;
+}> = [
+  { id: 'chat.completed', label: '채팅 답변 완료', hint: '보고 있지 않은 대화의 답변이 끝났을 때' },
+  { id: 'chat.failed', label: '채팅 답변 실패', hint: '에이전트 응답이 오류로 종료됐을 때' },
+  {
+    id: 'agent.requested',
+    label: '에이전트 요청 알림',
+    hint: '에이전트가 이 PC의 Notify 도구를 호출했을 때',
+  },
+  { id: 'teams.message', label: 'Teams 새 메시지', hint: '사람이 보낸 1:1·그룹 메시지' },
+  {
+    id: 'teams.agent_message',
+    label: 'Teams 에이전트 메시지',
+    hint: 'Teams 방 안의 에이전트가 보낸 메시지',
+  },
+  { id: 'teams.invited', label: 'Teams 초대', hint: '대화방에 초대됐을 때(서버 이벤트 지원 시)' },
+  { id: 'teams.removed', label: 'Teams 제외', hint: '대화방에서 제외됐을 때(서버 이벤트 지원 시)' },
+  { id: 'system.update_ready', label: '업데이트 준비 완료', hint: '새 버전을 설치할 수 있을 때' },
 ];
 
 /** 차단 명령 프리셋 — 누르면 그 묶음이 목록에 추가된다 (첫 단어 기준 매칭). */
@@ -113,6 +141,9 @@ export const Settings: React.FC<{
   const [checking, setChecking] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
+  const notifications = useNotifications();
+  const [notificationTest, setNotificationTest] = useState('');
+  const [notificationNeedsSystemSettings, setNotificationNeedsSystemSettings] = useState(false);
 
   // Any status message means the check is underway/done → drop the button spinner
   // (the message line then shows progress like "내려받는 중… 45%").
@@ -138,6 +169,9 @@ export const Settings: React.FC<{
       .then(setVersion)
       .catch(() => undefined);
   }, []);
+  useEffect(() => {
+    if (!notifications.loaded) void notificationStore.load();
+  }, [notifications.loaded]);
 
   const changeHotkey = async (acc: string) => {
     const ok = await xgen.quickChat.setHotkey(acc);
@@ -612,6 +646,180 @@ export const Settings: React.FC<{
           </>
         )}
 
+        {/* ─── 계정별 OS 알림 ─── */}
+        {tab === 'notifications' && (
+          <>
+            <SettingsSection title="알림 사용">
+              <div className="field-row">
+                <span>
+                  데스크톱 알림
+                  <span className="small muted" style={{ marginLeft: 8 }}>
+                    {notifications.supported === false
+                      ? '이 환경에서 지원되지 않음'
+                      : notifications.platform === 'darwin' &&
+                          notifications.macCodeSignature !== 'signed'
+                        ? notifications.developmentMode
+                          ? 'macOS 개발 모드 · 서명된 앱 필요'
+                          : 'macOS 임시/미서명 앱 · 알림 불가'
+                        : notifications.platform
+                          ? `${notifications.platform} · 계정별 설정`
+                          : '상태 확인 중…'}
+                  </span>
+                </span>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={notifications.profile.enabled}
+                    onChange={(event) => void notificationStore.setEnabled(event.target.checked)}
+                  />
+                  <span className="track" />
+                </label>
+              </div>
+              <div className="field-row">
+                <span>
+                  테스트 알림
+                  {notificationTest && (
+                    <span className="small muted" style={{ marginLeft: 8 }}>
+                      {notificationTest}
+                    </span>
+                  )}
+                </span>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setNotificationTest('전송 중…');
+                    setNotificationNeedsSystemSettings(false);
+                    void xgen.notifications
+                      .test()
+                      .then((result) => {
+                        if (result.shown) {
+                          setNotificationTest('OS에 표시됨');
+                        } else if (result.reason === 'macos-unsigned-dev') {
+                          setNotificationTest('개발 모드는 앱 서명이 없어 표시할 수 없습니다.');
+                        } else if (result.reason === 'macos-unsigned-app') {
+                          setNotificationTest('이 앱은 임시/미서명 상태라 알림을 표시할 수 없습니다.');
+                        } else if (result.reason === 'os-denied') {
+                          setNotificationTest('macOS 설정에서 XGen Dex 알림을 켜 주세요.');
+                          setNotificationNeedsSystemSettings(true);
+                        } else if (result.reason === 'unsupported') {
+                          setNotificationTest('이 환경은 데스크톱 알림을 지원하지 않습니다.');
+                        } else {
+                          setNotificationTest('알림을 표시하지 못했습니다.');
+                        }
+                      })
+                      .catch(() => setNotificationTest('표시 실패'));
+                  }}
+                >
+                  <BellIcon size={14} /> 테스트
+                </button>
+              </div>
+              {notificationNeedsSystemSettings && notifications.platform === 'darwin' && (
+                <div className="field-row">
+                  <span className="small muted">시스템 설정 › 알림 › XGen Dex를 확인하세요.</span>
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      void xgen.openExternal(
+                        'x-apple.systempreferences:com.apple.Notifications-Settings.extension',
+                      )
+                    }
+                  >
+                    macOS 알림 설정 열기
+                  </button>
+                </div>
+              )}
+              {notifications.platform === 'darwin' &&
+                notifications.macCodeSignature !== 'signed' && (
+                  <p className="small notice-warn">
+                    Electron 42 이상은 macOS 알림에 유효한 코드 서명을 요구합니다. npm run dev는
+                    서명되지 않은 Electron.app을 사용하고, 현재 ad-hoc 배포 서명도 알림에는
+                    부족합니다. Developer ID 또는 로컬 테스트용 인증서로 서명된 앱에서 확인해 주세요.
+                  </p>
+                )}
+              {notifications.error && <p className="small notice-warn">{notifications.error}</p>}
+            </SettingsSection>
+
+            <SettingsSection title="알림 이벤트">
+              {NOTIFICATION_EVENTS.map((event) => (
+                <div className="field-row" key={event.id}>
+                  <span>
+                    {event.label}
+                    <span className="small muted notification-event-hint">{event.hint}</span>
+                  </span>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      disabled={!notifications.profile.enabled}
+                      checked={notifications.profile.events[event.id]}
+                      onChange={(input) =>
+                        void notificationStore.setEvent(event.id, input.target.checked)
+                      }
+                    />
+                    <span className="track" />
+                  </label>
+                </div>
+              ))}
+            </SettingsSection>
+
+            <SettingsSection title="미리보기 내용">
+              <div className="field-row">
+                <span>
+                  잠금 화면에 표시할 정보
+                  <span className="small muted notification-event-hint">
+                    운영체제의 자체 잠금 화면 설정이 추가로 적용됩니다.
+                  </span>
+                </span>
+                <div className="seg">
+                  {(
+                    [
+                      ['full', '전체'],
+                      ['sender-only', '이름만'],
+                      ['hidden', '숨김'],
+                    ] as Array<[NotificationPrivacy, string]>
+                  ).map(([privacy, label]) => (
+                    <button
+                      key={privacy}
+                      className={notifications.profile.privacy === privacy ? 'active' : ''}
+                      onClick={() => void notificationStore.setPrivacy(privacy)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection title="음소거 예외">
+              <div className="field-row">
+                <span>
+                  개별 음소거
+                  <span className="small muted notification-event-hint">
+                    에이전트 {Object.keys(notifications.profile.mutedAgents).length} · 채팅{' '}
+                    {Object.keys(notifications.profile.mutedChats).length} · Teams 방{' '}
+                    {Object.keys(notifications.profile.mutedTeamsRooms).length}
+                  </span>
+                </span>
+                <button
+                  className="secondary"
+                  disabled={
+                    Object.keys(notifications.profile.mutedAgents).length === 0 &&
+                    Object.keys(notifications.profile.mutedChats).length === 0 &&
+                    Object.keys(notifications.profile.mutedTeamsRooms).length === 0 &&
+                    Object.keys(notifications.profile.mutedTeamsSenders).length === 0
+                  }
+                  onClick={() => void notificationStore.resetScopes()}
+                >
+                  모두 해제
+                </button>
+              </div>
+              <p className="small muted" style={{ margin: '8px 0 12px' }}>
+                채팅 헤더의 종 아이콘에서 현재 대화 또는 에이전트 전체를, Teams 방 메뉴에서 해당
+                방만 음소거할 수 있습니다. 에이전트 음소거는 그 아래 모든 채팅보다 우선합니다.
+              </p>
+            </SettingsSection>
+          </>
+        )}
+
         {/* ─── 아바타·자막 ─── */}
         {tab === 'avatar' && (
           <>
@@ -1061,4 +1269,3 @@ export const Settings: React.FC<{
     </>
   );
 };
-

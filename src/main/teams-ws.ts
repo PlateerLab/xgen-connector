@@ -210,7 +210,12 @@ export class TeamsSocketHub {
         return;
       }
       if (type === 'room_invited' || type === 'room_kicked' || type === 'room_updated') {
-        deps.emit({ kind: 'rooms_changed', roomId: String(frame.room_id ?? '') });
+        deps.emit({
+          kind: 'rooms_changed',
+          roomId: String(frame.room_id ?? ''),
+          reason:
+            type === 'room_invited' ? 'invited' : type === 'room_kicked' ? 'removed' : 'updated',
+        });
       }
     });
     this.userSocket.start();

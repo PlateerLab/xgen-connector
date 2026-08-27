@@ -5,6 +5,8 @@ import { teamsStore, useTeams } from '../teams';
 import { teamsContextStore } from '../teams-context';
 import { useBrowserState } from '../browser-state';
 import { browserSelectionStore } from '../browser-selection-store';
+import { notificationStore } from '../notifications';
+import { notificationChatKey, type NotificationTarget } from '../../../core/notifications';
 import type {
   Agent,
   CurrentUser,
@@ -155,6 +157,7 @@ export const Workspace: React.FC<{
   const layoutHostRef = useRef<HTMLDivElement | null>(null);
   const asideRef = useRef<HTMLElement | null>(null);
   const suppressClickRef = useRef(false);
+  const notificationContextRef = useRef('');
 
   useEffect(() => {
     layoutRef.current = layout;
@@ -219,11 +222,37 @@ export const Workspace: React.FC<{
     teamsStore.reset();
     teamsContextStore.reset();
     browserSelectionStore.reset();
+    notificationStore.reset();
+    void notificationStore.load();
     teamsStore.init(user.userId, config.teams?.lastReadAt, {
       mutedRooms: config.teams?.mutedRooms,
       notifications: config.teams?.notifications,
     });
-  }, [user.userId]);
+  }, [user.userId, config.serverUrl]);
+
+  // main 은 창 포커스는 알지만 split pane 안에서 무엇이 실제로 보이는지는 모른다.
+  // 활성 탭 좌표와 Teams 방 이름만 작게 동기화해 "화면에 이미 있는 답" 알림을 막는다.
+  useEffect(() => {
+    const visibleChats: string[] = [];
+    const visibleTeamsRooms: string[] = [];
+    for (const group of layout.groups) {
+      const tab = group.tabs.find((item) => item.id === group.activeTabId);
+      if (tab?.kind === 'chat' && tab.workflowId && tab.sessionKey) {
+        visibleChats.push(notificationChatKey(tab.workflowId, tab.sessionKey));
+      } else if (tab?.kind === 'teams' && tab.roomId) {
+        visibleTeamsRooms.push(tab.roomId);
+      }
+    }
+    const context = {
+      visibleChats,
+      visibleTeamsRooms,
+      roomNames: Object.fromEntries(teams.rooms.map((room) => [room.id, room.name])),
+    };
+    const serialized = JSON.stringify(context);
+    if (serialized === notificationContextRef.current) return;
+    notificationContextRef.current = serialized;
+    xgen.notifications.setContext(context);
+  }, [layout, teams.rooms]);
 
   /** 사이드바에서 방을 고르면 메인 영역에 탭으로 연다 (이미 있으면 그 탭 선택). */
   const openRoomTab = useCallback((room: TeamsRoomModel) => {
@@ -467,6 +496,48 @@ export const Workspace: React.FC<{
 
   // 트레이/오버레이의 "설정 열기"도 이제 탭을 연다.
   useEffect(() => xgen.appctl.onOpenSettings(openSettings), [openSettings]);
+
+  const openNotificationTarget = useCallback(
+    async (target: NotificationTarget) => {
+      if (target.kind === 'chat') {
+        openSharedSource({
+          kind: 'agent',
+          label: target.workflowName,
+          workflowId: target.workflowId,
+          interactionId: target.interactionId,
+        });
+        return;
+      }
+      if (target.kind === 'teams') {
+        let room = teamsStore.getSnapshot().rooms.find((item) => item.id === target.roomId);
+        if (!room) {
+          await teamsStore.loadRooms();
+          room = teamsStore.getSnapshot().rooms.find((item) => item.id === target.roomId);
+        }
+        if (room) {
+          setSideView('teams');
+          setCollapsed(false);
+          openRoomTab(room);
+        }
+        return;
+      }
+      if (target.kind === 'settings') openSettings();
+    },
+    [openRoomTab, openSettings, openSharedSource],
+  );
+
+  // 클릭이 renderer 재로딩 중 발생했어도 main 의 pending target 을 한 번 소비한다.
+  useEffect(() => {
+    const off = xgen.notifications.onNavigate((target) => {
+      void openNotificationTarget(target);
+      // live IPC 로 받은 목적지는 main 의 재시작 대비 큐에서도 바로 제거한다.
+      void xgen.notifications.consumeTarget();
+    });
+    void xgen.notifications.consumeTarget().then((target) => {
+      if (target) void openNotificationTarget(target);
+    });
+    return off;
+  }, [openNotificationTarget]);
 
   /** 채팅 헤더 [...] → 에이전트 뷰어 탭을 연다 (에이전트당 하나, 하위 탭만 바뀐다). */
   const openAgentViewer = useCallback(

@@ -24,6 +24,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { xgen } from '../bridge';
 import { teamsStore, useTeams, type ReplyTarget } from '../teams';
+import { notificationStore, useNotifications } from '../notifications';
 import {
   parseSharedMessage,
   type CurrentUser,
@@ -76,6 +77,7 @@ export const TeamsRoom: React.FC<{
   onLeft?: (roomId: string) => void;
 }> = ({ room, user, onOpenSource, onLeft }) => {
   const snapshot = useTeams();
+  const notificationSnapshot = useNotifications();
   const state = snapshot.byRoom[room.id];
   const messages = state?.messages ?? [];
   const [input, setInput] = useState('');
@@ -181,7 +183,10 @@ export const TeamsRoom: React.FC<{
   const leave = useCallback(async () => {
     setMenuOpen(false);
     const ok = await teamsStore.leave(room.id);
-    if (ok) onLeft?.(room.id);
+    if (ok) {
+      void notificationStore.setScope('teamsRoom', room.id, false);
+      onLeft?.(room.id);
+    }
   }, [room.id, onLeft]);
 
   /** 타이핑 신호는 3초에 한 번만 — 글자마다 보내면 소켓이 시끄럽다. */
@@ -202,7 +207,7 @@ export const TeamsRoom: React.FC<{
   const isOwner = (state?.members ?? []).some(
     (m) => String(m.userId) === myId && m.role === 'owner',
   );
-  const muted = snapshot.mutedRooms.includes(room.id);
+  const muted = !!notificationSnapshot.profile.mutedTeamsRooms[room.id];
   const memberCount = state?.members.length ?? 0;
   const onlineCount = state?.members.filter((m) => m.isOnline).length ?? 0;
   const canSend = (input.trim().length > 0 || staged.length > 0) && !sending;
@@ -254,7 +259,7 @@ export const TeamsRoom: React.FC<{
                   <button
                     onClick={() => {
                       setMenuOpen(false);
-                      teamsStore.toggleMute(room.id);
+                      void notificationStore.setScope('teamsRoom', room.id, !muted, room.name);
                     }}
                   >
                     {muted ? <BellIcon size={14} /> : <BellOffIcon size={14} />}
@@ -329,6 +334,17 @@ export const TeamsRoom: React.FC<{
               const ok = await teamsStore.edit(room.id, message.id, text);
               if (ok) setEditingId(null);
             }}
+            senderNotificationMuted={
+              !!notificationSnapshot.profile.mutedTeamsSenders[message.senderId]
+            }
+            onToggleSenderNotification={() =>
+              void notificationStore.setScope(
+                'teamsSender',
+                message.senderId,
+                !notificationSnapshot.profile.mutedTeamsSenders[message.senderId],
+                message.senderName,
+              )
+            }
             onOpenSource={onOpenSource}
           />
         ))}
@@ -443,7 +459,10 @@ export const TeamsRoom: React.FC<{
           onConfirm={async () => {
             const ok = await teamsStore.remove(room.id);
             setConfirmDelete(false);
-            if (ok) onLeft?.(room.id);
+            if (ok) {
+              void notificationStore.setScope('teamsRoom', room.id, false);
+              onLeft?.(room.id);
+            }
           }}
         />
       )}
@@ -483,6 +502,8 @@ const MessageRow: React.FC<{
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void | Promise<void>;
+  senderNotificationMuted: boolean;
+  onToggleSenderNotification: () => void;
   onOpenSource?: (ref: TeamsShareRef) => void;
 }> = ({
   roomId,
@@ -497,6 +518,8 @@ const MessageRow: React.FC<{
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
+  senderNotificationMuted,
+  onToggleSenderNotification,
   onOpenSource,
 }) => {
   const mine = message.senderType === 'user' && message.senderId === myId;
@@ -608,6 +631,24 @@ const MessageRow: React.FC<{
                     onClick={onStartEdit}
                   >
                     <PencilIcon size={12} />
+                  </button>
+                )}
+                {!mine && (
+                  <button
+                    className="teams-react-btn"
+                    title={
+                      senderNotificationMuted
+                        ? `${message.senderName}의 Teams 알림 켜기`
+                        : `${message.senderName}의 Teams 알림 끄기`
+                    }
+                    aria-label={senderNotificationMuted ? '발신자 알림 켜기' : '발신자 알림 끄기'}
+                    onClick={onToggleSenderNotification}
+                  >
+                    {senderNotificationMuted ? (
+                      <BellOffIcon size={12} />
+                    ) : (
+                      <BellIcon size={12} />
+                    )}
                   </button>
                 )}
               </>
