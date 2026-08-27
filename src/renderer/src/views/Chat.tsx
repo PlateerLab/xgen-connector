@@ -16,11 +16,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { xgen, copyText } from '../bridge';
 import { sessionStore } from '../session';
 import { CONTEXT_LIMIT_CHOICES, teamsContextStore, useContextChip } from '../teams-context';
+import { browserSelectionStore, useBrowserSelections } from '../browser-selection-store';
 import { ShareToTeamsModal } from './ShareToTeams';
 import { TeamsRoomList } from './TeamsRoomPicker';
 import { useModalDismiss } from './use-modal-dismiss';
 import type { ChatImageAttachment, SessionState } from '../session-store';
 import type { ToolEvent, Citation, VoiceConfig } from '../../../core/index';
+import type { BrowserSelectionResult } from '../../../core/browser';
 import type { McpBridgeStatusLike, McpRuntimeLogEntryLike } from '../../../preload/index';
 import { collapseToolSteps, nextToolIndex } from './tool-activity-model';
 import { mcpChatStatus } from './mcp-status-model';
@@ -29,6 +31,7 @@ import { ToolLogModal } from './ToolLogModal';
 import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
 import {
+  BrowserIcon,
   ChatIcon,
   CloseIcon,
   CopyIcon,
@@ -248,6 +251,9 @@ export const Chat: React.FC<{
   // 함께 보낸다. 대기 중인 data URL 은 이 Chat 컴포넌트와 열린 세션에만 남는다.
   const [stagedImages, setStagedImages] = useState<StagedChatImage[]>([]);
   const stagedImagesRef = useRef<StagedChatImage[]>([]);
+  const browserSelections = useBrowserSelections(session.key);
+  const browserSelectionsRef = useRef<BrowserSelectionResult[]>(browserSelections);
+  browserSelectionsRef.current = browserSelections;
   const [preparingImages, setPreparingImages] = useState(0);
   const [imageNotice, setImageNotice] = useState('');
   // 화면 캡처 — 기본 꺼짐. 화면에는 다른 사람의 메시지·비밀번호·미공개 문서가
@@ -263,6 +269,7 @@ export const Chat: React.FC<{
     count: number;
     roomName: string;
     images: StagedChatImage[];
+    browserSelections: BrowserSelectionResult[];
   } | null>(null);
   // 이 답변을 Teams 로 공유하는 중 — 본문을 들고 모달을 띄운다.
   const [shareBody, setShareBody] = useState<string | null>(null);
@@ -381,7 +388,8 @@ export const Chat: React.FC<{
       try {
         for (const file of candidates) {
           const current = stagedImagesRef.current;
-          if (current.length >= CHAT_IMAGE_MAX_COUNT) {
+          const selected = browserSelectionsRef.current;
+          if (current.length + selected.length >= CHAT_IMAGE_MAX_COUNT) {
             problems.push(
               `이미지는 한 번에 최대 ${CHAT_IMAGE_MAX_COUNT}장까지 첨부할 수 있습니다.`,
             );
@@ -392,7 +400,9 @@ export const Chat: React.FC<{
             problems.push(problem);
             continue;
           }
-          const usedBytes = current.reduce((sum, image) => sum + image.size, 0);
+          const usedBytes =
+            current.reduce((sum, image) => sum + image.size, 0) +
+            selected.reduce((sum, selection) => sum + selection.image.size, 0);
           if (usedBytes + file.size > CHAT_IMAGE_MAX_TOTAL_BYTES) {
             problems.push('첨부 이미지의 전체 크기는 25MB를 넘을 수 없습니다.');
             break;
@@ -439,6 +449,7 @@ export const Chat: React.FC<{
   }, [imageNotice]);
 
   const endChat = useCallback(() => {
+    browserSelectionStore.forgetSession(session.key);
     sessionStore.endChat(session.key);
   }, [session.key]);
 
@@ -558,7 +569,11 @@ export const Chat: React.FC<{
    * 덤이고, 그것 때문에 사용자의 질문이 사라지면 그게 더 나쁘다.
    */
   const dispatch = useCallback(
-    async (text: string, images: StagedChatImage[] = []) => {
+    async (
+      text: string,
+      images: StagedChatImage[] = [],
+      selections: BrowserSelectionResult[] = [],
+    ) => {
       let shot: { dataUrl?: string; sourceName?: string; width?: number; height?: number } | null =
         null;
       if (screenCaptureOn) {
@@ -575,9 +590,18 @@ export const Chat: React.FC<{
       } catch {
         /* 문맥을 못 실었어도 질문은 보낸다 */
       }
+      const selectionImages: StagedChatImage[] = selections.map((selection) => ({
+        id: `browser:${selection.id}`,
+        dataUrl: selection.image.dataUrl,
+        name: selection.image.name,
+        mime: selection.image.mime,
+        size: selection.image.size,
+        width: selection.image.width,
+        height: selection.image.height,
+      }));
       // 전송·스트림 수명은 스토어가 소유한다 — 이 뷰가 언마운트돼도(세션 전환)
       // 답변은 백그라운드에서 계속 도착한다.
-      sessionStore.send(session.key, text, shot, images);
+      sessionStore.send(session.key, text, shot, [...images, ...selectionImages], selections);
     },
     [session.key, screenCaptureOn],
   );
@@ -588,10 +612,26 @@ export const Chat: React.FC<{
       // Quick Chat/STT 가 override 텍스트로 들어올 때 메인 작성기에 대기 중인 그림을
       // 몰래 가져가지 않는다. +/붙여넣기 그림은 해당 작성기에서 직접 보낼 때만 간다.
       const images = override === undefined ? stagedImagesRef.current : [];
-      if ((!text && images.length === 0) || streaming || preparingImages > 0) return;
+      const selections = override === undefined ? browserSelectionsRef.current : [];
+      const attachmentCount = images.length + selections.length;
+      const attachmentBytes =
+        images.reduce((sum, image) => sum + image.size, 0) +
+        selections.reduce((sum, selection) => sum + selection.image.size, 0);
+      if ((!text && attachmentCount === 0) || streaming || preparingImages > 0) return;
+      if (attachmentCount > CHAT_IMAGE_MAX_COUNT) {
+        setImageNotice(
+          `이미지는 브라우저 캡처를 포함해 최대 ${CHAT_IMAGE_MAX_COUNT}장까지 보낼 수 있습니다.`,
+        );
+        return;
+      }
+      if (attachmentBytes > CHAT_IMAGE_MAX_TOTAL_BYTES) {
+        setImageNotice('브라우저 캡처를 포함한 이미지 전체 크기는 25MB를 넘을 수 없습니다.');
+        return;
+      }
       if (override === undefined) {
         setInput('');
         replaceStagedImages([]);
+        browserSelectionStore.clear(session.key);
       }
 
       // Teams 문맥이 붙어 있는데 아직 승인 전이면 **먼저 묻는다**. 남이 쓴 글이
@@ -603,12 +643,18 @@ export const Chat: React.FC<{
         if (count > 0) {
           // 방 이름까지 들고 간다 — 확인창을 칩 상태에 매달아 두면, 그 사이
           // 칩이 사라질 때 붙잡아 둔 사용자의 문장까지 함께 증발한다.
-          setCtxConfirm({ text, count, roomName: pendingChip.roomName, images });
+          setCtxConfirm({
+            text,
+            count,
+            roomName: pendingChip.roomName,
+            images,
+            browserSelections: selections,
+          });
           return;
         }
         // 실을 게 없으면 물을 것도 없다 — 그냥 보낸다.
       }
-      await dispatch(text, images);
+      await dispatch(text, images, selections);
     },
     [input, streaming, preparingImages, session.key, dispatch, replaceStagedImages],
   );
@@ -619,7 +665,7 @@ export const Chat: React.FC<{
     if (!held) return;
     teamsContextStore.approve(session.key);
     setCtxConfirm(null);
-    await dispatch(held.text, held.images);
+    await dispatch(held.text, held.images, held.browserSelections);
   }, [ctxConfirm, session.key, dispatch]);
 
   /** 확인창의 [취소] — 사용자가 친 문장을 입력창에 그대로 돌려준다. */
@@ -637,10 +683,11 @@ export const Chat: React.FC<{
             CHAT_IMAGE_MAX_COUNT,
           ),
         );
+        browserSelectionStore.restore(session.key, held.browserSelections);
       }
       return null;
     });
-  }, [replaceStagedImages]);
+  }, [replaceStagedImages, session.key]);
 
   // 문맥 확인창도 Esc 로 취소된다 — 취소는 사용자의 문장을 입력창에 돌려준다.
   useModalDismiss(cancelContext, !!ctxConfirm);
@@ -1038,6 +1085,20 @@ export const Chat: React.FC<{
                     <span>화면 첨부 · {m.screenshot.sourceName}</span>
                   </div>
                 )}
+                {m.browserSelections && m.browserSelections.length > 0 && (
+                  <div className="browser-context-note">
+                    <BrowserIcon size={11} />
+                    <span>
+                      브라우저 컨텍스트 ·{' '}
+                      {m.browserSelections
+                        .map(
+                          (selection) =>
+                            `${selection.kind === 'element' ? '요소' : '영역'} ${selection.elementCount}개`,
+                        )
+                        .join(', ')}
+                    </span>
+                  </div>
+                )}
                 {/* 답변에 딸린 행동. **끝난 뒤에만** 보인다 — 스트리밍 중에
                     공유하면 잘린 글이 방에 남고, 방에는 삭제가 없다.
                     복사는 main 의 clipboard 를 쓴다: 렌더러 navigator.clipboard 는
@@ -1193,13 +1254,48 @@ export const Chat: React.FC<{
             ))}
           </div>
         )}
+        {browserSelections.length > 0 && (
+          <div
+            className="composer-images browser-context-images"
+            aria-label={`전송 대기 브라우저 컨텍스트 ${browserSelections.length}개`}
+          >
+            {browserSelections.map((selection) => {
+              const first = selection.elements[0];
+              const label =
+                selection.kind === 'element'
+                  ? first?.name || first?.text || first?.tag || '요소'
+                  : `선택 영역 · 요소 ${selection.elements.length}개`;
+              return (
+                <div className="composer-image browser-context-image" key={selection.id}>
+                  <img src={selection.image.dataUrl} alt="" />
+                  <span className="composer-image-name" title={`${selection.title} · ${label}`}>
+                    {label}
+                  </span>
+                  <span className="browser-context-source" title={selection.title}>
+                    <BrowserIcon size={10} /> {selection.title || '브라우저'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => browserSelectionStore.remove(session.key, selection.id)}
+                    title="브라우저 컨텍스트 첨부 취소"
+                    aria-label="브라우저 컨텍스트 첨부 취소"
+                  >
+                    <CloseIcon size={12} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div className="composer">
           <textarea
             ref={taRef}
             className="composer-input"
             value={input}
             placeholder={
-              stagedImages.length > 0 ? '이미지에 대해 질문해 보세요…' : '메시지를 입력하세요…'
+              stagedImages.length > 0 || browserSelections.length > 0
+                ? '첨부한 화면이나 요소에 대해 질문해 보세요…'
+                : '메시지를 입력하세요…'
             }
             onChange={(e) => setInput(e.target.value)}
             onPaste={handleImagePaste}
@@ -1233,10 +1329,12 @@ export const Chat: React.FC<{
             className="composer-attach"
             onClick={() => imageInputRef.current?.click()}
             disabled={
-              streaming || preparingImages > 0 || stagedImages.length >= CHAT_IMAGE_MAX_COUNT
+              streaming ||
+              preparingImages > 0 ||
+              stagedImages.length + browserSelections.length >= CHAT_IMAGE_MAX_COUNT
             }
             title={
-              stagedImages.length >= CHAT_IMAGE_MAX_COUNT
+              stagedImages.length + browserSelections.length >= CHAT_IMAGE_MAX_COUNT
                 ? `이미지는 최대 ${CHAT_IMAGE_MAX_COUNT}장까지 첨부할 수 있습니다`
                 : preparingImages > 0
                   ? '이미지를 준비하는 중…'
@@ -1265,7 +1363,10 @@ export const Chat: React.FC<{
             <button
               className="composer-send"
               onClick={() => void send()}
-              disabled={(!input.trim() && stagedImages.length === 0) || preparingImages > 0}
+              disabled={
+                (!input.trim() && stagedImages.length === 0 && browserSelections.length === 0) ||
+                preparingImages > 0
+              }
               title="전송"
               aria-label="전송"
             >

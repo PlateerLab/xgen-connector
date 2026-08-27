@@ -4,6 +4,8 @@ import {
   type BrowserAddressSearchConfig,
   type BrowserPageInfo,
   type BrowserPopupDecision,
+  type BrowserSelectionMode,
+  type BrowserSelectionSession,
 } from '../../../core/browser';
 import { xgen } from '../bridge';
 import { useBrowserState } from '../browser-state';
@@ -12,9 +14,11 @@ import {
   BrowserIcon,
   CloseIcon,
   ForwardIcon,
+  ElementSelectIcon,
   PopupBlockedIcon,
   PlusIcon,
   RefreshIcon,
+  RegionSelectIcon,
   StopIcon,
 } from '../brand/icons';
 
@@ -29,8 +33,10 @@ export const BrowserPane: React.FC<{
   workflowId: string;
   workflowName: string;
   addressSearch?: BrowserAddressSearchConfig;
+  selection: BrowserSelectionSession | null;
+  onStartSelection: (page: BrowserPageInfo, mode: BrowserSelectionMode) => void;
   onSurface: (pageId: string, rect: BrowserSurfaceRect | null) => void;
-}> = ({ workflowId, workflowName, addressSearch, onSurface }) => {
+}> = ({ workflowId, workflowName, addressSearch, selection, onStartSelection, onSurface }) => {
   const state = useBrowserState();
   const pages = useMemo(
     () => state.pages.filter((page) => page.workflowId === workflowId && page.mode === 'shared'),
@@ -226,6 +232,38 @@ export const BrowserPane: React.FC<{
           spellCheck={false}
           placeholder={addressSearch?.enabled ? 'URL 또는 검색어 입력' : 'URL 입력'}
         />
+        <span className="browser-toolbar-divider" aria-hidden />
+        <button
+          type="button"
+          className={
+            selection &&
+            active &&
+            selection.pageId === active.pageId &&
+            selection.mode === 'element'
+              ? 'active'
+              : ''
+          }
+          disabled={!active || active.loading === 'loading'}
+          aria-label="요소를 채팅 컨텍스트로 선택"
+          title="요소 선택 후 채팅에 첨부"
+          onClick={() => active && onStartSelection(active, 'element')}
+        >
+          <ElementSelectIcon size={15} />
+        </button>
+        <button
+          type="button"
+          className={
+            selection && active && selection.pageId === active.pageId && selection.mode === 'region'
+              ? 'active'
+              : ''
+          }
+          disabled={!active || active.loading === 'loading'}
+          aria-label="영역을 채팅 컨텍스트로 선택"
+          title="영역을 드래그하여 채팅에 첨부"
+          onClick={() => active && onStartSelection(active, 'region')}
+        >
+          <RegionSelectIcon size={15} />
+        </button>
       </form>
       {popupRequest && (
         <div className="browser-popup-notice" role="alert">

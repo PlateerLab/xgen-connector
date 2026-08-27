@@ -60,7 +60,9 @@ enter your **XGEN server URL** and **account**, then pick an agent and chat.
 - **Agent browser (opt-in)** — each workflow gets an isolated browser tab with
   multiple visible pages plus a private background page for untargeted agent
   calls. Account cookies persist in an account-hashed Electron partition, while
-  page state remains workflow-scoped. Enable it in Settings → 로컬 도구.
+  page state remains workflow-scoped. The browser toolbar can attach one element
+  or a dragged region to the matching agent chat as sanitized DOM context plus a
+  cropped screenshot. Enable it in Settings → 로컬 도구.
 - **Auto-update** — via GitHub Releases (`electron-updater`); toggle in settings.
 - **Settings** — server URL, theme (system/light/dark), auto-update.
 - **Floating avatar overlay** — a Geny-style transparent, always-on-top,

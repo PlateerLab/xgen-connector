@@ -29,7 +29,7 @@ import type {
   HistoryAttachment,
   ToolEvent,
 } from '../../core/index';
-import { stripBrowserContext } from '../../core/browser';
+import { stripBrowserContext, type BrowserSelectionResult } from '../../core/browser';
 import { stripTeamsContext } from '../../core/teams-bridge';
 import { xgen } from './bridge';
 
@@ -45,6 +45,14 @@ export interface ChatMsg {
   screenshot?: { sourceName: string; width: number; height: number };
   /** 사용자가 붙였거나 이력에서 복원한 그림. 미리보기 URL은 열린 세션에서만 보관한다. */
   images?: ChatImageAttachment[];
+  /** 이 턴에 함께 보낸 브라우저 요소/영역의 감사용 요약. */
+  browserSelections?: Array<{
+    id: string;
+    title: string;
+    url: string;
+    kind: 'element' | 'region';
+    elementCount: number;
+  }>;
   /** 이 턴의 실행 환경(커넥터 전용 status 이벤트) — 이 PC / 서버 sandbox / 차단(blocked). */
   surface?: 'connector_local' | 'server_sandbox' | 'blocked';
   /** 서버 폴백 사유·차단 사유·로컬 안내(동기화 미완료 등) — 있으면 배지 옆에 표시. */
@@ -124,7 +132,11 @@ export interface ChatImageAttachment {
 
 /** Injected transport — the renderer passes the real xgen bridge. */
 export interface SessionTransport {
-  stream(req: ChatRequest, onEvent: (e: ChatEvent) => void): { cancel: () => void };
+  stream(
+    req: ChatRequest,
+    onEvent: (e: ChatEvent) => void,
+    context?: { browserSelections?: BrowserSelectionResult[] },
+  ): { cancel: () => void };
   uploadWorkspaceImage?: (request: {
     workflowId: string;
     interactionId: string;
@@ -450,6 +462,7 @@ export class SessionStore {
     text: string,
     shot?: OutgoingShot | null,
     images: ChatImageAttachment[] = [],
+    browserSelections: BrowserSelectionResult[] = [],
   ): void {
     const s = this.map.get(key);
     const rt = this.rt.get(key);
@@ -465,6 +478,16 @@ export class SessionStore {
       role: 'user',
       text,
       images: attached.length > 0 ? attached : undefined,
+      browserSelections:
+        browserSelections.length > 0
+          ? browserSelections.map((selection) => ({
+              id: selection.id,
+              title: selection.title,
+              url: selection.url,
+              kind: selection.kind,
+              elementCount: selection.elements.length,
+            }))
+          : undefined,
       screenshot: shot
         ? {
             sourceName: shot.sourceName ?? '화면',
@@ -509,6 +532,7 @@ export class SessionStore {
           interactionId: s.interactionId,
         },
         (ev) => this.onEvent(key, ev),
+        { browserSelections },
       );
       rt.cancel = handle.cancel;
     };

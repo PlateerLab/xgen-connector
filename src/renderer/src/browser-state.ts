@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { BrowserState } from '../../core/browser';
+import type { BrowserSelectionResult, BrowserState } from '../../core/browser';
 import { prependBrowserContext } from '../../core/browser';
 import type { ChatRequest } from '../../core/types';
 import { xgen } from './bridge';
@@ -42,9 +42,9 @@ class BrowserStateStore {
 
   getSnapshot = (): BrowserState => this.snapshot;
 
-  contextualize(request: ChatRequest): ChatRequest {
+  contextualize(request: ChatRequest, selections: BrowserSelectionResult[] = []): ChatRequest {
     const decorate = (text: string) =>
-      prependBrowserContext(text, request.workflowId, this.snapshot);
+      prependBrowserContext(text, request.workflowId, this.snapshot, selections);
     if (typeof request.input === 'string') return { ...request, input: decorate(request.input) };
     if (Array.isArray(request.input)) {
       let applied = false;
@@ -65,6 +65,19 @@ class BrowserStateStore {
         return block;
       });
       return applied ? { ...request, input } : request;
+    }
+    if (
+      request.input &&
+      typeof request.input === 'object' &&
+      typeof (request.input as Record<string, unknown>).input_str === 'string'
+    ) {
+      return {
+        ...request,
+        input: {
+          ...(request.input as Record<string, unknown>),
+          input_str: decorate(String((request.input as Record<string, unknown>).input_str)),
+        },
+      };
     }
     return request;
   }

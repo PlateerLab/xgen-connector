@@ -4,13 +4,20 @@ import { sessionStore, useSessions } from '../session';
 import { teamsStore, useTeams } from '../teams';
 import { teamsContextStore } from '../teams-context';
 import { useBrowserState } from '../browser-state';
+import { browserSelectionStore } from '../browser-selection-store';
 import type {
   Agent,
   CurrentUser,
   TeamsRoom as TeamsRoomModel,
   TeamsShareRef,
 } from '../../../core/index';
-import type { BrowserConnectionEvent } from '../../../core/browser';
+import type {
+  BrowserConnectionEvent,
+  BrowserPageInfo,
+  BrowserSelectionMode,
+  BrowserSelectionResult,
+  BrowserSelectionSession,
+} from '../../../core/browser';
 import type { ConnectorConfig } from '../../../main/config';
 import { Chat } from './Chat';
 import { Settings } from './Settings';
@@ -143,6 +150,7 @@ export const Workspace: React.FC<{
   const [drag, setDrag] = useState<DragPreview | null>(null);
   const [resizingSplit, setResizingSplit] = useState(false);
   const [surfaceRects, setSurfaceRects] = useState<Record<string, BrowserSurfaceRect>>({});
+  const [browserSelection, setBrowserSelection] = useState<BrowserSelectionSession | null>(null);
   const layoutRef = useRef(layout);
   const layoutHostRef = useRef<HTMLDivElement | null>(null);
   const asideRef = useRef<HTMLElement | null>(null);
@@ -210,6 +218,7 @@ export const Workspace: React.FC<{
   useEffect(() => {
     teamsStore.reset();
     teamsContextStore.reset();
+    browserSelectionStore.reset();
     teamsStore.init(user.userId, config.teams?.lastReadAt, {
       mutedRooms: config.teams?.mutedRooms,
       notifications: config.teams?.notifications,
@@ -492,6 +501,7 @@ export const Workspace: React.FC<{
       sessionStore.endChat(tab.sessionKey);
       // 세션이 사라지면 그 세션에 매달린 Teams 문맥 설정도 함께 버린다.
       teamsContextStore.forgetSession(tab.sessionKey);
+      browserSelectionStore.forgetSession(tab.sessionKey);
     }
     if (tab.kind === 'browser' && tab.workflowId) void xgen.browser.closeWorkflow(tab.workflowId);
     // 방 탭을 닫으면 그 방의 WebSocket 도 접는다 — 열어 둔 방 수만큼만 연결한다.
@@ -727,6 +737,78 @@ export const Workspace: React.FC<{
     [browserState.pages],
   );
 
+  const startBrowserSelection = useCallback(
+    async (page: BrowserPageInfo, mode: BrowserSelectionMode) => {
+      if (browserSelection?.pageId === page.pageId && browserSelection.mode === mode) {
+        await xgen.browser.cancelSelection(browserSelection.token).catch(() => false);
+        setBrowserSelection(null);
+        return;
+      }
+      if (browserSelection) {
+        await xgen.browser.cancelSelection(browserSelection.token).catch(() => false);
+      }
+      try {
+        const next = await xgen.browser.beginSelection({
+          pageId: page.pageId,
+          generation: page.generation,
+          mode,
+        });
+        setBrowserSelection(next);
+        setNotice('');
+      } catch (error) {
+        setBrowserSelection(null);
+        setNotice(error instanceof Error ? error.message : '브라우저 선택을 시작하지 못했습니다.');
+      }
+    },
+    [browserSelection],
+  );
+
+  const completeBrowserSelection = useCallback(
+    (selection: BrowserSelectionResult) => {
+      setBrowserSelection(null);
+      const activeChatKey = layoutRef.current.groups
+        .map((group) => group.tabs.find((tab) => tab.id === group.activeTabId))
+        .find(
+          (tab) =>
+            tab?.kind === 'chat' && tab.workflowId === selection.workflowId && !!tab.sessionKey,
+        )?.sessionKey;
+      const existing = activeChatKey
+        ? sessions.find((session) => session.key === activeChatKey)
+        : [...sessions]
+            .filter((session) => session.agent.workflowId === selection.workflowId)
+            .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      const page = browserState.pages.find((item) => item.pageId === selection.pageId);
+      const agent =
+        existing?.agent ??
+        fallbackBrowserAgent({
+          phase: 'connected',
+          pageId: selection.pageId,
+          workflowId: selection.workflowId,
+          workflowName: page?.workflowName || selection.title || selection.workflowId,
+        });
+      const sessionKey = existing?.key ?? sessionStore.openNew(agent);
+      browserSelectionStore.stage(sessionKey, selection);
+      setNotice(
+        `${selection.kind === 'element' ? '요소' : '영역'}와 캡처 이미지를 ${agent.workflowName} 채팅에 추가했습니다.`,
+      );
+    },
+    [browserState.pages, sessions],
+  );
+
+  useEffect(() => {
+    if (!browserSelection) return;
+    const page = browserState.pages.find((item) => item.pageId === browserSelection.pageId);
+    if (
+      page &&
+      page.generation === browserSelection.generation &&
+      browserState.activeByWorkflow[page.workflowId] === page.pageId
+    ) {
+      return;
+    }
+    void xgen.browser.cancelSelection(browserSelection.token).catch(() => false);
+    setBrowserSelection(null);
+  }, [browserSelection, browserState.activeByWorkflow, browserState.pages]);
+
   const displayName = user.username || '사용자';
   const avatarActive = layout.groups.some(
     (group) => group.id === layout.focusedGroupId && group.activeTabId === 'avatar',
@@ -762,6 +844,8 @@ export const Workspace: React.FC<{
           workflowId={active.workflowId}
           workflowName={active.workflowName || active.workflowId}
           addressSearch={config.browser?.addressSearch}
+          selection={browserSelection}
+          onStartSelection={(page, mode) => void startBrowserSelection(page, mode)}
           onSurface={reportSurface}
         />
       );
@@ -964,7 +1048,11 @@ export const Workspace: React.FC<{
         pages={browserState.pages}
         rects={surfaceRects}
         dragging={!!drag || resizingSplit}
+        selection={browserSelection}
         onFocusPage={focusBrowserPage}
+        onSelectionComplete={completeBrowserSelection}
+        onSelectionCancel={() => setBrowserSelection(null)}
+        onSelectionError={setNotice}
       />
     </div>
   );

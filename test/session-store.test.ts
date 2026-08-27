@@ -12,6 +12,7 @@ import {
   type SessionTransport,
 } from '../src/renderer/src/session-store'
 import type { Agent, ChatEvent, HistoryAttachment } from '../src/core/index'
+import type { BrowserSelectionResult } from '../src/core/browser'
 
 function agent(workflowId: string, name = workflowId): Agent {
   return {
@@ -34,6 +35,7 @@ function agent(workflowId: string, name = workflowId): Agent {
 interface FakeStream {
   interactionId: string
   input: unknown
+  browserSelections?: BrowserSelectionResult[]
   onEvent: (e: ChatEvent) => void
   cancelled: boolean
 }
@@ -44,8 +46,14 @@ function makeStore(
   const streams: FakeStream[] = []
   let historyCalls = 0
   const transport: SessionTransport = {
-    stream(req, onEvent) {
-      const s: FakeStream = { interactionId: req.interactionId, input: req.input, onEvent, cancelled: false }
+    stream(req, onEvent, context) {
+      const s: FakeStream = {
+        interactionId: req.interactionId,
+        input: req.input,
+        browserSelections: context?.browserSelections,
+        onEvent,
+        cancelled: false,
+      }
       streams.push(s)
       return { cancel: () => { s.cancelled = true } }
     },
@@ -60,6 +68,36 @@ function makeStore(
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
+
+function browserSelection(): BrowserSelectionResult {
+  return {
+    id: 'sel-1',
+    workflowId: 'A',
+    pageId: 'page-1',
+    generation: 2,
+    kind: 'element',
+    title: 'Example',
+    url: 'https://example.com/page',
+    rect: { x: 10, y: 20, width: 100, height: 40 },
+    viewport: { width: 800, height: 600, scrollX: 0, scrollY: 0 },
+    elements: [
+      {
+        tag: 'button',
+        role: 'button',
+        name: '저장',
+        rect: { x: 10, y: 20, width: 100, height: 40 },
+      },
+    ],
+    image: {
+      dataUrl: 'data:image/png;base64,AAAA',
+      name: 'browser-selection-sel-1.png',
+      mime: 'image/png',
+      size: 3,
+      width: 100,
+      height: 40,
+    },
+  }
+}
 
 test('openNew 는 세션을 만들고 활성화한다', () => {
   const { store } = makeStore()
@@ -111,6 +149,37 @@ test('send 는 붙인 이미지 여러 장을 멀티모달 입력과 사용자 �
     { type: 'text', text: '두 그림을 비교해줘' },
     { type: 'image_url', image_url: { url: images[0].dataUrl } },
     { type: 'image_url', image_url: { url: images[1].dataUrl } },
+  ])
+})
+
+test('브라우저 선택 스냅샷을 전송 수명과 사용자 메시지에 함께 보존한다', () => {
+  const { store, streams } = makeStore()
+  const key = store.openNew(agent('A'))
+  const selection = browserSelection()
+  store.send(
+    key,
+    '이 버튼은 뭐야?',
+    null,
+    [
+      {
+        dataUrl: selection.image.dataUrl,
+        name: selection.image.name,
+        mime: selection.image.mime,
+        size: selection.image.size,
+      },
+    ],
+    [selection],
+  )
+
+  assert.equal(streams[0].browserSelections?.[0], selection)
+  assert.deepEqual(store.get(key)!.messages[0].browserSelections, [
+    {
+      id: 'sel-1',
+      title: 'Example',
+      url: 'https://example.com/page',
+      kind: 'element',
+      elementCount: 1,
+    },
   ])
 })
 

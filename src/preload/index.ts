@@ -50,6 +50,12 @@ import type {
   BrowserNavigateRequest,
   BrowserPageInfo,
   BrowserPopupResolveRequest,
+  BrowserSelectionBeginRequest,
+  BrowserSelectionCompleteRequest,
+  BrowserSelectionInspectRequest,
+  BrowserSelectionPreview,
+  BrowserSelectionResult,
+  BrowserSelectionSession,
   BrowserState,
 } from '../core/browser';
 
@@ -394,6 +400,18 @@ const api = {
       ipcRenderer.invoke(CHANNELS.browserNavigate, request),
     activate: (pageId: string): Promise<BrowserPageInfo> =>
       ipcRenderer.invoke(CHANNELS.browserActivate, pageId),
+    beginSelection: (request: BrowserSelectionBeginRequest): Promise<BrowserSelectionSession> =>
+      ipcRenderer.invoke(CHANNELS.browserSelectionBegin, request),
+    inspectSelection: (
+      request: BrowserSelectionInspectRequest,
+    ): Promise<BrowserSelectionPreview | null> =>
+      ipcRenderer.invoke(CHANNELS.browserSelectionInspect, request),
+    completeSelection: (
+      request: BrowserSelectionCompleteRequest,
+    ): Promise<BrowserSelectionResult> =>
+      ipcRenderer.invoke(CHANNELS.browserSelectionComplete, request),
+    cancelSelection: (token: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.browserSelectionCancel, token),
     resolvePopup: (request: BrowserPopupResolveRequest): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.browserPopupResolve, request),
     close: (pageId: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.browserClose, pageId),
