@@ -123,6 +123,10 @@ export const CHANNELS = {
   browserSelectionComplete: 'browser:selectionComplete',
   browserSelectionCancel: 'browser:selectionCancel',
   browserPopupResolve: 'browser:popupResolve',
+  browserHistorySuggestions: 'browser:historySuggestions',
+  browserHistoryList: 'browser:historyList',
+  browserHistoryRemove: 'browser:historyRemove',
+  browserHistoryClear: 'browser:historyClear',
   browserClose: 'browser:close',
   browserCloseWorkflow: 'browser:closeWorkflow',
 

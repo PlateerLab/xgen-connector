@@ -26,6 +26,7 @@ import {
 } from './browser-selection';
 import { CdpPageProxy } from './cdp-page-proxy';
 import { allowedBrowserUrl, browserPartition } from './browser-security';
+import type { BrowserHistoryRuntimeEvent } from './browser-history';
 
 interface BrowserPageRuntime {
   info: BrowserPageInfo;
@@ -89,6 +90,7 @@ export class BrowserRuntime {
     origin: string,
     permission: BrowserPopupPermission,
   ) => void = () => {};
+  private notifyHistory: (event: BrowserHistoryRuntimeEvent) => void = () => {};
   private pendingConnections = new Map<string, PendingBrowserConnection>();
   private alertedConnections = new Set<string>();
   private hardenedPartitions = new Set<string>();
@@ -111,6 +113,10 @@ export class BrowserRuntime {
     listener: (partition: string, origin: string, permission: BrowserPopupPermission) => void,
   ): void {
     this.persistPopupPermission = listener;
+  }
+
+  setHistoryListener(listener: (event: BrowserHistoryRuntimeEvent) => void): void {
+    this.notifyHistory = listener;
   }
 
   configure(options: {
@@ -412,6 +418,23 @@ export class BrowserRuntime {
         canGoForward: contents.navigationHistory.canGoForward(),
       });
     };
+    const emitHistory = (type: BrowserHistoryRuntimeEvent['type']) => {
+      if (
+        !isCurrent() ||
+        contents.isDestroyed() ||
+        runtime.info.mode !== 'shared' ||
+        runtime.info.url === 'about:blank'
+      ) {
+        return;
+      }
+      this.notifyHistory({
+        type,
+        partition: runtime.info.partition,
+        url: runtime.info.url,
+        title: runtime.info.title,
+        visitedAt: type === 'visit' ? Date.now() : undefined,
+      });
+    };
     contents.on('will-navigate', (event, url) => {
       if (!allowedBrowserUrl(url)) event.preventDefault();
     });
@@ -426,6 +449,11 @@ export class BrowserRuntime {
       updateLocation();
       this.patch(runtime, { loading: 'idle', error: undefined });
     });
+    contents.on('did-finish-load', () => {
+      if (!isCurrent()) return;
+      updateLocation();
+      emitHistory('visit');
+    });
     const navigated = () => {
       if (!isCurrent()) return;
       this.clearPendingPopupsForPage(runtime.info.pageId, false);
@@ -433,9 +461,15 @@ export class BrowserRuntime {
       updateLocation();
     };
     contents.on('did-navigate', navigated);
-    contents.on('did-navigate-in-page', navigated);
+    contents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+      if (!isMainFrame) return;
+      navigated();
+      emitHistory('visit');
+    });
     contents.on('page-title-updated', (_event, title) => {
-      if (isCurrent()) this.patch(runtime, { title: title || runtime.info.title });
+      if (!isCurrent()) return;
+      this.patch(runtime, { title: title || runtime.info.title });
+      emitHistory('title');
     });
     contents.on('did-fail-load', (_event, code, description, validatedUrl, isMainFrame) => {
       if (!isCurrent() || !isMainFrame || code === -3) return;

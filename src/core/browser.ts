@@ -89,6 +89,45 @@ export interface BrowserState {
   popupRequests: BrowserPopupRequest[];
 }
 
+/** One unique URL returned by the account-local omnibox history index. */
+export interface BrowserHistorySuggestion {
+  placeId: string;
+  url: string;
+  title: string;
+  lastVisitedAt: number;
+  visitCount: number;
+}
+
+/** One chronological visit shown in the browser history panel. */
+export interface BrowserHistoryVisit {
+  visitId: string;
+  placeId: string;
+  url: string;
+  title: string;
+  visitedAt: number;
+}
+
+export interface BrowserHistorySuggestionsRequest {
+  query?: string;
+  limit?: number;
+}
+
+export interface BrowserHistoryListRequest {
+  offset?: number;
+  limit?: number;
+}
+
+export interface BrowserHistoryListResult {
+  items: BrowserHistoryVisit[];
+  total: number;
+}
+
+/** Remove one visit or every visit for one URL. Exactly one id is expected. */
+export interface BrowserHistoryRemoveRequest {
+  visitId?: string;
+  placeId?: string;
+}
+
 export interface BrowserConnectionEvent {
   phase: 'required' | 'connected' | 'timeout' | 'cancelled';
   pageId: string;

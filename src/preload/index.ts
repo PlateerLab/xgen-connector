@@ -47,6 +47,11 @@ import type { SystemMetrics } from '../core/system-metrics';
 import type {
   BrowserConnectionEvent,
   BrowserCreateRequest,
+  BrowserHistoryListRequest,
+  BrowserHistoryListResult,
+  BrowserHistoryRemoveRequest,
+  BrowserHistorySuggestion,
+  BrowserHistorySuggestionsRequest,
   BrowserNavigateRequest,
   BrowserPageInfo,
   BrowserPopupResolveRequest,
@@ -414,6 +419,15 @@ const api = {
       ipcRenderer.invoke(CHANNELS.browserSelectionCancel, token),
     resolvePopup: (request: BrowserPopupResolveRequest): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.browserPopupResolve, request),
+    historySuggestions: (
+      request: BrowserHistorySuggestionsRequest,
+    ): Promise<BrowserHistorySuggestion[]> =>
+      ipcRenderer.invoke(CHANNELS.browserHistorySuggestions, request),
+    historyList: (request: BrowserHistoryListRequest): Promise<BrowserHistoryListResult> =>
+      ipcRenderer.invoke(CHANNELS.browserHistoryList, request),
+    historyRemove: (request: BrowserHistoryRemoveRequest): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.browserHistoryRemove, request),
+    historyClear: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.browserHistoryClear),
     close: (pageId: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.browserClose, pageId),
     closeWorkflow: (workflowId: string): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.browserCloseWorkflow, workflowId),

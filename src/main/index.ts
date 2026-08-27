@@ -115,9 +115,16 @@ import {
 } from './connection-security';
 import { createSsoWindowOptions } from './sso-window-options';
 import { getBrowserRuntime } from './browser-runtime';
+import { BrowserHistoryStore } from './browser-history';
 import { getBrowserToolProvider } from './browser-tools';
 import { allowedBrowserUrl } from './browser-security';
-import type { BrowserPopupPermission, BrowserPopupResolveRequest } from '../core/browser';
+import type {
+  BrowserHistoryListRequest,
+  BrowserHistoryRemoveRequest,
+  BrowserHistorySuggestionsRequest,
+  BrowserPopupPermission,
+  BrowserPopupResolveRequest,
+} from '../core/browser';
 import { systemMetricsSampler } from './system-metrics';
 import { TeamsSocketHub } from './teams-ws';
 import {
@@ -136,6 +143,12 @@ import {
 // keychain.ts 에서 별도로 'xgen-connector' 로 고정돼 있어 이 값과 무관하다).
 // app.getPath 를 부르는 어떤 코드보다도 먼저 실행돼야 하므로 파일 최상단에 둔다.
 app.setName('XGEN-Connector');
+
+let browserHistoryStore: BrowserHistoryStore | null = null;
+function getBrowserHistoryStore(): BrowserHistoryStore {
+  if (!browserHistoryStore) browserHistoryStore = new BrowserHistoryStore(app.getPath('userData'));
+  return browserHistoryStore;
+}
 
 const IS_LINUX = process.platform === 'linux';
 
@@ -310,6 +323,11 @@ function createWindow(): void {
   browserRuntime.setConnectionListener((event) =>
     safeSend(mainWindow, CHANNELS.browserConnectionEvent, event),
   );
+  browserRuntime.setHistoryListener((event) => {
+    void getBrowserHistoryStore()
+      .apply(event)
+      .catch((error) => console.error('[browser-history] 기록 실패:', error));
+  });
   browserRuntime.setPopupPermissionListener(
     (partition: string, origin: string, permission: BrowserPopupPermission) => {
       const cfg = loadConfig();
@@ -2327,6 +2345,32 @@ ipcMain.handle(CHANNELS.browserPopupResolve, (event, request: BrowserPopupResolv
   }
   return getBrowserRuntime().resolvePopup(request);
 });
+ipcMain.handle(
+  CHANNELS.browserHistorySuggestions,
+  (_event, request: BrowserHistorySuggestionsRequest = {}) => {
+    const partition = getBrowserRuntime().partition();
+    return partition
+      ? getBrowserHistoryStore().suggestions(partition, request.query, request.limit)
+      : [];
+  },
+);
+ipcMain.handle(CHANNELS.browserHistoryList, (_event, request: BrowserHistoryListRequest = {}) => {
+  const partition = getBrowserRuntime().partition();
+  return partition ? getBrowserHistoryStore().list(partition, request) : { items: [], total: 0 };
+});
+ipcMain.handle(
+  CHANNELS.browserHistoryRemove,
+  (_event, request: BrowserHistoryRemoveRequest = {}) => {
+    const partition = getBrowserRuntime().partition();
+    return partition ? getBrowserHistoryStore().remove(partition, request) : false;
+  },
+);
+ipcMain.handle(CHANNELS.browserHistoryClear, async () => {
+  const partition = getBrowserRuntime().partition();
+  if (!partition) return false;
+  await getBrowserHistoryStore().clear(partition);
+  return true;
+});
 ipcMain.handle(CHANNELS.browserClose, async (_e, pageId: string) => {
   await getBrowserRuntime().close(pageId);
   return true;
@@ -3394,6 +3438,7 @@ if (!gotLock) {
   app.on('before-quit', () => {
     appQuitting = true;
     saveOverlayGeometry(true); // don't drop a pending move/resize on quit
+    void browserHistoryStore?.flushAll().catch(() => undefined);
   });
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
