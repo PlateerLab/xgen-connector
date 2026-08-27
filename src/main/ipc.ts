@@ -99,6 +99,7 @@ export const CHANNELS = {
   agentToolGet: 'agent:toolGet',
   agentWsTree: 'agent:wsTree',
   agentWsFile: 'agent:wsFile',
+  agentWsBinary: 'agent:wsBinary',
   agentWsUpload: 'agent:wsUpload',
 
   chatStart: 'chat:start',

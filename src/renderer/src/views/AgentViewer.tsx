@@ -12,7 +12,7 @@
  * 시각 언어는 커넥터 기존 것을 따른다(ToolLogModal 의 배지·펼침 행, --panel/
  * --border/--text-dim 토큰, --font-mono 코드 블록).
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { xgen, copyText } from '../bridge';
 import { BotIcon, CopyIcon, FolderIcon, FolderOpenIcon, DocIcon } from '../brand/icons';
 import type { AgentViewerSub } from './workspace-layout';
@@ -814,6 +814,29 @@ interface TreeNode {
   children: TreeNode[];
 }
 
+const WORKSPACE_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
+const WORKSPACE_IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  avif: 'image/avif',
+};
+
+function isWorkspaceImage(path: string): boolean {
+  const name = path.split('/').pop() ?? '';
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 && WORKSPACE_IMAGE_EXTS.has(name.slice(dot + 1).toLowerCase());
+}
+
+function workspaceImageMime(path: string): string {
+  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+  return WORKSPACE_IMAGE_MIME[ext] ?? 'application/octet-stream';
+}
+
 function buildTree(files: WsNode[]): TreeNode[] {
   const byPath = new Map<string, TreeNode>();
   for (const n of files) byPath.set(n.path, { node: n, children: [] });
@@ -880,28 +903,64 @@ const StorageView: React.FC<{ workflowId: string }> = ({ workflowId }) => {
   const list = useLoader(() => xgen.agentData.workspaceTree(workflowId), [workflowId]);
   const [sel, setSel] = useState<string | null>(null);
   const [content, setContent] = useState<string>('');
+  const [imageUrl, setImageUrl] = useState<string>('');
   const [detailErr, setDetailErr] = useState<string | null>(null);
   const [detailNote, setDetailNote] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const loadId = useRef(0);
+
+  useEffect(
+    () => () => {
+      if (imageUrl) URL.revokeObjectURL(imageUrl);
+    },
+    [imageUrl],
+  );
+  useEffect(
+    () => () => {
+      // 언마운트 뒤 끝난 요청이 Blob URL을 만들거나 상태를 갱신하지 못하게 한다.
+      loadId.current += 1;
+    },
+    [],
+  );
 
   const openFile = useCallback(
     async (n: WsNode) => {
+      const requestId = ++loadId.current;
       setSel(n.path);
       setContent('');
+      setImageUrl('');
       setDetailErr(null);
       setDetailNote(null);
       setDetailLoading(true);
       try {
-        const f = await xgen.agentData.workspaceFile(workflowId, n.path);
-        setContent(f.content);
+        if (isWorkspaceImage(n.path)) {
+          const file = await xgen.agentData.workspaceBinary(workflowId, n.path);
+          if (requestId !== loadId.current) return;
+          // Uint8Array 가 더 큰 버퍼 위의 뷰일 수 있다(IPC) — 선택한 파일 바이트만 담는다.
+          const bytes = file.bytes;
+          const buffer = bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength,
+          ) as ArrayBuffer;
+          setImageUrl(
+            URL.createObjectURL(
+              new Blob([buffer], { type: file.contentType || workspaceImageMime(n.path) }),
+            ),
+          );
+        } else {
+          const file = await xgen.agentData.workspaceFile(workflowId, n.path);
+          if (requestId !== loadId.current) return;
+          setContent(file.content);
+        }
       } catch (e) {
+        if (requestId !== loadId.current) return;
         // 서버는 바이너리에 415, 과대 파일에 413 을 준다 — 오류가 아니라 안내로.
         const msg = errText(e);
         if (/→ 415/.test(msg)) setDetailNote('미리보기할 수 없는 파일입니다(바이너리).');
         else if (/→ 413/.test(msg)) setDetailNote('파일이 너무 커서 미리보기할 수 없습니다.');
         else setDetailErr(msg);
       } finally {
-        setDetailLoading(false);
+        if (requestId === loadId.current) setDetailLoading(false);
       }
     },
     [workflowId],
@@ -925,6 +984,16 @@ const StorageView: React.FC<{ workflowId: string }> = ({ workflowId }) => {
         {!sel && !detailLoading && <div className="viewer-note">파일을 고르면 미리보기합니다.</div>}
         <StateNote loading={detailLoading} error={detailErr} />
         {detailNote && <div className="viewer-note">{detailNote}</div>}
+        {sel && imageUrl && (
+          <>
+            <div className="viewer-detail-head">
+              <strong className="viewer-path">{sel}</strong>
+            </div>
+            <div className="viewer-image-preview">
+              <img src={imageUrl} alt={sel.split('/').pop() ?? sel} />
+            </div>
+          </>
+        )}
         {sel && content && (
           <>
             <div className="viewer-detail-head">

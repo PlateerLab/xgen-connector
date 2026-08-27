@@ -304,6 +304,21 @@ export interface WorkspaceFile {
   encoding: string;
 }
 
+export interface WorkspaceBinary {
+  bytes: Uint8Array;
+  contentType: string;
+}
+
+/** `/storage/list` 는 workspace 루트 상대 경로를 돌려주지만 읽기 API는
+ * 스토리지 루트 상대(`workspace/...`)를 받는다. 두 계약의 경계를 여기서만
+ * 보정해 호출부마다 접두사를 붙였다 뗐다 하지 않게 한다. */
+export function workspaceStoragePath(path: string): string {
+  const clean = String(path ?? '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '');
+  return clean === 'workspace' || clean.startsWith('workspace/') ? clean : `workspace/${clean}`;
+}
+
 export class AgentDataApi {
   constructor(private http: HttpClient) {}
 
@@ -401,9 +416,17 @@ export class AgentDataApi {
 
   /** 텍스트 파일 미리보기. 바이너리/과대 파일은 서버가 415/413 으로 거부한다. */
   workspaceFile(workflowId: string, path: string): Promise<WorkspaceFile> {
-    const params = new URLSearchParams({ path });
+    const params = new URLSearchParams({ path: workspaceStoragePath(path) });
     return this.http.get<WorkspaceFile>(
       `/api/agentflow/geny-workspace/${encodeURIComponent(workflowId)}/storage/text?${params}`,
+    );
+  }
+
+  /** 원바이트 파일 읽기 — 이미지처럼 텍스트 API로 읽을 수 없는 미리보기용. */
+  workspaceBinary(workflowId: string, path: string): Promise<WorkspaceBinary> {
+    const encodedPath = workspaceStoragePath(path).split('/').map(encodeURIComponent).join('/');
+    return this.http.getBinary(
+      `/api/agentflow/geny-workspace/${encodeURIComponent(workflowId)}/storage-raw/${encodedPath}`,
     );
   }
 
