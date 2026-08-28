@@ -363,8 +363,18 @@ export type TeamsEvent =
   | { kind: 'reactions'; roomId: string; messageId: string; reactions: TeamsReaction[] }
   | { kind: 'typing'; roomId: string; userId: number; username: string; typing: boolean }
   | { kind: 'presence'; roomId: string; onlineUserIds: number[] }
-  /** 방의 사람 구성이 바뀜 — 열린 방이면 멤버 목록을 다시 읽는다. */
-  | { kind: 'members_changed'; roomId: string }
+  /**
+   * 방의 사람 구성이 바뀜. 구체적인 변경이면 사용자도 함께 전달해 UI가 REST
+   * 재조회보다 먼저 인원수와 퇴장 안내를 반영할 수 있다.
+   */
+  | {
+      kind: 'members_changed';
+      roomId: string;
+      change?: 'joined' | 'left' | 'updated';
+      userId?: number;
+      username?: string;
+      occurredAt?: string;
+    }
   /** 내가 보고 있지 않은 방의 새 메시지 (user WS). 목록 배지/알림용. */
   | { kind: 'notify'; roomId: string; message: TeamsMessage }
   /** 방 목록 자체가 바뀜 (초대/강퇴/방 정보 변경) — 목록을 다시 부른다. */

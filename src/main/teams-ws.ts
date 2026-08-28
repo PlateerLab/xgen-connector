@@ -367,11 +367,17 @@ export function handleRoomFrame(
       return;
     }
     case 'member_added':
+    case 'member_joined': {
+      emit({ kind: 'members_changed', roomId, change: 'joined', ...memberChangeOf(frame) });
+      return;
+    }
     case 'member_removed':
-    case 'member_joined':
-    case 'member_left':
+    case 'member_left': {
+      emit({ kind: 'members_changed', roomId, change: 'left', ...memberChangeOf(frame) });
+      return;
+    }
     case 'members_updated': {
-      emit({ kind: 'members_changed', roomId });
+      emit({ kind: 'members_changed', roomId, change: 'updated' });
       return;
     }
     case 'room_updated': {
@@ -391,4 +397,37 @@ export function handleRoomFrame(
       // pong 등 — 무시.
       return;
   }
+}
+
+/** 멤버 이벤트는 서버 버전에 따라 사용자 정보가 최상위 또는 member/user 안에 온다. */
+function memberChangeOf(frame: Record<string, unknown>): {
+  userId?: number;
+  username?: string;
+  occurredAt?: string;
+} {
+  const member =
+    frame.member && typeof frame.member === 'object'
+      ? (frame.member as Record<string, unknown>)
+      : undefined;
+  const user =
+    frame.user && typeof frame.user === 'object'
+      ? (frame.user as Record<string, unknown>)
+      : undefined;
+  const rawId = frame.user_id ?? member?.user_id ?? member?.id ?? user?.user_id ?? user?.id;
+  const parsedId = Number(rawId);
+  const userId = Number.isInteger(parsedId) && parsedId > 0 ? parsedId : undefined;
+  const username = String(
+    frame.username ??
+      member?.username ??
+      member?.user_name ??
+      user?.username ??
+      user?.user_name ??
+      '',
+  ).trim();
+  const occurredAt = String(frame.created_at ?? frame.occurred_at ?? frame.timestamp ?? '').trim();
+  return {
+    userId,
+    username: username || undefined,
+    occurredAt: occurredAt || undefined,
+  };
 }

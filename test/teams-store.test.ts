@@ -9,7 +9,9 @@ import {
   filterRooms,
   isPending,
   mergeMessages,
+  memberDepartureMessage,
   messageTime,
+  removeDepartedMember,
   settlePending,
   sortRooms,
   MAX_ROOM_MESSAGES,
@@ -67,6 +69,53 @@ test('mergeMessages: 시간 오름차순으로 합치고 중복 id 는 나중 �
 test('mergeMessages: 빈 입력은 기존 배열을 그대로 돌려준다 (불필요한 리렌더 방지)', () => {
   const current = [msg('a', '2026-08-21T10:00:00')];
   assert.strictEqual(mergeMessages(current, []), current);
+});
+
+test('removeDepartedMember: 퇴장자를 즉시 제거하고 중복 이벤트는 무시한다', () => {
+  const members: TeamsMember[] = [
+    { userId: 1, username: 'admin', role: 'owner', isOnline: true, joinedAt: '' },
+    {
+      userId: 2,
+      username: 'departed',
+      fullName: '퇴장 사용자',
+      role: 'member',
+      isOnline: false,
+      joinedAt: '',
+    },
+  ];
+  const removed = removeDepartedMember(members, 2);
+  assert.deepStrictEqual(
+    removed.members.map((member) => member.userId),
+    [1],
+  );
+  assert.strictEqual(removed.departed?.fullName, '퇴장 사용자');
+  assert.strictEqual(removeDepartedMember(removed.members, 2).members, removed.members);
+});
+
+test('mergeMessages: 로컬 퇴장 안내는 서버 시스템 메시지가 오면 중복 없이 교체한다', () => {
+  const member: TeamsMember = {
+    userId: 2,
+    username: 'departed',
+    fullName: '퇴장 사용자',
+    role: 'member',
+    isOnline: false,
+    joinedAt: '',
+  };
+  const local = memberDepartureMessage('r1', member, '2026-08-28T14:00:00', '1');
+  const server = msg('server-left', '2026-08-28T14:00:00', {
+    senderType: 'system',
+    senderId: '',
+    senderName: '시스템',
+    content: '퇴장 사용자 님이 퇴장했습니다.',
+  });
+  assert.deepStrictEqual(
+    mergeMessages([local], [server]).map((message) => message.id),
+    ['server-left'],
+  );
+  assert.deepStrictEqual(
+    mergeMessages([server], [local]).map((message) => message.id),
+    ['server-left'],
+  );
 });
 
 test('settlePending: 임시 메시지를 서버 확정본으로 교체한다', () => {

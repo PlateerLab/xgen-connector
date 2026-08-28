@@ -596,6 +596,26 @@ const MessageRow: React.FC<{
           </div>
         )}
 
+        {/* 반응은 시간·액션 행보다 메시지에 가깝게 둔다. 액션 행은 투명할 때도
+            높이를 차지하므로 그 뒤에 두면 반응이 다음 메시지에 붙어 보인다. */}
+        {message.reactions && message.reactions.length > 0 && (
+          <div className="teams-reactions">
+            {message.reactions.map((reaction) => (
+              <button
+                key={reaction.emoji}
+                className={`teams-reaction ${
+                  reaction.userIds.includes(Number(myId)) ? 'mine' : ''
+                }`}
+                onClick={() => onReact(reaction.emoji)}
+                title={`${reaction.count}명`}
+              >
+                <span>{reaction.emoji}</span>
+                <span className="count">{reaction.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {!editing && (
           <div className="teams-meta-row">
             <span className="teams-time">{messageTime(message.createdAt)}</span>
@@ -655,23 +675,6 @@ const MessageRow: React.FC<{
             {QUICK_REACTIONS.map((emoji) => (
               <button key={emoji} onClick={() => onReact(emoji)} title={emoji}>
                 {emoji}
-              </button>
-            ))}
-          </div>
-        )}
-        {message.reactions && message.reactions.length > 0 && (
-          <div className="teams-reactions">
-            {message.reactions.map((reaction) => (
-              <button
-                key={reaction.emoji}
-                className={`teams-reaction ${
-                  reaction.userIds.includes(Number(myId)) ? 'mine' : ''
-                }`}
-                onClick={() => onReact(reaction.emoji)}
-                title={`${reaction.count}명`}
-              >
-                <span>{reaction.emoji}</span>
-                <span className="count">{reaction.count}</span>
               </button>
             ))}
           </div>

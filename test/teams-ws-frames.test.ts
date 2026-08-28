@@ -133,12 +133,36 @@ test('presence_update: 숫자가 아닌 값은 걸러 낸다', () => {
   if (events[0]?.kind === 'presence') assert.deepEqual(events[0].onlineUserIds, [1, 2]);
 });
 
-test('멤버 변경 프레임은 열린 방의 멤버 재조회를 요청한다', () => {
-  assert.deepEqual(feed({ type: 'member_added', user_id: 3 }), [
-    { kind: 'members_changed', roomId: 'room-1' },
+test('멤버 변경 프레임은 변경 종류와 사용자를 보존한다', () => {
+  assert.deepEqual(feed({ type: 'member_added', user_id: 3, username: 'new-user' }), [
+    {
+      kind: 'members_changed',
+      roomId: 'room-1',
+      change: 'joined',
+      userId: 3,
+      username: 'new-user',
+      occurredAt: undefined,
+    },
   ]);
-  assert.deepEqual(feed({ type: 'member_removed', user_id: 3 }), [
-    { kind: 'members_changed', roomId: 'room-1' },
+  assert.deepEqual(
+    feed({
+      type: 'member_left',
+      member: { user_id: 3, username: 'departed-user' },
+      created_at: '2026-08-28T14:00:00',
+    }),
+    [
+      {
+        kind: 'members_changed',
+        roomId: 'room-1',
+        change: 'left',
+        userId: 3,
+        username: 'departed-user',
+        occurredAt: '2026-08-28T14:00:00',
+      },
+    ],
+  );
+  assert.deepEqual(feed({ type: 'members_updated' }), [
+    { kind: 'members_changed', roomId: 'room-1', change: 'updated' },
   ]);
 });
 
