@@ -228,6 +228,10 @@ export const Workspace: React.FC<{
       mutedRooms: config.teams?.mutedRooms,
       notifications: config.teams?.notifications,
     });
+    // 자식 TeamsPanel 의 최초 effect 보다 계정 reset 이 늦게 실행될 수 있다.
+    // 초기 목록 조회를 여기서 다시 시작해 reset 직전 요청이 폐기돼도 빈 목록으로
+    // 남지 않게 한다. 계정 경계와 첫 조회를 같은 effect 에 두는 것이 핵심이다.
+    void teamsStore.loadRooms();
   }, [user.userId, config.serverUrl]);
 
   // main 은 창 포커스는 알지만 split pane 안에서 무엇이 실제로 보이는지는 모른다.
@@ -933,15 +937,7 @@ export const Workspace: React.FC<{
           createdAt: '',
           createdBy: 0,
         } as TeamsRoomModel);
-      return (
-        <TeamsRoom
-          key={room.id}
-          room={room}
-          user={user}
-          onOpenSource={openSharedSource}
-          onLeft={closeRoomTabs}
-        />
-      );
+      return <TeamsRoom key={room.id} room={room} user={user} onOpenSource={openSharedSource} />;
     }
     if (active?.kind === 'settings') {
       return (
@@ -1022,7 +1018,11 @@ export const Workspace: React.FC<{
           <ExplorerPanel onOpenSettings={openSettings} myName={user.username || '나'} />
         </div>
         <div className="panel-host" style={{ display: sideView === 'teams' ? undefined : 'none' }}>
-          <TeamsPanel activeRoomId={activeRoomId} onOpenRoom={openRoomTab} />
+          <TeamsPanel
+            activeRoomId={activeRoomId}
+            onOpenRoom={openRoomTab}
+            onRoomRemoved={closeRoomTabs}
+          />
         </div>
         <div className="sidebar-resize" onMouseDown={startSidebarResize} />
       </aside>

@@ -72,10 +72,22 @@ function mapMember(raw: unknown): TeamsMember {
   return {
     userId: num(m.user_id),
     username: str(m.username) || `User-${num(m.user_id)}`,
+    fullName: str(m.full_name) || str(m.name) || undefined,
     role: role === 'owner' || role === 'admin' ? role : 'member',
     isOnline: Boolean(m.is_online),
     joinedAt: str(m.joined_at),
   };
+}
+
+/** 멤버 목록에서 현재 사용자를 제외한 1:1 상대의 표시 이름을 찾는다. */
+export function directRoomNameForViewer(
+  room: TeamsRoom,
+  members: TeamsMember[],
+  viewerUserId: string,
+): string {
+  if (!room.isDirect || !viewerUserId) return room.name;
+  const other = members.find((member) => String(member.userId) !== viewerUserId);
+  return other ? other.fullName || other.username || room.name : room.name;
 }
 
 /**
@@ -266,9 +278,26 @@ export class TeamsApi {
   // ── 방 ───────────────────────────────────────────────────
 
   /** 내가 속한 방 전체. 최근 메시지 순 정렬은 호출자(렌더러 store)가 한다. */
-  async listRooms(): Promise<TeamsRoom[]> {
+  async listRooms(viewerUserId?: string): Promise<TeamsRoom[]> {
     const res = await this.http.get<Envelope<unknown[]>>('/api/teams/rooms/list');
-    return (res.data ?? []).map(mapRoom);
+    const rooms = (res.data ?? []).map(mapRoom);
+    if (!viewerUserId) return rooms;
+
+    // 서버의 DM room.name 은 방을 만든 사람이 넘긴 target_name 이라 모든 참가자에게
+    // 같은 값으로 보인다. 각 1:1 방의 멤버를 기준으로 **나를 제외한 사람**의 이름을
+    // 계산해야 A 화면에는 B, B 화면에는 A 로 보인다. 한 방 조회가 실패해도 전체
+    // 목록을 버리지 않고 서버 이름으로 물러난다.
+    return Promise.all(
+      rooms.map(async (room) => {
+        if (!room.isDirect) return room;
+        try {
+          const members = await this.listMembers(room.id);
+          return { ...room, name: directRoomNameForViewer(room, members, viewerUserId) };
+        } catch {
+          return room;
+        }
+      }),
+    );
   }
 
   async getRoom(roomId: string): Promise<TeamsRoom | null> {
@@ -326,15 +355,32 @@ export class TeamsApi {
     return res.data ? mapRoom(res.data) : null;
   }
 
-  /**
-   * 방 삭제. **방장만** 가능하고(그 외 403), soft-delete 라 서버의 보존 기간
-   * 안에서는 웹에서 복구할 수 있다.
-   */
-  async deleteRoom(roomId: string): Promise<void> {
+  /** 마지막 멤버의 나가기를 빈 방 정리로 바꿀 때만 쓰는 내부 경로. */
+  private async deleteRoom(roomId: string): Promise<void> {
     await this.http.del(`/api/teams/rooms/${encodeURIComponent(roomId)}`);
   }
 
+  /**
+   * 사용자가 보는 방 종료 동작은 항상 "나가기" 하나다. 마지막 멤버라면 빈 방을
+   * 남기지 않도록 내부적으로 방을 정리한다. 멤버 조회나 정리 권한이 없는 구버전
+   * 서버에서는 기존 leave API 로 폴백해 사용자가 방에 갇히지 않게 한다.
+   */
   async leaveRoom(roomId: string): Promise<void> {
+    let lastMember = false;
+    try {
+      lastMember = (await this.listMembers(roomId)).length <= 1;
+    } catch {
+      // 멤버 조회를 지원하지 않는 서버에서도 나가기는 계속 가능해야 한다.
+    }
+
+    if (lastMember) {
+      try {
+        await this.deleteRoom(roomId);
+        return;
+      } catch {
+        // 방장 권한/서버 버전 차이로 자동 정리가 안 되면 일반 나가기로 폴백한다.
+      }
+    }
     await this.http.post(`/api/teams/rooms/${encodeURIComponent(roomId)}/leave`);
   }
 

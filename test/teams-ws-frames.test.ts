@@ -12,13 +12,19 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { handleRoomFrame } from '../src/main/teams-ws';
+import { handleRoomFrame, handleUserFrame } from '../src/main/teams-ws';
 import type { TeamsEvent } from '../src/core/index';
 
 /** 프레임 하나를 흘려 넣고 나온 이벤트를 모은다. */
 function feed(frame: Record<string, unknown>): TeamsEvent[] {
   const out: TeamsEvent[] = [];
   handleRoomFrame('room-1', frame, (event) => out.push(event));
+  return out;
+}
+
+function feedUser(frame: Record<string, unknown>): TeamsEvent[] {
+  const out: TeamsEvent[] = [];
+  handleUserFrame(frame, (event) => out.push(event));
   return out;
 }
 
@@ -125,6 +131,37 @@ test('presence_update: 숫자가 아닌 값은 걸러 낸다', () => {
   const events = feed({ type: 'presence_update', online_user_ids: [1, '2', null, 'x'] });
   assert.equal(events.length, 1);
   if (events[0]?.kind === 'presence') assert.deepEqual(events[0].onlineUserIds, [1, 2]);
+});
+
+test('멤버 변경 프레임은 열린 방의 멤버 재조회를 요청한다', () => {
+  assert.deepEqual(feed({ type: 'member_added', user_id: 3 }), [
+    { kind: 'members_changed', roomId: 'room-1' },
+  ]);
+  assert.deepEqual(feed({ type: 'member_removed', user_id: 3 }), [
+    { kind: 'members_changed', roomId: 'room-1' },
+  ]);
+});
+
+test('사용자 소켓의 방 초대 이벤트와 서버 별칭을 방 목록 변경으로 정규화한다', () => {
+  for (const type of ['room_invited', 'room_added', 'room_joined', 'room_created']) {
+    assert.deepEqual(feedUser({ type, room_id: 'new-room' }), [
+      { kind: 'rooms_changed', roomId: 'new-room', reason: 'invited' },
+    ]);
+  }
+});
+
+test('방 삭제 이벤트는 사용자·방 소켓 어느 쪽에서 와도 즉시 제거 이벤트로 정규화한다', () => {
+  for (const type of ['room_removed', 'room_deleted', 'room_destroyed', 'room_archived']) {
+    assert.deepEqual(feedUser({ type, room_id: 'deleted-room' }), [
+      { kind: 'rooms_changed', roomId: 'deleted-room', reason: 'removed' },
+    ]);
+  }
+  assert.deepEqual(feed({ type: 'room_deleted' }), [
+    { kind: 'rooms_changed', roomId: 'room-1', reason: 'removed' },
+  ]);
+  assert.deepEqual(feedUser({ type: 'room_deleted', room: { id: 'nested-room' } }), [
+    { kind: 'rooms_changed', roomId: 'nested-room', reason: 'removed' },
+  ]);
 });
 
 test('모르는 프레임(pong 등)은 조용히 버린다', () => {

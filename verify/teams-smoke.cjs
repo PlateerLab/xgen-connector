@@ -141,6 +141,23 @@ app
     ok('방 목록에 방 이름이 뜬다', /3팀 개발방/.test(roomList || ''), roomList);
     await snap('01-teams-panel.png');
 
+    ok('삭제 전 두 번째 방이 보인다', /공지방/.test(roomList || ''));
+    ok(
+      '삭제될 방을 탭으로 열 수 있다',
+      await js(`window.__click('.agent-list .teams-room-open', '공지방')`),
+    );
+    await sleep(350);
+    await js(`window.__verify.removeRoom('room-2')`);
+    await sleep(350);
+    ok(
+      '삭제 이벤트 직후 새로고침 없이 목록에서 사라진다',
+      !/공지방/.test((await js(`window.__text('.agent-list')`)) || ''),
+    );
+    ok(
+      '삭제된 방의 열린 탭도 즉시 닫힌다',
+      !/공지방/.test((await js(`window.__text('.tab-strip')`)) || ''),
+    );
+
     // ── 1b. 사이드바 인라인 폼도 바깥 클릭/Esc 로 닫힌다 ─────────
     section('1b. 사이드바 폼 닫기');
     ok('[1:1 대화 시작] 을 누른다', await js(`window.__click('.icon-btn', '1:1 대화 시작')`));
@@ -177,7 +194,7 @@ app
     section('2. 방 탭 · 메시지 렌더');
     ok(
       '방을 클릭해 탭으로 연다',
-      await js(`window.__click('.agent-list .agent-item', '3팀 개발방')`),
+      await js(`window.__click('.agent-list .teams-room-open', '3팀 개발방')`),
     );
     await sleep(900);
     const log = await js(`window.__text('.chat-log')`);
@@ -188,6 +205,50 @@ app
       /3팀 개발방/.test((await js(`window.__text('.tab-item.active')`)) || ''),
     );
     await snap('02-teams-room.png');
+
+    // ── 2b. 현재 멤버 목록 · 초대 직후 인원수 ─────────────────────
+    section('2b. 멤버 목록 · 초대 즉시 반영');
+    ok('헤더의 [멤버 2]를 누른다', await js(`window.__click('.teams-members-button', '멤버 2')`));
+    await sleep(350);
+    const membersBefore = await js(`window.__text('.teams-members-modal')`);
+    ok('멤버 목록 모달이 열린다', (await js(`window.__count('.teams-members-modal')`)) === 1);
+    ok(
+      '현재 멤버 이름을 확인할 수 있다',
+      /관리자/.test(membersBefore || '') && /김철수/.test(membersBefore || ''),
+    );
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    await sleep(250);
+
+    await clearCalls();
+    ok('초대창을 연다', await js(`window.__click('.chat-header-actions button', '초대')`));
+    await sleep(250);
+    await js(`window.__setValue(document.querySelector('.teams-invite input'), '이영희')`);
+    await sleep(500);
+    ok(
+      '검색한 사용자를 초대한다',
+      await js(`window.__click('.teams-invite .agent-item', '이영희')`),
+    );
+    await sleep(500);
+    const inviteCall = (await calls()).find((c) => c.name === 'teams.addMember');
+    ok(
+      'addMember 가 선택한 사용자로 호출된다',
+      inviteCall && inviteCall.args.userId === 3,
+      inviteCall,
+    );
+    ok(
+      '초대 직후 헤더 인원수가 3명으로 바뀐다',
+      /멤버 3명/.test((await js(`window.__text('.chat-title-text .agent-meta')`)) || ''),
+    );
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    await sleep(250);
+    ok('멤버 목록을 다시 연다', await js(`window.__click('.teams-members-button', '멤버 3')`));
+    await sleep(300);
+    ok(
+      '초대한 사람이 목록에 즉시 보인다',
+      /이영희/.test((await js(`window.__text('.teams-members-modal')`)) || ''),
+    );
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    await sleep(250);
 
     // ── 3. 답장 — replyToId 가 실제로 실리는가 ────────────────────
     section('3. 답장');
@@ -274,17 +335,23 @@ app
       { before: quoteBefore, after: await js(`window.__count('.teams-quote')`) },
     );
 
-    // ── 5b. 방 관리 — 이름 · 알림 · 삭제 ─────────────────────────
-    section('5b. 방 관리 (이름/알림/삭제)');
+    // ── 5b. 방 관리 — 이름 · 알림 · 나가기 ───────────────────────
+    section('5b. 방 관리 (이름/알림/나가기)');
     await clearCalls();
-    ok('방 메뉴를 연다', await js(`window.__click('.icon-btn', '대화방 메뉴')`));
+    ok(
+      '헤더에서 방 메뉴가 제거됐다',
+      (await js(`window.__count('.chat-header .teams-menu-wrap')`)) === 0,
+    );
+    ok(
+      '목록 행의 설정 버튼으로 방 메뉴를 연다',
+      await js(`window.__click('.teams-room-menu-trigger', '대화방 설정')`),
+    );
     await sleep(300);
     const menu = await js(`window.__text('.teams-menu')`);
     ok('이름 바꾸기가 있다', /이름 바꾸기/.test(menu || ''), menu);
     ok('알림 끄기가 있다', /알림 끄기/.test(menu || ''));
     ok('나가기가 있다', /나가기/.test(menu || ''));
-    // 목의 내 role 은 owner 이므로 삭제도 보여야 한다.
-    ok('방장에게는 삭제가 보인다', /대화방 삭제/.test(menu || ''));
+    ok('방장에게도 별도 삭제 동작은 보이지 않는다', !/대화방 삭제/.test(menu || ''));
     await snap('13-room-menu.png');
 
     ok('[이름 바꾸기] 를 누른다', await js(`window.__click('.teams-menu button', '이름 바꾸기')`));
@@ -306,18 +373,24 @@ app
     ok('탭 제목이 바뀐다', /수정/.test((await js(`window.__text('.tab-item.active')`)) || ''));
 
     await clearCalls();
-    ok('방 메뉴를 다시 연다', await js(`window.__click('.icon-btn', '대화방 메뉴')`));
+    ok(
+      '목록 행에서 방 메뉴를 다시 연다',
+      await js(`window.__click('.teams-room-menu-trigger', '대화방 설정')`),
+    );
     await sleep(250);
     ok('[알림 끄기] 를 누른다', await js(`window.__click('.teams-menu button', '알림 끄기')`));
     await sleep(400);
-    // config.set 이 아니라 teams.savePrefs 로 가야 한다 — config.set 은 최상위
-    // 얕은 병합이라 같은 teams 안의 lastReadAt 을 통째로 날린다.
+    // 공통 알림 프로필의 방 단위 scope 로 저장돼야 한다.
     const muteSave = (await calls()).find(
-      (c) => c.name === 'teams.savePrefs' && c.args && c.args.mutedRooms,
+      (c) =>
+        c.name === 'notifications.update' &&
+        c.args &&
+        c.args.kind === 'scope' &&
+        c.args.scope === 'teamsRoom',
     );
     ok(
-      '음소거가 부분 갱신으로 저장된다',
-      muteSave && muteSave.args.mutedRooms.includes('room-1'),
+      '음소거가 계정별 방 scope 로 저장된다',
+      muteSave && muteSave.args.id === 'room-1' && muteSave.args.muted === true,
       muteSave && muteSave.args,
     );
     ok(
@@ -327,7 +400,7 @@ app
     );
     ok(
       '메뉴를 다시 열면 [알림 켜기] 로 바뀐다',
-      (await js(`window.__click('.icon-btn', '대화방 메뉴')`)) && true,
+      (await js(`window.__click('.teams-room-menu-trigger', '대화방 설정')`)) && true,
     );
     await sleep(250);
     ok('토글 라벨이 반영된다', /알림 켜기/.test((await js(`window.__text('.teams-menu')`)) || ''));
@@ -560,6 +633,26 @@ app
       await js(`window.__text('.tab-item.active')`),
     );
     await snap('12-jumped-back.png');
+
+    // ── 11b. 방 종료 동작은 나가기 하나뿐이다 ────────────────────
+    section('11b. 대화방 나가기');
+    await clearCalls();
+    ok('Teams 뷰로 전환', await js(`window.__click('.ab-btn', 'Teams')`));
+    await sleep(300);
+    ok(
+      '목록 행에서 설정 메뉴를 연다',
+      await js(`window.__click('.teams-room-menu-trigger', '대화방 설정')`),
+    );
+    await sleep(200);
+    ok('별도 삭제 메뉴가 없다', !/삭제/.test((await js(`window.__text('.teams-menu')`)) || ''));
+    ok('[대화방 나가기]를 누른다', await js(`window.__click('.teams-menu button', '나가기')`));
+    await sleep(350);
+    const leaveCall = (await calls()).find((call) => call.name === 'teams.leaveRoom');
+    ok('teams.leaveRoom 하나로 처리된다', leaveCall && leaveCall.args.roomId === 'room-1');
+    ok(
+      '나간 방은 목록에서 즉시 사라진다',
+      !/3팀 개발방/.test((await js(`window.__text('.agent-list')`)) || ''),
+    );
 
     // ── 12. 렌더러 오류 없음 ──────────────────────────────────────
     section('12. 렌더러 오류');

@@ -2198,7 +2198,9 @@ ipcMain.handle(
 // ── IPC: Teams (사람 사이의 대화) ────────────────────────────────
 // REST 는 전부 core 의 TeamsApi 에 위임한다 — 이 파일에는 매핑 로직이 없다.
 // 실시간은 teamsHub 가 CHANNELS.teamsEvent 로 렌더러에 밀어 준다.
-ipcMain.handle(CHANNELS.teamsRooms, () => getClient().teams.listRooms());
+ipcMain.handle(CHANNELS.teamsRooms, () =>
+  getClient().teams.listRooms(currentUserId() ?? undefined),
+);
 ipcMain.handle(CHANNELS.teamsCreateRoom, (_e, name: string, description?: string) =>
   // 커넥터가 만드는 방은 항상 '사람끼리만' 모드로 시작한다. 에이전트를 붙이는
   // 것은 후속 단계이고, 그때는 방 설정에서 모드를 올린다 (서버가 이미 지원).
@@ -2229,13 +2231,6 @@ ipcMain.handle(
   (_e, roomId: string, patch: { name?: string; description?: string | null }) =>
     getClient().teams.updateRoom(roomId, patch),
 );
-ipcMain.handle(CHANNELS.teamsDeleteRoom, async (_e, roomId: string) => {
-  await getClient().teams.deleteRoom(roomId);
-  // 지운 방의 소켓을 그대로 두면 서버가 거절할 때까지 재연결을 시도한다.
-  teamsHub.closeRoom(roomId);
-  return true;
-});
-
 /**
  * 새 메시지 OS 알림.
  *

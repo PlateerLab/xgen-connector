@@ -1,7 +1,7 @@
 /**
  * TeamsRoom — 메인 영역의 [Teams] 탭 본문. 한 방의 대화를 그린다.
  *
- *   ┌ 방 이름 · 멤버 N명 ──────── [초대] [⋯] ┐
+ *   ┌ 방 이름 · 멤버 N명 ───── [멤버] [초대] ┐
  *   │  지난 메시지 (위로 스크롤 시 더 불러옴)  │
  *   │  … 홍길동 님이 입력 중                  │
  *   ├ ↩ 답장 대상 / 📎 올릴 파일 ─────────────┤
@@ -29,6 +29,7 @@ import {
   parseSharedMessage,
   type CurrentUser,
   type TeamsAttachment,
+  type TeamsMember,
   type TeamsMessage,
   type TeamsRoom as Room,
   type TeamsShareRef,
@@ -50,15 +51,12 @@ import {
   CloseIcon,
   DocIcon,
   DownloadIcon,
-  LogoutIcon,
-  MoreIcon,
   PaperclipIcon,
   PencilIcon,
   ReplyIcon,
   SendIcon,
   SmileIcon,
   TeamsIcon,
-  TrashIcon,
   UserPlusIcon,
 } from '../brand/icons';
 
@@ -73,9 +71,7 @@ export const TeamsRoom: React.FC<{
   user: CurrentUser;
   /** 공유된 산출물의 [원본 대화 보기] — 그 에이전트 대화를 탭으로 연다. */
   onOpenSource?: (ref: TeamsShareRef) => void;
-  /** 방을 나갔다 — 이 탭을 닫아야 한다. */
-  onLeft?: (roomId: string) => void;
-}> = ({ room, user, onOpenSource, onLeft }) => {
+}> = ({ room, user, onOpenSource }) => {
   const snapshot = useTeams();
   const notificationSnapshot = useNotifications();
   const state = snapshot.byRoom[room.id];
@@ -83,7 +79,7 @@ export const TeamsRoom: React.FC<{
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
   const [reactFor, setReactFor] = useState<string | null>(null);
   /** 답장 대상 — 붙어 있으면 composer 위에 인용 배너가 뜬다. */
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
@@ -92,9 +88,6 @@ export const TeamsRoom: React.FC<{
   const [uploading, setUploading] = useState(false);
   /** 편집 중인 내 메시지 id. */
   const [editingId, setEditingId] = useState<string | null>(null);
-  /** 이름 바꾸기 중이면 편집 중인 문자열. null 이면 닫혀 있다. */
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   /** 사용자가 위쪽 과거를 보고 있으면 새 메시지가 와도 강제로 내리지 않는다. */
@@ -180,15 +173,6 @@ export const TeamsRoom: React.FC<{
     taRef.current?.focus();
   }, [room.id, uploading]);
 
-  const leave = useCallback(async () => {
-    setMenuOpen(false);
-    const ok = await teamsStore.leave(room.id);
-    if (ok) {
-      void notificationStore.setScope('teamsRoom', room.id, false);
-      onLeft?.(room.id);
-    }
-  }, [room.id, onLeft]);
-
   /** 타이핑 신호는 3초에 한 번만 — 글자마다 보내면 소켓이 시끄럽다. */
   const signalTyping = useCallback(() => {
     const now = Date.now();
@@ -202,12 +186,6 @@ export const TeamsRoom: React.FC<{
     [state?.typing],
   );
 
-  // 내 권한 — 멤버 목록에서 찾는다. 아직 안 불러왔으면 owner 가 아니라고 본다
-  // (없는 권한을 보여 주는 것보다 늦게 나타나는 편이 낫다).
-  const isOwner = (state?.members ?? []).some(
-    (m) => String(m.userId) === myId && m.role === 'owner',
-  );
-  const muted = !!notificationSnapshot.profile.mutedTeamsRooms[room.id];
   const memberCount = state?.members.length ?? 0;
   const onlineCount = state?.members.filter((m) => m.isOnline).length ?? 0;
   const canSend = (input.trim().length > 0 || staged.length > 0) && !sending;
@@ -229,63 +207,19 @@ export const TeamsRoom: React.FC<{
           </div>
         </div>
         <div className="chat-header-actions">
+          <button
+            className="secondary teams-members-button"
+            onClick={() => {
+              setMembersOpen(true);
+              void teamsStore.refreshMembers(room.id);
+            }}
+            title="현재 대화 멤버 보기"
+          >
+            <TeamsIcon size={15} /> {memberCount > 0 ? `멤버 ${memberCount}` : '멤버'}
+          </button>
           <button className="secondary" onClick={() => setInviteOpen(true)} title="대화 상대 초대">
             <UserPlusIcon size={15} /> 초대
           </button>
-          <div className="teams-menu-wrap">
-            <button
-              className="icon-btn sm"
-              onClick={() => setMenuOpen((open) => !open)}
-              title="대화방 메뉴"
-              aria-label="대화방 메뉴"
-              aria-expanded={menuOpen}
-            >
-              <MoreIcon size={16} />
-            </button>
-            {menuOpen && (
-              <>
-                {/* 바깥을 눌러 닫는 투명 막. 메뉴가 열린 채 남아 다른 클릭을
-                    삼키는 것이 이런 메뉴의 흔한 버그다. */}
-                <div className="teams-menu-scrim" onClick={() => setMenuOpen(false)} />
-                <div className="teams-menu" role="menu">
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setRenaming(room.name);
-                    }}
-                  >
-                    <PencilIcon size={13} /> 이름 바꾸기
-                  </button>
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      void notificationStore.setScope('teamsRoom', room.id, !muted, room.name);
-                    }}
-                  >
-                    {muted ? <BellIcon size={14} /> : <BellOffIcon size={14} />}
-                    {muted ? '알림 켜기' : '알림 끄기'}
-                  </button>
-                  <div className="teams-menu-sep" />
-                  <button className="danger" onClick={() => void leave()}>
-                    <LogoutIcon size={14} /> 대화방 나가기
-                  </button>
-                  {/* 삭제는 **방장만** 가능하다(서버가 403). 못 할 일을 띄워
-                      놓고 눌렀을 때 실패시키는 대신 아예 보이지 않게 한다. */}
-                  {isOwner && (
-                    <button
-                      className="danger"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        setConfirmDelete(true);
-                      }}
-                    >
-                      <TrashIcon size={13} /> 대화방 삭제
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
         </div>
       </div>
 
@@ -439,33 +373,97 @@ export const TeamsRoom: React.FC<{
         </div>
       </div>
 
-      {inviteOpen && <InviteModal roomId={room.id} onClose={() => setInviteOpen(false)} />}
-
-      {renaming !== null && (
-        <RenameRoomModal
-          initial={renaming}
-          onClose={() => setRenaming(null)}
-          onSubmit={async (name) => {
-            const ok = await teamsStore.rename(room.id, name);
-            if (ok) setRenaming(null);
-          }}
-        />
-      )}
-
-      {confirmDelete && (
-        <ConfirmDeleteRoomModal
+      {membersOpen && (
+        <MembersModal
           roomName={room.name}
-          onClose={() => setConfirmDelete(false)}
-          onConfirm={async () => {
-            const ok = await teamsStore.remove(room.id);
-            setConfirmDelete(false);
-            if (ok) {
-              void notificationStore.setScope('teamsRoom', room.id, false);
-              onLeft?.(room.id);
-            }
-          }}
+          members={state?.members ?? []}
+          loading={state?.membersLoading ?? false}
+          error={state?.membersError ?? ''}
+          myUserId={myId}
+          onRefresh={() => void teamsStore.refreshMembers(room.id)}
+          onClose={() => setMembersOpen(false)}
         />
       )}
+
+      {inviteOpen && <InviteModal roomId={room.id} onClose={() => setInviteOpen(false)} />}
+    </div>
+  );
+};
+
+/** 현재 방의 사람 목록. 접속 중인 사람을 먼저 보여 주고 내 계정을 표시한다. */
+const MembersModal: React.FC<{
+  roomName: string;
+  members: TeamsMember[];
+  loading: boolean;
+  error: string;
+  myUserId: string;
+  onRefresh: () => void;
+  onClose: () => void;
+}> = ({ roomName, members, loading, error, myUserId, onRefresh, onClose }) => {
+  useModalDismiss(onClose);
+  const sorted = useMemo(
+    () =>
+      [...members].sort((a, b) => {
+        if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+        const an = a.fullName || a.username;
+        const bn = b.fullName || b.username;
+        return an.localeCompare(bn);
+      }),
+    [members],
+  );
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal teams-members-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="teams-members-head">
+          <div>
+            <h3>대화 멤버</h3>
+            <p>
+              {roomName} · {members.length}명
+            </p>
+          </div>
+          <div className="teams-members-actions">
+            <button className="secondary sm" onClick={onRefresh} disabled={loading}>
+              {loading ? '불러오는 중…' : '새로고침'}
+            </button>
+            <button className="icon-btn sm" onClick={onClose} title="닫기" aria-label="닫기">
+              <CloseIcon size={15} />
+            </button>
+          </div>
+        </div>
+        {error && <div className="teams-error inline">{error}</div>}
+        <div className="teams-members-list">
+          {loading && members.length === 0 && (
+            <div className="teams-empty sm">멤버를 불러오는 중…</div>
+          )}
+          {!loading && members.length === 0 && (
+            <div className="teams-empty sm">표시할 멤버가 없습니다.</div>
+          )}
+          {sorted.map((member) => {
+            const name = member.fullName || member.username;
+            const mine = String(member.userId) === myUserId;
+            return (
+              <div className="teams-member-row" key={member.userId}>
+                <span className="teams-avatar">{name.trim().charAt(0).toUpperCase() || 'U'}</span>
+                <span className="teams-member-body">
+                  <span className="teams-member-name">
+                    {name} {mine && <span className="teams-member-me">나</span>}
+                  </span>
+                  <span className="teams-member-account">@{member.username}</span>
+                </span>
+                <span className={`teams-member-presence ${member.isOnline ? 'online' : ''}`}>
+                  <span className="dot" /> {member.isOnline ? '접속 중' : '오프라인'}
+                </span>
+                {member.role !== 'member' && (
+                  <span className="teams-member-role">
+                    {member.role === 'owner' ? '방장' : '관리자'}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 };
@@ -644,11 +642,7 @@ const MessageRow: React.FC<{
                     aria-label={senderNotificationMuted ? '발신자 알림 켜기' : '발신자 알림 끄기'}
                     onClick={onToggleSenderNotification}
                   >
-                    {senderNotificationMuted ? (
-                      <BellOffIcon size={12} />
-                    ) : (
-                      <BellIcon size={12} />
-                    )}
+                    {senderNotificationMuted ? <BellOffIcon size={12} /> : <BellIcon size={12} />}
                   </button>
                 )}
               </>
@@ -909,102 +903,6 @@ const ImageAttachment: React.FC<{
   );
 };
 
-/**
- * 방 이름 바꾸기.
- *
- * 서버는 **멤버 전원**에게 수정을 허용한다(방장 전용이 아니다). 다만 이 변경을
- * broadcast 하지 않으므로 다른 사람 화면은 새로고침 전까지 옛 이름을 본다 —
- * 그 사실을 안내로 적어 둔다. 모르고 쓰면 "안 바뀌었다" 는 오해가 된다.
- */
-const RenameRoomModal: React.FC<{
-  initial: string;
-  onClose: () => void;
-  onSubmit: (name: string) => void | Promise<void>;
-}> = ({ initial, onClose, onSubmit }) => {
-  useModalDismiss(onClose);
-  const [name, setName] = useState(initial);
-  const [busy, setBusy] = useState(false);
-  const changed = name.trim().length > 0 && name.trim() !== initial.trim();
-
-  const submit = useCallback(async () => {
-    if (!changed || busy) return;
-    setBusy(true);
-    await onSubmit(name);
-    setBusy(false);
-  }, [changed, busy, name, onSubmit]);
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
-        <h3>대화방 이름 바꾸기</h3>
-        <input
-          className="input"
-          autoFocus
-          value={name}
-          maxLength={100}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing) void submit();
-          }}
-        />
-        <p className="teams-ctx-confirm-sub">
-          바뀐 이름은 이 화면에 바로 반영됩니다. 다른 사람은 Teams 를 다시 열 때 보입니다.
-        </p>
-        <div className="modal-actions">
-          <button className="secondary" onClick={onClose} disabled={busy}>
-            취소
-          </button>
-          <button className="primary" onClick={() => void submit()} disabled={!changed || busy}>
-            {busy ? '바꾸는 중…' : '이름 바꾸기'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-/**
- * 방 삭제 확인. 방장만 이 창을 볼 수 있고(메뉴에서 이미 걸렀다), 되돌리기는
- * 웹 Teams 의 휴지통에서만 가능하다 — 커넥터에 복구 화면이 없으므로 그렇게 적는다.
- */
-const ConfirmDeleteRoomModal: React.FC<{
-  roomName: string;
-  onClose: () => void;
-  onConfirm: () => void | Promise<void>;
-}> = ({ roomName, onClose, onConfirm }) => {
-  useModalDismiss(onClose);
-  const [busy, setBusy] = useState(false);
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
-        <h3>대화방을 삭제할까요?</h3>
-        <p className="teams-ctx-confirm-lead">
-          <strong>{roomName}</strong> 을(를) 삭제하면 <strong>모든 멤버에게서</strong> 사라집니다.
-        </p>
-        <p className="teams-ctx-confirm-sub">
-          복구는 웹 Teams 의 휴지통에서 보존 기간 안에만 가능합니다.
-        </p>
-        <div className="modal-actions">
-          <button className="secondary" onClick={onClose} disabled={busy}>
-            취소
-          </button>
-          <button
-            className="danger"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              await onConfirm();
-              setBusy(false);
-            }}
-          >
-            {busy ? '삭제 중…' : '삭제'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 /** 초대 — 사용자를 찾아 방에 추가한다. 서버가 시스템 메시지를 broadcast 한다. */
 const InviteModal: React.FC<{ roomId: string; onClose: () => void }> = ({ roomId, onClose }) => {
   useModalDismiss(onClose);
@@ -1041,6 +939,8 @@ const InviteModal: React.FC<{ roomId: string; onClose: () => void }> = ({ roomId
       setError('');
       try {
         await xgen.teams.addMember(roomId, user.id);
+        // 서버 확정 뒤 같은 목록을 다시 읽어 헤더 인원수와 멤버 목록을 즉시 맞춘다.
+        await teamsStore.refreshMembers(roomId);
         setDone((current) => [...current, user.username]);
       } catch (e) {
         setError(e instanceof Error ? e.message : '초대하지 못했습니다.');
