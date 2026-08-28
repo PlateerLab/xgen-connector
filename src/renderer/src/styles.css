@@ -354,9 +354,11 @@ button {
 .input,
 .field input,
 .field select,
+.field textarea,
 .search,
 .modal input,
-.modal select {
+.modal select,
+.modal textarea {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--border);
@@ -374,8 +376,10 @@ button {
 .input:focus,
 .field input:focus,
 .field select:focus,
+.field textarea:focus,
 .search:focus,
-.modal input:focus {
+.modal input:focus,
+.modal textarea:focus {
   border-color: var(--primary-end);
   box-shadow: 0 0 0 3px var(--violet-ring);
   background: var(--panel);
@@ -4040,7 +4044,8 @@ button {
   width: 860px;
   max-width: 94vw;
 }
-.mcp-list {
+.mcp-list,
+.srv-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4049,7 +4054,11 @@ button {
   max-height: 42vh;
   overflow-y: auto;
 }
-.mcp-item {
+/* "사용자가 등록한 서버 목록" 행 — MCP 와 SSH 가 **같은 정의**를 쓴다.
+   둘은 같은 종류의 화면이고(토글 + 이름/배지 + mono 주소 + 테스트 결과 + 오른쪽
+   액션), 각자 CSS 를 두면 한쪽만 손볼 때마다 시각이 조금씩 갈린다. */
+.mcp-item,
+.srv-row {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -4058,18 +4067,21 @@ button {
   border-radius: var(--radius-md);
   background: var(--panel-2);
 }
-.mcp-item-body {
+.mcp-item-body,
+.srv-row-body {
   flex: 1;
   min-width: 0;
 }
-.mcp-item-name {
+.mcp-item-name,
+.srv-row-name {
   display: flex;
   align-items: center;
   gap: 6px;
   font-weight: 600;
   font-size: 13px;
 }
-.mcp-badge {
+.mcp-badge,
+.srv-badge {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
@@ -4190,7 +4202,8 @@ button {
   color: var(--text);
   font-size: 13px;
 }
-.mcp-item-cmd {
+.mcp-item-cmd,
+.srv-row-addr {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted);
@@ -4199,7 +4212,8 @@ button {
   text-overflow: ellipsis;
   margin-top: 2px;
 }
-.mcp-item-actions {
+.mcp-item-actions,
+.srv-row-actions {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
@@ -7296,61 +7310,106 @@ button.sm {
 }
 
 /* ── SSH 설정 ─────────────────────────────────────────────────────
-   점프 경로는 필드가 아니라 **사슬**로 보여 준다. [XGEN 서버] → bastion → db
-   처럼 그려야 사용자가 지금 무엇을 만들고 있는지 한눈에 안다 — 목록으로만 두면
-   순서가 무슨 뜻인지(가까운 홉이 먼저) 매번 다시 추측하게 된다. */
+   목록 행은 .srv-row (MCP 서버 목록과 공유 — 같은 종류의 화면이다).
+   여기 있는 것은 SSH 에만 있는 것 하나뿐이다: **점프 경로**. */
+
+/* 목록 자체는 높이를 제한하지 않는다 — 탭이 이미 스크롤한다.
+   (.mcp-list 는 행 안에 설치 안내가 여러 줄 펼쳐져서 42vh 로 묶여 있다.) */
+.srv-list {
+  max-height: none;
+  overflow: visible;
+}
+
+/* 점프 경로는 필드가 아니라 **사슬**로 보여 준다. [XGEN 서버] → bastion → db
+   처럼 그려야 지금 무엇을 만들고 있는지 한눈에 보인다 — 목록으로만 두면 순서가
+   무슨 뜻인지(가까운 홉이 먼저) 매번 다시 추측하게 된다. */
 .ssh-chain {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
 }
 .ssh-chip {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid var(--line-strong, #c7d2fe);
-  background: var(--surface-accent, #eef2ff);
-  color: var(--text-accent, #3730a3);
+  border: 1px solid var(--primary-soft-border);
+  background: var(--primary-soft);
+  color: var(--primary);
   white-space: nowrap;
 }
+/* 출발점(XGEN 서버) — 우리가 고르는 것이 아니라 주어진 것이라 중성색. */
 .ssh-chip.muted {
-  border-color: var(--line, #e5e7eb);
-  background: var(--surface-2, #f9fafb);
-  color: var(--text-muted, #6b7280);
+  border-color: var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
 }
 .ssh-chip.target {
   font-weight: 700;
 }
 .ssh-arrow {
-  color: var(--text-muted, #9ca3af);
-  font-size: 12px;
+  color: var(--muted);
+  font-size: 11px;
 }
+
+/* 목록 행 안의 경로 — 주소 줄 바로 아래, 같은 mono 결. */
+.srv-row-path {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* 편집 폼의 홉 순서 조정 */
 .ssh-hop-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  padding: 5px 0;
+}
+.ssh-hop-row + .ssh-hop-row {
+  border-top: 1px solid var(--border-soft);
 }
 .ssh-hop-name {
   flex: 1;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
+.ssh-hop-num {
+  width: 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .ssh-two-col {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 12px;
 }
-.ssh-actions {
-  display: flex;
-  gap: 12px;
+
+/* 편집 폼의 분류 — 기본정보 / 인증 / 점프 경로 / 고급.
+   구분선이 없으면 필드가 한 덩어리로 보여서, 지금 무엇을 채우는 중인지 놓친다. */
+.ssh-form-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
-/* 모달 본문 — 폼이 길어 스크롤이 필요하다(개인키 입력이 열리면 특히). */
-.ssh-modal-body {
-  max-height: 62vh;
-  overflow-y: auto;
-  padding-right: 4px;
+.ssh-form-section > .settings-group-title {
+  margin: 0 0 4px;
+}
+.ssh-form-section > .settings-hint {
+  margin: 0 0 12px;
+}
+
+/* 자격증명 한 칸의 머리 — 라벨 / 상태배지 / [변경] 이 한 줄에. */
+.ssh-secret-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ssh-secret-head > :first-child {
+  flex: 1;
 }
