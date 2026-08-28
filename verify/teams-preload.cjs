@@ -72,9 +72,32 @@ const UPLOADED = {
   truncated: false,
 };
 
+const MEMBERS = [
+  { userId: 1, username: 'admin', fullName: '관리자', role: 'owner', isOnline: true, joinedAt: '' },
+  {
+    userId: 2,
+    username: '김철수',
+    fullName: '김철수',
+    role: 'member',
+    isOnline: true,
+    joinedAt: '',
+  },
+];
+let rooms = [ROOM, OTHER_ROOM];
+let teamsEventListener = null;
+
 let sent = 0;
 const noop = () => {};
 const off = () => () => {};
+let notificationProfile = {
+  enabled: true,
+  events: {},
+  privacy: 'full',
+  mutedAgents: {},
+  mutedChats: {},
+  mutedTeamsRooms: {},
+  mutedTeamsSenders: {},
+};
 
 const api = {
   config: {
@@ -118,19 +141,31 @@ const api = {
   },
 
   teams: {
-    rooms: async () => [ROOM, OTHER_ROOM],
+    rooms: async () => rooms,
     createRoom: async () => ROOM,
     openDm: async () => ROOM,
     leaveRoom: async (roomId) => {
       record('teams.leaveRoom', { roomId });
       return true;
     },
-    members: async () => [
-      { userId: 1, username: 'admin', role: 'owner', isOnline: true, joinedAt: '' },
-      { userId: 2, username: '김철수', role: 'member', isOnline: true, joinedAt: '' },
+    members: async () => MEMBERS,
+    addMember: async (roomId, userId) => {
+      record('teams.addMember', { roomId, userId });
+      if (!MEMBERS.some((member) => member.userId === userId)) {
+        MEMBERS.push({
+          userId,
+          username: '이영희',
+          fullName: '이영희',
+          role: 'member',
+          isOnline: false,
+          joinedAt: '',
+        });
+      }
+      return true;
+    },
+    searchUsers: async () => [
+      { id: 3, username: '이영희', fullName: '이영희', email: 'younghee@example.com' },
     ],
-    addMember: async () => true,
-    searchUsers: async () => [],
     messages: async (roomId, before) => {
       record('teams.messages', { roomId, before });
       // 커서가 오면 "더 없음" — ensureMessages 가 무한히 돌지 않는지도 함께 본다.
@@ -197,10 +232,6 @@ const api = {
       record('teams.updateRoom', { roomId, patch });
       return { ...ROOM, ...patch };
     },
-    deleteRoom: async (roomId) => {
-      record('teams.deleteRoom', { roomId });
-      return true;
-    },
     notify: async (payload) => {
       record('teams.notify', payload);
       return true;
@@ -209,7 +240,40 @@ const api = {
     saveAttachment: async () => null,
     openAttachment: async () => '',
     readAttachment: async () => new Uint8Array([1, 2, 3]),
-    onEvent: off,
+    onEvent: (listener) => {
+      teamsEventListener = listener;
+      return () => {
+        if (teamsEventListener === listener) teamsEventListener = null;
+      };
+    },
+  },
+
+  notifications: {
+    preferences: async () => notificationProfile,
+    update: async (update) => {
+      record('notifications.update', update);
+      if (update.kind === 'scope') {
+        const field =
+          update.scope === 'teamsRoom'
+            ? 'mutedTeamsRooms'
+            : update.scope === 'teamsSender'
+              ? 'mutedTeamsSenders'
+              : update.scope === 'chat'
+                ? 'mutedChats'
+                : 'mutedAgents';
+        const next = { ...notificationProfile[field] };
+        if (update.muted)
+          next[update.id] = { muted: true, updatedAt: Date.now(), label: update.label };
+        else delete next[update.id];
+        notificationProfile = { ...notificationProfile, [field]: next };
+      }
+      return notificationProfile;
+    },
+    test: async () => ({ shown: true }),
+    status: async () => ({ supported: true, platform: process.platform, developmentMode: true }),
+    setContext: noop,
+    consumeTarget: async () => null,
+    onNavigate: off,
   },
 
   clipboard: {
@@ -223,6 +287,7 @@ const api = {
   browser: {
     onState: off,
     onConnection: off,
+    onReveal: off,
     state: async () => ({ enabled: false, pages: [], activeByWorkflow: {} }),
     ensureShared: async () => ({}),
     closeWorkflow: async () => true,
@@ -320,5 +385,9 @@ contextBridge.exposeInMainWorld('__verify', {
   calls: () => JSON.parse(JSON.stringify(calls)),
   clear: () => {
     calls.length = 0;
+  },
+  removeRoom: (roomId) => {
+    rooms = rooms.filter((room) => room.id !== roomId);
+    teamsEventListener?.({ kind: 'rooms_changed', roomId, reason: 'removed' });
   },
 });

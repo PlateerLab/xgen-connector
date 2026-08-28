@@ -257,6 +257,7 @@ export {
   TEAMS_ATTACHMENT_EXTENSIONS,
   TEAMS_ATTACHMENT_MAX_BYTES,
   teamsAttachmentRejectReason,
+  directRoomNameForViewer,
 } from './teams';
 export type {
   TeamsContextEntry,

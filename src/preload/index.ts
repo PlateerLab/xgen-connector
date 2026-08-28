@@ -512,9 +512,6 @@ const api = {
       roomId: string,
       patch: { name?: string; description?: string | null },
     ): Promise<TeamsRoom | null> => ipcRenderer.invoke(CHANNELS.teamsUpdateRoom, roomId, patch),
-    /** 방 삭제 — 방장만 가능(그 외 403). */
-    deleteRoom: (roomId: string): Promise<boolean> =>
-      ipcRenderer.invoke(CHANNELS.teamsDeleteRoom, roomId),
     /** 새 메시지 OS 알림 요청. 보고 있지 않고 음소거도 아닐 때만 렌더러가 부른다. */
     notify: (payload: {
       roomId: string;

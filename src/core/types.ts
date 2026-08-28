@@ -275,6 +275,8 @@ export interface TeamsRoom {
 export interface TeamsMember {
   userId: number;
   username: string;
+  /** 사용자 프로필의 표시 이름. 없으면 username 을 쓴다. */
+  fullName?: string;
   role: 'owner' | 'admin' | 'member';
   isOnline: boolean;
   joinedAt: string;
@@ -361,6 +363,8 @@ export type TeamsEvent =
   | { kind: 'reactions'; roomId: string; messageId: string; reactions: TeamsReaction[] }
   | { kind: 'typing'; roomId: string; userId: number; username: string; typing: boolean }
   | { kind: 'presence'; roomId: string; onlineUserIds: number[] }
+  /** 방의 사람 구성이 바뀜 — 열린 방이면 멤버 목록을 다시 읽는다. */
+  | { kind: 'members_changed'; roomId: string }
   /** 내가 보고 있지 않은 방의 새 메시지 (user WS). 목록 배지/알림용. */
   | { kind: 'notify'; roomId: string; message: TeamsMessage }
   /** 방 목록 자체가 바뀜 (초대/강퇴/방 정보 변경) — 목록을 다시 부른다. */

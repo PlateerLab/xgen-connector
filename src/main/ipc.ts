@@ -52,7 +52,6 @@ export const CHANNELS = {
    */
   teamsSavePrefs: 'teams:savePrefs',
   teamsUpdateRoom: 'teams:updateRoom',
-  teamsDeleteRoom: 'teams:deleteRoom',
   teamsLeaveRoom: 'teams:leaveRoom',
   /** 새 메시지 OS 알림 — 렌더러가 "지금 보고 있지 않고 음소거도 아니다" 를 판정해 요청한다. */
   teamsNotify: 'teams:notify',
