@@ -28,6 +28,7 @@ import {
   mergeMessages,
   removeDepartedMember,
   settlePending,
+  shouldShowRoomRefreshLoading,
   sortRooms,
   unreadCount,
 } from './views/teams-store';
@@ -129,6 +130,8 @@ class TeamsLiveStore {
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   /** 늦게 끝난 목록 요청이 더 최신 결과를 덮지 못하게 하는 순번. */
   private roomsRequestId = 0;
+  /** 빈 배열도 서버에서 확인된 정상 결과인지 구분한다. */
+  private hasLoadedRooms = false;
   /** 계정 전환 뒤 이전 계정의 비동기 응답을 버리기 위한 세대. */
   private generation = 0;
   private memberRequestIds = new Map<string, number>();
@@ -185,6 +188,7 @@ class TeamsLiveStore {
   reset(): void {
     this.generation += 1;
     this.roomsRequestId += 1;
+    this.hasLoadedRooms = false;
     this.memberRequestIds.clear();
     for (const timer of this.typingTimers.values()) clearTimeout(timer);
     this.typingTimers.clear();
@@ -209,11 +213,15 @@ class TeamsLiveStore {
   async loadRooms(options: { background?: boolean } = {}): Promise<void> {
     const requestId = ++this.roomsRequestId;
     const generation = this.generation;
-    const background = options.background === true && this.snapshot.rooms.length > 0;
-    if (!background) this.emit({ loadingRooms: true, roomsError: '' });
+    const showLoading = shouldShowRoomRefreshLoading(
+      options.background === true,
+      this.hasLoadedRooms,
+    );
+    if (showLoading) this.emit({ loadingRooms: true, roomsError: '' });
     try {
       const rooms = await xgen.teams.rooms();
       if (generation !== this.generation || requestId !== this.roomsRequestId) return;
+      this.hasLoadedRooms = true;
       this.emit({ rooms: sortRooms(rooms), loadingRooms: false });
       for (const room of rooms) this.recount(room.id);
     } catch (e) {

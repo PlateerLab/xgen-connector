@@ -29,6 +29,20 @@ export const PENDING_PREFIX = 'pending:';
 /** WS 멤버 퇴장으로 커넥터가 즉시 만든 시스템 안내. */
 export const MEMBER_DEPARTURE_PREFIX = 'local:member-left:';
 
+/**
+ * 방 목록 갱신 중 빈 상태를 로딩 화면으로 바꿔야 하는가.
+ *
+ * 첫 조회 전에는 백그라운드 요청이어도 로딩 상태를 보여 주지만, 한 번이라도
+ * 정상 응답을 받은 뒤의 빈 배열은 "아직 안 불러옴" 이 아니라 유효한 결과다.
+ * 주기 동기화 때마다 그 결과를 로딩 화면으로 덮지 않는다.
+ */
+export function shouldShowRoomRefreshLoading(
+  backgroundRequested: boolean,
+  hasLoadedRooms: boolean,
+): boolean {
+  return !backgroundRequested || !hasLoadedRooms;
+}
+
 export function isPending(message: TeamsMessage): boolean {
   return message.id.startsWith(PENDING_PREFIX);
 }
