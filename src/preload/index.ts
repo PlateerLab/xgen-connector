@@ -40,6 +40,7 @@ import type {
   WorkspaceBinaryPurpose,
   WorkspaceUploadResult,
 } from '../core/index';
+import type { SshConfig, SshServer, SshServerInput, SshTestResult } from '../core/ssh';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
 import type { StoreAvatar } from '../core/avatars';
 import type { ConnectorConfig, McpServerConfig } from '../main/config';
@@ -594,6 +595,31 @@ const api = {
       ) as ArrayBuffer;
       return new Blob([buf], { type: r.mime || 'audio/wav' });
     },
+  },
+
+  /**
+   * SSH — the per-user server list, shared with the web mypage screen.
+   *
+   * Pure pass-through: the server owns validation (name rules, jump graph,
+   * credential presence) and its rejection message is what the UI shows. If the
+   * connector re-checked anything, the two surfaces would drift apart.
+   *
+   * Credentials never come back — writes are partial, so an omitted password
+   * keeps its stored value and `''` clears it.
+   */
+  ssh: {
+    getConfig: (): Promise<SshConfig> => ipcRenderer.invoke(CHANNELS.sshConfig),
+    setEnabled: (enabled: boolean): Promise<SshConfig> =>
+      ipcRenderer.invoke(CHANNELS.sshSetEnabled, enabled),
+    createServer: (input: SshServerInput): Promise<SshServer> =>
+      ipcRenderer.invoke(CHANNELS.sshCreateServer, input),
+    updateServer: (name: string, input: SshServerInput): Promise<SshServer> =>
+      ipcRenderer.invoke(CHANNELS.sshUpdateServer, name, input),
+    deleteServer: (name: string): Promise<SshConfig> =>
+      ipcRenderer.invoke(CHANNELS.sshDeleteServer, name),
+    /** Dialled by the XGEN server (that is where the agent runs), through the jump path. */
+    testServer: (name: string): Promise<SshTestResult> =>
+      ipcRenderer.invoke(CHANNELS.sshTestServer, name),
   },
 
   /** Floating avatar overlay (Geny-style). Used by the main window

@@ -9,6 +9,7 @@ import {
 import type { ConnectorConfig } from '../../../main/config';
 import { HotkeyCapture } from './HotkeyCapture';
 import { SettingsSection } from './SettingsSection';
+import { SshSettings } from './SshSettings';
 import { McpSettings } from './McpSettings';
 import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
@@ -27,7 +28,7 @@ type Theme = NonNullable<ConnectorConfig['theme']>;
 // 비슷한 기능끼리 탭으로 묶는다 — 세로로만 길어지던 설정을 폭을 넓혀 분류한다.
 // 업데이트는 일반의 한 섹션이고(따로 탭일 만큼 크지 않다), 옛 [로컬 도구]는
 // 성격이 다른 두 기능이 섞여 있어 [PC 컨트롤](셸·파일)과 [MCP]로 가른다.
-type Tab = 'connection' | 'general' | 'avatar' | 'browser' | 'pc' | 'mcp' | 'storage';
+type Tab = 'connection' | 'general' | 'avatar' | 'browser' | 'pc' | 'mcp' | 'ssh' | 'storage';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'connection', label: '연결' },
   { id: 'general', label: '일반' },
@@ -35,6 +36,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'browser', label: '브라우저' },
   { id: 'pc', label: 'PC 컨트롤' },
   { id: 'mcp', label: 'MCP' },
+  // SSH 는 이 PC 의 기능이 아니라 **XGEN 계정의 설정**이다 (접속은 서버가 연다).
+  // 그래도 여기 두는 이유: 사용자는 "Agent 가 뭘 할 수 있나"를 이 창에서 찾는다.
+  { id: 'ssh', label: 'SSH' },
   { id: 'storage', label: '스토리지' },
 ];
 
@@ -728,6 +732,8 @@ export const Settings: React.FC<{
         )}
 
         {/* ─── 브라우저 ─── */}
+        {tab === 'ssh' && <SshSettings />}
+
         {tab === 'browser' && (
           <SettingsSection plain title="브라우저">
             <div className="tool-card">

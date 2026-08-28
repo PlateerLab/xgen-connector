@@ -39,6 +39,7 @@ import {
   type ChatRequest,
   type TeamsAttachment,
   type TtsSpeakOptions,
+  type SshServerInput,
 } from '../core/index';
 import {
   loadConfig,
@@ -1978,6 +1979,27 @@ ipcMain.handle(CHANNELS.agentsList, (_e, query) => getClient().agents.list(query
 // The renderer captures audio via getUserMedia and hands bytes to main; main
 // proxies to the backend with the Bearer token. Secrets never reach here.
 ipcMain.handle(CHANNELS.voiceConfig, () => getClient().voice.getVoiceConfig());
+
+// ── SSH (개인별 서버) ──────────────────────────────────────────────
+// 얇은 통과 계층이다. 서버가 검증하고(이름 규칙·점프 그래프·자격증명 유무),
+// 실패는 메시지째 렌더러로 올라가 그대로 보인다 — 여기서 다시 판단하면 두
+// 화면(웹/커넥터)의 규칙이 갈라진다.
+ipcMain.handle(CHANNELS.sshConfig, () => getClient().ssh.getConfig());
+ipcMain.handle(CHANNELS.sshSetEnabled, (_e, enabled: boolean) =>
+  getClient().ssh.setEnabled(!!enabled),
+);
+ipcMain.handle(CHANNELS.sshCreateServer, (_e, input: SshServerInput) =>
+  getClient().ssh.createServer(input),
+);
+ipcMain.handle(CHANNELS.sshUpdateServer, (_e, name: string, input: SshServerInput) =>
+  getClient().ssh.updateServer(name, input),
+);
+ipcMain.handle(CHANNELS.sshDeleteServer, (_e, name: string) =>
+  getClient().ssh.deleteServer(name),
+);
+ipcMain.handle(CHANNELS.sshTestServer, (_e, name: string) =>
+  getClient().ssh.testServer(name),
+);
 ipcMain.handle(
   CHANNELS.voiceTranscribe,
   (_e, bytes: Uint8Array, mime: string, language?: string) => {

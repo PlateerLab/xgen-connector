@@ -7103,3 +7103,63 @@ button.sm {
   color: var(--text-dim, #8a8f98);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── SSH 설정 ─────────────────────────────────────────────────────
+   점프 경로는 필드가 아니라 **사슬**로 보여 준다. [XGEN 서버] → bastion → db
+   처럼 그려야 사용자가 지금 무엇을 만들고 있는지 한눈에 안다 — 목록으로만 두면
+   순서가 무슨 뜻인지(가까운 홉이 먼저) 매번 다시 추측하게 된다. */
+.ssh-chain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.ssh-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong, #c7d2fe);
+  background: var(--surface-accent, #eef2ff);
+  color: var(--text-accent, #3730a3);
+  white-space: nowrap;
+}
+.ssh-chip.muted {
+  border-color: var(--line, #e5e7eb);
+  background: var(--surface-2, #f9fafb);
+  color: var(--text-muted, #6b7280);
+}
+.ssh-chip.target {
+  font-weight: 700;
+}
+.ssh-arrow {
+  color: var(--text-muted, #9ca3af);
+  font-size: 12px;
+}
+.ssh-hop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.ssh-hop-name {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.ssh-two-col {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+.ssh-actions {
+  display: flex;
+  gap: 12px;
+}
+/* 모달 본문 — 폼이 길어 스크롤이 필요하다(개인키 입력이 열리면 특히). */
+.ssh-modal-body {
+  max-height: 62vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}

@@ -42,6 +42,16 @@ export const CHANNELS = {
   voiceTranscribe: 'voice:transcribe', // audio bytes → POST /api/audio/stt/transcribe → text
   voiceSpeak: 'voice:speak', // text → POST /api/audio/tts/speak → audio bytes
 
+  // SSH — 개인별 서버 목록. **서버가 유일한 저장소**이고 이 채널들은 그대로
+  // 통과시키기만 한다. 로컬 사본을 두면 웹 마이페이지와 어긋나고, 어긋난 둘을
+  // 맞추는 규칙은 반드시 사용자가 지운 서버를 되살린다.
+  sshConfig: 'ssh:config',
+  sshSetEnabled: 'ssh:setEnabled',
+  sshCreateServer: 'ssh:createServer',
+  sshUpdateServer: 'ssh:updateServer',
+  sshDeleteServer: 'ssh:deleteServer',
+  sshTestServer: 'ssh:testServer',
+
   // Teams — 사람 사이의 대화. REST 는 요청/응답, 실시간은 teamsEvent push.
   teamsRooms: 'teams:rooms',
   teamsCreateRoom: 'teams:createRoom',
