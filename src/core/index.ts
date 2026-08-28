@@ -26,6 +26,7 @@ import { AvatarsApi } from './avatars';
 import { ChatApi } from './chat';
 import { HistoryApi } from './history';
 import { PreferencesApi } from './preferences';
+import { SshApi } from './ssh';
 import { TeamsApi } from './teams';
 import { VoiceApi } from './voice';
 import { HttpClient, type FetchLike } from './client';
@@ -53,6 +54,7 @@ export class XgenClient {
   readonly chat: ChatApi;
   readonly history: HistoryApi;
   readonly preferences: PreferencesApi;
+  readonly ssh: SshApi;
   readonly teams: TeamsApi;
   readonly avatars: AvatarsApi;
   readonly voice: VoiceApi;
@@ -78,6 +80,7 @@ export class XgenClient {
     this.chat = new ChatApi(this.http);
     this.history = new HistoryApi(this.http);
     this.preferences = new PreferencesApi(this.http);
+    this.ssh = new SshApi(this.http);
     this.teams = new TeamsApi(this.http);
     this.avatars = new AvatarsApi(this.http);
     this.voice = new VoiceApi(this.http);
@@ -259,6 +262,9 @@ export {
   teamsAttachmentRejectReason,
   directRoomNameForViewer,
 } from './teams';
+// SSH — 웹 마이페이지 [SSH 연동 설정] 과 **같은 저장소**를 보는 타입들.
+export { EMPTY_SSH_CONFIG } from './ssh';
+export type { SshServer, SshServerInput, SshConfig, SshTestResult } from './ssh';
 export type {
   TeamsContextEntry,
   TeamsContextRoom,
