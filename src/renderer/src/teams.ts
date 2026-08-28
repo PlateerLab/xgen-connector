@@ -19,15 +19,16 @@ import type {
   TeamsMessage,
   TeamsRoom,
 } from '../../core/index';
-import { shareBodyOf } from '../../core/teams-bridge';
 import {
   PENDING_PREFIX,
   applyEdit,
   applyReactions,
-  messagePreview,
   dropPending,
+  memberDepartureMessage,
   mergeMessages,
+  removeDepartedMember,
   settlePending,
+  shouldShowRoomRefreshLoading,
   sortRooms,
   unreadCount,
 } from './views/teams-store';
@@ -59,6 +60,8 @@ function attachmentOnlyText(attachments: TeamsAttachment[]): string {
 export interface RoomState {
   messages: TeamsMessage[];
   members: TeamsMember[];
+  membersLoading: boolean;
+  membersError: string;
   /** 방 WebSocket 이 붙어 있는가 — 끊기면 배너를 띄운다. */
   connected: boolean;
   /** 최초 메시지 로드 중. */
@@ -85,10 +88,17 @@ export interface TeamsSnapshot {
 const PAGE_SIZE = 50;
 const TYPING_TIMEOUT_MS = 6_000;
 
+/** 서버 created_at 처럼 타임존 접미사 없는 로컬 시각. 새 안내가 대화 끝에 정렬된다. */
+function localTimestamp(now = new Date()): string {
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().replace(/Z$/, '');
+}
+
 function emptyRoom(): RoomState {
   return {
     messages: [],
     members: [],
+    membersLoading: false,
+    membersError: '',
     connected: false,
     loading: false,
     hasMore: true,
@@ -112,14 +122,20 @@ class TeamsLiveStore {
   private lastReadAt: Record<string, string> = {};
   /** 알림을 끈 방. 서버에 음소거 API 가 없어 이 PC 가 기억한다. */
   private muted = new Set<string>();
-  /** 새 메시지 OS 알림 전체 스위치. */
-  private notificationsOn = true;
   private myUserId = '';
   /** 화면에 떠 있는(= 읽고 있는) 방. 이 방의 메시지는 안 읽음으로 세지 않는다. */
   private activeRoomId: string | null = null;
   private wired = false;
   private typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 늦게 끝난 목록 요청이 더 최신 결과를 덮지 못하게 하는 순번. */
+  private roomsRequestId = 0;
+  /** 빈 배열도 서버에서 확인된 정상 결과인지 구분한다. */
+  private hasLoadedRooms = false;
+  /** 계정 전환 뒤 이전 계정의 비동기 응답을 버리기 위한 세대. */
+  private generation = 0;
+  private memberRequestIds = new Map<string, number>();
+  private memberNoticeSequence = 0;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -162,7 +178,6 @@ class TeamsLiveStore {
     this.myUserId = myUserId;
     if (lastReadAt) this.lastReadAt = { ...lastReadAt };
     this.muted = new Set(prefs?.mutedRooms ?? []);
-    this.notificationsOn = prefs?.notifications !== false;
     this.emit({ mutedRooms: [...this.muted] });
     if (this.wired) return;
     this.wired = true;
@@ -171,6 +186,10 @@ class TeamsLiveStore {
 
   /** 계정이 바뀌거나 로그아웃 — 남의 방 상태가 남지 않도록 전부 비운다. */
   reset(): void {
+    this.generation += 1;
+    this.roomsRequestId += 1;
+    this.hasLoadedRooms = false;
+    this.memberRequestIds.clear();
     for (const timer of this.typingTimers.values()) clearTimeout(timer);
     this.typingTimers.clear();
     // ⚠ 저장 디바운스도 반드시 끈다. 남겨 두면 계정을 바꾼 직후 **비워진**
@@ -191,13 +210,22 @@ class TeamsLiveStore {
     });
   }
 
-  async loadRooms(): Promise<void> {
-    this.emit({ loadingRooms: true, roomsError: '' });
+  async loadRooms(options: { background?: boolean } = {}): Promise<void> {
+    const requestId = ++this.roomsRequestId;
+    const generation = this.generation;
+    const showLoading = shouldShowRoomRefreshLoading(
+      options.background === true,
+      this.hasLoadedRooms,
+    );
+    if (showLoading) this.emit({ loadingRooms: true, roomsError: '' });
     try {
       const rooms = await xgen.teams.rooms();
+      if (generation !== this.generation || requestId !== this.roomsRequestId) return;
+      this.hasLoadedRooms = true;
       this.emit({ rooms: sortRooms(rooms), loadingRooms: false });
       for (const room of rooms) this.recount(room.id);
     } catch (e) {
+      if (generation !== this.generation || requestId !== this.roomsRequestId) return;
       this.emit({
         loadingRooms: false,
         roomsError: e instanceof Error ? e.message : '대화 목록을 불러오지 못했습니다.',
@@ -214,7 +242,7 @@ class TeamsLiveStore {
     const known = this.snapshot.byRoom[roomId];
     if (!known) this.patchRoom(roomId, emptyRoom());
     void xgen.teams.watch(roomId);
-    void this.loadMembers(roomId);
+    void this.refreshMembers(roomId);
     if (known && known.messages.length > 0) {
       void this.refreshMessages(roomId);
       return;
@@ -304,13 +332,40 @@ class TeamsLiveStore {
     }
   }
 
-  private async loadMembers(roomId: string): Promise<void> {
+  /** 멤버 목록을 다시 읽는다. 초대 직후와 멤버 변경 WS 이벤트가 같은 경로를 쓴다. */
+  async refreshMembers(roomId: string): Promise<void> {
+    const requestId = (this.memberRequestIds.get(roomId) ?? 0) + 1;
+    const generation = this.generation;
+    this.memberRequestIds.set(roomId, requestId);
+    this.patchRoom(roomId, { membersLoading: true, membersError: '' });
     try {
       const members = await xgen.teams.members(roomId);
-      this.patchRoom(roomId, { members });
-    } catch {
-      /* 멤버 목록은 부가 정보 — 실패해도 대화는 계속된다 */
+      if (generation !== this.generation || this.memberRequestIds.get(roomId) !== requestId) return;
+      const current = this.snapshot.byRoom[roomId] ?? emptyRoom();
+      const liveIds = new Set(members.map((member) => member.userId));
+      const departed = current.members.filter((member) => !liveIds.has(member.userId));
+      let messages = current.messages;
+      for (const member of departed) {
+        messages = mergeMessages(messages, [this.departureNotice(roomId, member)]);
+      }
+      this.patchRoom(roomId, { members, messages, membersLoading: false });
+    } catch (e) {
+      if (generation !== this.generation || this.memberRequestIds.get(roomId) !== requestId) return;
+      this.patchRoom(roomId, {
+        membersLoading: false,
+        membersError: e instanceof Error ? e.message : '멤버 목록을 불러오지 못했습니다.',
+      });
     }
+  }
+
+  private departureNotice(roomId: string, member: TeamsMember, occurredAt?: string): TeamsMessage {
+    this.memberNoticeSequence += 1;
+    return memberDepartureMessage(
+      roomId,
+      member,
+      occurredAt || localTimestamp(),
+      `${Date.now()}:${this.memberNoticeSequence}`,
+    );
   }
 
   /**
@@ -417,6 +472,8 @@ class TeamsLiveStore {
    */
   private forget(roomId: string): void {
     if (this.activeRoomId === roomId) this.activeRoomId = null;
+    // 진행 중인 멤버 조회가 끝나며 지운 방 상태를 다시 만들지 못하게 무효화한다.
+    this.memberRequestIds.set(roomId, (this.memberRequestIds.get(roomId) ?? 0) + 1);
     delete this.lastReadAt[roomId];
     this.muted.delete(roomId);
     const mutedRooms = [...this.muted];
@@ -442,38 +499,6 @@ class TeamsLiveStore {
       });
       return [];
     }
-  }
-
-  /**
-   * 새 메시지 OS 알림을 띄울지 판정한다.
-   *
-   * 판정을 렌더러가 하는 이유: "지금 그 방을 보고 있는가" 와 "음소거인가" 는
-   * 여기에만 있는 상태다. main 이 따로 들고 있으면 두 곳이 어긋난다.
-   *
-   * 알리지 않는 경우:
-   *   · 전체 스위치가 꺼짐 / 이 방이 음소거
-   *   · **내가 보낸 메시지** — 내 말에 내가 알림을 받을 이유가 없다
-   *   · 시스템 안내(입장/퇴장)
-   *   · 지금 그 방을 보고 있음 (화면에 이미 떠 있다)
-   *
-   * `message` 이벤트가 아니라 `notify`(사용자 소켓)에서만 부른다. 방 소켓의
-   * `message` 는 그 방을 열어 둔 경우에만 오므로 알릴 대상이 아니다.
-   */
-  private maybeNotify(roomId: string, message: TeamsMessage): void {
-    if (!this.notificationsOn || this.muted.has(roomId)) return;
-    if (message.senderType === 'system') return;
-    if (message.senderType === 'user' && message.senderId === this.myUserId) return;
-    if (this.activeRoomId === roomId && document.hasFocus()) return;
-    const room = this.snapshot.rooms.find((r) => r.id === roomId);
-    const body = shareBodyOf(message.content).trim() || messagePreview(message);
-    void xgen.teams
-      .notify({
-        roomId,
-        roomName: room?.name || '대화',
-        sender: message.senderName,
-        body: body || '(첨부)',
-      })
-      .catch(() => undefined);
   }
 
   /** 이 방의 알림이 꺼져 있는가. */
@@ -507,23 +532,6 @@ class TeamsLiveStore {
         this.snapshot.rooms.map((r) => (r.id === roomId ? { ...r, name: next } : r)),
       ),
     });
-    return true;
-  }
-
-  /**
-   * 방 삭제 (방장만). 나가기와 같은 정리를 하되, 실패는 화면에 남긴다 —
-   * 권한이 없으면 서버가 403 을 주므로 그 사유가 보여야 한다.
-   */
-  async remove(roomId: string): Promise<boolean> {
-    try {
-      await xgen.teams.deleteRoom(roomId);
-    } catch (e) {
-      this.patchRoom(roomId, {
-        error: e instanceof Error ? e.message : '대화방을 삭제하지 못했습니다.',
-      });
-      return false;
-    }
-    this.forget(roomId);
     return true;
   }
 
@@ -597,7 +605,11 @@ class TeamsLiveStore {
         this.recount(event.roomId);
         // 목록에 없는 방에서 알림이 왔다 = 방금 초대됐다 — 목록을 다시 부른다.
         if (!this.snapshot.rooms.some((r) => r.id === event.roomId)) void this.loadRooms();
-        this.maybeNotify(event.roomId, event.message);
+        // 서버는 멤버 추가/퇴장을 시스템 메시지로도 broadcast 한다. 전용 멤버
+        // 이벤트를 보내지 않는 서버 버전에서도 열린 방의 인원수가 즉시 맞는다.
+        if (event.kind === 'message' && event.message.senderType === 'system') {
+          void this.refreshMembers(event.roomId);
+        }
         return;
       }
       case 'message_edited': {
@@ -653,8 +665,45 @@ class TeamsLiveStore {
         });
         return;
       }
+      case 'members_changed': {
+        const room = this.snapshot.byRoom[event.roomId];
+        if (room && event.change === 'left') {
+          const { members, departed } = removeDepartedMember(
+            room.members,
+            event.userId,
+            event.username,
+          );
+          if (departed) {
+            const typing = { ...room.typing };
+            delete typing[departed.userId];
+            const typingKey = `${event.roomId}:${departed.userId}`;
+            const typingTimer = this.typingTimers.get(typingKey);
+            if (typingTimer) clearTimeout(typingTimer);
+            this.typingTimers.delete(typingKey);
+            this.patchRoom(event.roomId, {
+              members,
+              typing,
+              messages: mergeMessages(room.messages, [
+                this.departureNotice(event.roomId, departed, event.occurredAt),
+              ]),
+            });
+          }
+        }
+        // 즉시 반영 뒤 REST 결과로 최종 정합성을 맞춘다. ID 없는 구형 이벤트도
+        // 이 조회의 전후 차이로 퇴장자를 찾아 같은 안내를 만든다.
+        if (this.snapshot.byRoom[event.roomId]) void this.refreshMembers(event.roomId);
+        return;
+      }
       case 'rooms_changed':
-        void this.loadRooms();
+        if (event.reason === 'removed' && event.roomId) {
+          // 삭제/강퇴/나가기는 목록 REST 왕복을 기다리지 않고 즉시 걷는다.
+          // 이어지는 조회는 이벤트 오인이나 서버 버전 차이를 보정하는 재검증이다.
+          this.forget(event.roomId);
+        }
+        void this.loadRooms({ background: true });
+        if (event.roomId && this.snapshot.byRoom[event.roomId]) {
+          void this.refreshMembers(event.roomId);
+        }
         return;
     }
   }

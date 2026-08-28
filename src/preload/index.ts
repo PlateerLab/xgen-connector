@@ -39,6 +39,12 @@ import type {
   WorkspaceBinary,
   WorkspaceBinaryPurpose,
   WorkspaceUploadResult,
+  NotificationPreferenceUpdate,
+  NotificationProfile,
+  NotificationRendererContext,
+  NotificationTarget,
+  NotificationDeliveryResult,
+  NotificationSystemStatus,
 } from '../core/index';
 import type { SshConfig, SshServer, SshServerInput, SshTestResult } from '../core/ssh';
 import type { AvatarConfig, AvatarDescriptor } from '../core/preferences';
@@ -507,9 +513,6 @@ const api = {
       roomId: string,
       patch: { name?: string; description?: string | null },
     ): Promise<TeamsRoom | null> => ipcRenderer.invoke(CHANNELS.teamsUpdateRoom, roomId, patch),
-    /** 방 삭제 — 방장만 가능(그 외 403). */
-    deleteRoom: (roomId: string): Promise<boolean> =>
-      ipcRenderer.invoke(CHANNELS.teamsDeleteRoom, roomId),
     /** 새 메시지 OS 알림 요청. 보고 있지 않고 음소거도 아닐 때만 렌더러가 부른다. */
     notify: (payload: {
       roomId: string;
@@ -570,6 +573,26 @@ const api = {
       const h = (_e: unknown, event: TeamsEvent) => cb(event);
       ipcRenderer.on(CHANNELS.teamsEvent, h);
       return () => ipcRenderer.removeListener(CHANNELS.teamsEvent, h);
+    },
+  },
+
+  /** 계정별 공통 OS 알림. 실제 정책 판정과 표시는 main 한 곳에서 한다. */
+  notifications: {
+    preferences: (): Promise<NotificationProfile> =>
+      ipcRenderer.invoke(CHANNELS.notificationPreferences),
+    update: (update: NotificationPreferenceUpdate): Promise<NotificationProfile> =>
+      ipcRenderer.invoke(CHANNELS.notificationUpdate, update),
+    test: (): Promise<NotificationDeliveryResult> => ipcRenderer.invoke(CHANNELS.notificationTest),
+    status: (): Promise<NotificationSystemStatus> =>
+      ipcRenderer.invoke(CHANNELS.notificationStatus),
+    setContext: (context: NotificationRendererContext): void =>
+      ipcRenderer.send(CHANNELS.notificationContext, context),
+    consumeTarget: (): Promise<NotificationTarget | null> =>
+      ipcRenderer.invoke(CHANNELS.notificationConsumeTarget),
+    onNavigate: (cb: (target: NotificationTarget) => void): (() => void) => {
+      const h = (_e: unknown, target: NotificationTarget) => cb(target);
+      ipcRenderer.on(CHANNELS.notificationNavigate, h);
+      return () => ipcRenderer.removeListener(CHANNELS.notificationNavigate, h);
     },
   },
 

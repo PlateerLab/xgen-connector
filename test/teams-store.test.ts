@@ -9,8 +9,11 @@ import {
   filterRooms,
   isPending,
   mergeMessages,
+  memberDepartureMessage,
   messageTime,
+  removeDepartedMember,
   settlePending,
+  shouldShowRoomRefreshLoading,
   sortRooms,
   MAX_ROOM_MESSAGES,
   applyEdit,
@@ -21,8 +24,8 @@ import {
   unreadCount,
 } from '../src/renderer/src/views/teams-store';
 import { buildSharedMessage } from '../src/core/teams-bridge';
-import { teamsAttachmentRejectReason } from '../src/core/teams';
-import type { TeamsMessage, TeamsRoom } from '../src/core/index';
+import { directRoomNameForViewer, TeamsApi, teamsAttachmentRejectReason } from '../src/core/teams';
+import type { TeamsMember, TeamsMessage, TeamsRoom } from '../src/core/index';
 
 function msg(id: string, createdAt: string, over: Partial<TeamsMessage> = {}): TeamsMessage {
   return {
@@ -67,6 +70,53 @@ test('mergeMessages: 시간 오름차순으로 합치고 중복 id 는 나중 �
 test('mergeMessages: 빈 입력은 기존 배열을 그대로 돌려준다 (불필요한 리렌더 방지)', () => {
   const current = [msg('a', '2026-08-21T10:00:00')];
   assert.strictEqual(mergeMessages(current, []), current);
+});
+
+test('removeDepartedMember: 퇴장자를 즉시 제거하고 중복 이벤트는 무시한다', () => {
+  const members: TeamsMember[] = [
+    { userId: 1, username: 'admin', role: 'owner', isOnline: true, joinedAt: '' },
+    {
+      userId: 2,
+      username: 'departed',
+      fullName: '퇴장 사용자',
+      role: 'member',
+      isOnline: false,
+      joinedAt: '',
+    },
+  ];
+  const removed = removeDepartedMember(members, 2);
+  assert.deepStrictEqual(
+    removed.members.map((member) => member.userId),
+    [1],
+  );
+  assert.strictEqual(removed.departed?.fullName, '퇴장 사용자');
+  assert.strictEqual(removeDepartedMember(removed.members, 2).members, removed.members);
+});
+
+test('mergeMessages: 로컬 퇴장 안내는 서버 시스템 메시지가 오면 중복 없이 교체한다', () => {
+  const member: TeamsMember = {
+    userId: 2,
+    username: 'departed',
+    fullName: '퇴장 사용자',
+    role: 'member',
+    isOnline: false,
+    joinedAt: '',
+  };
+  const local = memberDepartureMessage('r1', member, '2026-08-28T14:00:00', '1');
+  const server = msg('server-left', '2026-08-28T14:00:00', {
+    senderType: 'system',
+    senderId: '',
+    senderName: '시스템',
+    content: '퇴장 사용자 님이 퇴장했습니다.',
+  });
+  assert.deepStrictEqual(
+    mergeMessages([local], [server]).map((message) => message.id),
+    ['server-left'],
+  );
+  assert.deepStrictEqual(
+    mergeMessages([server], [local]).map((message) => message.id),
+    ['server-left'],
+  );
 });
 
 test('settlePending: 임시 메시지를 서버 확정본으로 교체한다', () => {
@@ -164,6 +214,138 @@ test('filterRooms: 이름과 설명을 대소문자 없이 검색한다', () => 
     ['Random'],
   );
   assert.strictEqual(filterRooms(rooms, '  ').length, 2);
+});
+
+test('방 목록 갱신: 조회 완료된 빈 목록은 백그라운드 동기화 때 로딩 화면으로 바꾸지 않는다', () => {
+  assert.strictEqual(shouldShowRoomRefreshLoading(true, true), false);
+  assert.strictEqual(shouldShowRoomRefreshLoading(true, false), true);
+  assert.strictEqual(shouldShowRoomRefreshLoading(false, true), true);
+});
+
+test('directRoomNameForViewer: 1:1 방은 나를 제외한 상대 이름으로 보인다', () => {
+  const direct = room('dm', { name: '서버에 박제된 B', isDirect: true });
+  const members: TeamsMember[] = [
+    {
+      userId: 1,
+      username: 'A',
+      fullName: '에이 사용자',
+      role: 'owner',
+      isOnline: true,
+      joinedAt: '',
+    },
+    {
+      userId: 2,
+      username: 'B',
+      fullName: '비 사용자',
+      role: 'member',
+      isOnline: true,
+      joinedAt: '',
+    },
+  ];
+  assert.strictEqual(directRoomNameForViewer(direct, members, '1'), '비 사용자');
+  assert.strictEqual(directRoomNameForViewer(direct, members, '2'), '에이 사용자');
+});
+
+test('directRoomNameForViewer: 그룹방과 상대를 찾지 못한 DM은 서버 이름을 유지한다', () => {
+  const members: TeamsMember[] = [
+    { userId: 1, username: 'A', role: 'owner', isOnline: true, joinedAt: '' },
+  ];
+  assert.strictEqual(
+    directRoomNameForViewer(room('group', { name: '개발방' }), members, '1'),
+    '개발방',
+  );
+  assert.strictEqual(
+    directRoomNameForViewer(room('dm', { name: '기존 이름', isDirect: true }), members, '1'),
+    '기존 이름',
+  );
+});
+
+test('TeamsApi.leaveRoom: 마지막 멤버는 별도 삭제 동작 없이 방을 자동 정리한다', async () => {
+  const calls: string[] = [];
+  const api = new TeamsApi({
+    get: async (path: string) => {
+      calls.push(`GET ${path}`);
+      return {
+        data: [
+          {
+            user_id: 1,
+            username: 'admin',
+            role: 'owner',
+            is_online: true,
+            joined_at: '',
+          },
+        ],
+      };
+    },
+    del: async (path: string) => {
+      calls.push(`DELETE ${path}`);
+      return {};
+    },
+    post: async (path: string) => {
+      calls.push(`POST ${path}`);
+      return {};
+    },
+  } as never);
+
+  await api.leaveRoom('last-room');
+  assert.deepStrictEqual(calls, [
+    'GET /api/teams/rooms/last-room/members',
+    'DELETE /api/teams/rooms/last-room',
+  ]);
+});
+
+test('TeamsApi.leaveRoom: 다른 멤버가 남아 있으면 일반 나가기를 호출한다', async () => {
+  const calls: string[] = [];
+  const api = new TeamsApi({
+    get: async (path: string) => {
+      calls.push(`GET ${path}`);
+      return {
+        data: [
+          { user_id: 1, username: 'admin', role: 'owner' },
+          { user_id: 2, username: 'member', role: 'member' },
+        ],
+      };
+    },
+    del: async (path: string) => {
+      calls.push(`DELETE ${path}`);
+      throw new Error('not allowed');
+    },
+    post: async (path: string) => {
+      calls.push(`POST ${path}`);
+      return {};
+    },
+  } as never);
+
+  await api.leaveRoom('group-room');
+  assert.deepStrictEqual(calls, [
+    'GET /api/teams/rooms/group-room/members',
+    'POST /api/teams/rooms/group-room/leave',
+  ]);
+});
+
+test('TeamsApi.leaveRoom: 마지막 방 자동 정리가 실패해도 일반 나가기로 폴백한다', async () => {
+  const calls: string[] = [];
+  const api = new TeamsApi({
+    get: async (path: string) => {
+      calls.push(`GET ${path}`);
+      return { data: [{ user_id: 1, username: 'admin', role: 'owner' }] };
+    },
+    del: async (path: string) => {
+      calls.push(`DELETE ${path}`);
+      throw new Error('not allowed');
+    },
+    post: async (path: string) => {
+      calls.push(`POST ${path}`);
+      return {};
+    },
+  } as never);
+
+  await api.leaveRoom('fallback-room');
+  assert.deepStrictEqual(calls, [
+    'GET /api/teams/rooms/fallback-room/members',
+    'DELETE /api/teams/rooms/fallback-room',
+    'POST /api/teams/rooms/fallback-room/leave',
+  ]);
 });
 
 test('startsGroup: 같은 사람이 3분 안에 이어 말하면 머리를 다시 그리지 않는다', () => {

@@ -235,6 +235,7 @@ export class XgenClient {
 
 export * from './types';
 export * from './agent-data';
+export * from './notifications';
 export { ApiError } from './client';
 export { SseParser } from './sse';
 export { frameToChatEvent } from './chat';
@@ -259,6 +260,7 @@ export {
   TEAMS_ATTACHMENT_EXTENSIONS,
   TEAMS_ATTACHMENT_MAX_BYTES,
   teamsAttachmentRejectReason,
+  directRoomNameForViewer,
 } from './teams';
 // SSH — 웹 마이페이지 [SSH 연동 설정] 과 **같은 저장소**를 보는 타입들.
 export { EMPTY_SSH_CONFIG } from './ssh';

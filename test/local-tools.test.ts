@@ -6,6 +6,7 @@ import { mkdtemp } from 'fs/promises';
 import { join, resolve } from 'path';
 import {
   LOCAL_SERVER,
+  NOTIFY_TOOL,
   OPEN_TOOL,
   SHELL_TOOL,
   SHELL_JOB_TOOL,
@@ -113,6 +114,29 @@ test('꺼져 있으면 카탈로그가 비고, 켜져 있으면 Shell+Open', () 
     'Clipboard',
     'Notify',
   ]);
+});
+
+test('Notify 는 공통 알림 처리기에 에이전트/채팅 범위를 전달한다', async () => {
+  const provider = new LocalToolProvider();
+  provider.configure({ enabled: true });
+  let received: unknown;
+  provider.configureNotificationHandler((title, body, context) => {
+    received = { title, body, context };
+    return false;
+  });
+
+  const result = await provider.callTool(
+    NOTIFY_TOOL,
+    { title: '확인 필요', body: '작업을 검토해 주세요.' },
+    { workflowId: 'wf-1', workflowName: 'Agent 1', interactionId: 'chat-7' },
+  );
+
+  assert.deepEqual(received, {
+    title: '확인 필요',
+    body: '작업을 검토해 주세요.',
+    context: { workflowId: 'wf-1', workflowName: 'Agent 1', interactionId: 'chat-7' },
+  });
+  assert.match(result.content[0].text, /설정에 따라/);
 });
 
 test('resolveWithinRoots: 스코프 안은 허용, 밖은 거부', () => {

@@ -15,10 +15,33 @@
 // 값 import 는 **순수 모듈에서 직접** 가져온다. core/index 를 거치면 클라이언트
 // 전체(HttpClient·아바타·음성…)가 딸려 들어와 node 단위 테스트가 무거워진다.
 import { shareBodyOf } from '../../../core/teams-bridge';
-import type { TeamsAttachment, TeamsMessage, TeamsReaction, TeamsRoom } from '../../../core/index';
+import type {
+  TeamsAttachment,
+  TeamsMember,
+  TeamsMessage,
+  TeamsReaction,
+  TeamsRoom,
+} from '../../../core/index';
 
 /** 낙관적으로 그려 둔, 아직 서버가 확정하지 않은 메시지의 id 접두사. */
 export const PENDING_PREFIX = 'pending:';
+
+/** WS 멤버 퇴장으로 커넥터가 즉시 만든 시스템 안내. */
+export const MEMBER_DEPARTURE_PREFIX = 'local:member-left:';
+
+/**
+ * 방 목록 갱신 중 빈 상태를 로딩 화면으로 바꿔야 하는가.
+ *
+ * 첫 조회 전에는 백그라운드 요청이어도 로딩 상태를 보여 주지만, 한 번이라도
+ * 정상 응답을 받은 뒤의 빈 배열은 "아직 안 불러옴" 이 아니라 유효한 결과다.
+ * 주기 동기화 때마다 그 결과를 로딩 화면으로 덮지 않는다.
+ */
+export function shouldShowRoomRefreshLoading(
+  backgroundRequested: boolean,
+  hasLoadedRooms: boolean,
+): boolean {
+  return !backgroundRequested || !hasLoadedRooms;
+}
 
 export function isPending(message: TeamsMessage): boolean {
   return message.id.startsWith(PENDING_PREFIX);
@@ -27,6 +50,30 @@ export function isPending(message: TeamsMessage): boolean {
 /** 정렬 키 — created_at 이 같은 순간이면 id 로 안정 정렬한다. */
 function sortKey(m: TeamsMessage): string {
   return `${m.createdAt} ${m.id}`;
+}
+
+const DEPARTURE_WORDS = /(나갔|퇴장|떠났|left|removed)/i;
+
+function isLocalDeparture(message: TeamsMessage): boolean {
+  return message.id.startsWith(MEMBER_DEPARTURE_PREFIX);
+}
+
+function departureSubject(content: string): string {
+  const korean = content.match(/^(.+?)\s*님이\s*(?:대화방에서\s*)?(?:나갔|퇴장|떠났)/i);
+  if (korean?.[1]) return korean[1].trim().toLocaleLowerCase();
+  const english = content.match(/^(.+?)\s+(?:has\s+)?(?:left|was\s+removed)/i);
+  return english?.[1]?.trim().toLocaleLowerCase() ?? '';
+}
+
+/** 서버가 같은 퇴장 시스템 메시지를 저장해 보내면 로컬 임시 안내를 그 메시지로 대체한다. */
+function sameDeparture(local: TeamsMessage, server: TeamsMessage): boolean {
+  if (!isLocalDeparture(local) || isLocalDeparture(server)) return false;
+  if (server.senderType !== 'system' || !DEPARTURE_WORDS.test(server.content)) return false;
+  const serverText = server.content.toLocaleLowerCase();
+  const aliases = [local.senderName.toLocaleLowerCase(), departureSubject(local.content)].filter(
+    Boolean,
+  );
+  return aliases.some((alias) => serverText.includes(alias));
 }
 
 /**
@@ -54,7 +101,18 @@ export function mergeMessages(current: TeamsMessage[], incoming: TeamsMessage[])
   if (incoming.length === 0) return current;
   const byId = new Map<string, TeamsMessage>();
   for (const m of current) byId.set(m.id, m);
-  for (const m of incoming) byId.set(m.id, m);
+  for (const m of incoming) {
+    if (isLocalDeparture(m)) {
+      // 서버 안내가 먼저 도착했다면 같은 로컬 안내는 추가하지 않는다.
+      if ([...byId.values()].some((known) => sameDeparture(m, known))) continue;
+    } else if (m.senderType === 'system' && DEPARTURE_WORDS.test(m.content)) {
+      // 멤버 이벤트가 먼저 도착해 로컬 안내를 그린 경우 서버 확정 안내로 교체한다.
+      for (const [id, known] of byId) {
+        if (sameDeparture(known, m)) byId.delete(id);
+      }
+    }
+    byId.set(m.id, m);
+  }
   const sorted = [...byId.values()].sort((a, b) => {
     const ap = isPending(a);
     const bp = isPending(b);
@@ -63,6 +121,47 @@ export function mergeMessages(current: TeamsMessage[], incoming: TeamsMessage[])
   });
   // 상한을 넘으면 앞(과거)부터 버린다. 최근이 대화이고, 과거는 스크롤로 다시 온다.
   return sorted.length > MAX_ROOM_MESSAGES ? sorted.slice(-MAX_ROOM_MESSAGES) : sorted;
+}
+
+/** 퇴장 이벤트의 사용자 한 명을 현재 멤버 배열에서 즉시 제거한다. */
+export function removeDepartedMember(
+  current: TeamsMember[],
+  userId?: number,
+  username?: string,
+): { members: TeamsMember[]; departed?: TeamsMember } {
+  const normalizedUsername = username?.trim().toLocaleLowerCase();
+  const index = current.findIndex(
+    (member) =>
+      (userId !== undefined && member.userId === userId) ||
+      (userId === undefined &&
+        Boolean(normalizedUsername) &&
+        member.username.toLocaleLowerCase() === normalizedUsername),
+  );
+  if (index < 0) return { members: current };
+  return {
+    members: [...current.slice(0, index), ...current.slice(index + 1)],
+    departed: current[index],
+  };
+}
+
+/** 대화 로그에 그릴 로컬 퇴장 안내. 서버 안내가 오면 mergeMessages 가 대체한다. */
+export function memberDepartureMessage(
+  roomId: string,
+  member: TeamsMember,
+  createdAt: string,
+  nonce: string,
+): TeamsMessage {
+  const displayName = member.fullName || member.username;
+  return {
+    id: `${MEMBER_DEPARTURE_PREFIX}${member.userId}:${nonce}`,
+    roomId,
+    senderType: 'system',
+    senderId: '',
+    // 중복 제거 시 서버 안내가 username 을 쓸 수도 있어 별도 별칭으로 보존한다.
+    senderName: member.username,
+    content: `${displayName} 님이 대화방에서 나갔습니다.`,
+    createdAt,
+  };
 }
 
 /**

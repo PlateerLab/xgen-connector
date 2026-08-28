@@ -62,7 +62,6 @@ export const CHANNELS = {
    */
   teamsSavePrefs: 'teams:savePrefs',
   teamsUpdateRoom: 'teams:updateRoom',
-  teamsDeleteRoom: 'teams:deleteRoom',
   teamsLeaveRoom: 'teams:leaveRoom',
   /** 새 메시지 OS 알림 — 렌더러가 "지금 보고 있지 않고 음소거도 아니다" 를 판정해 요청한다. */
   teamsNotify: 'teams:notify',
@@ -79,6 +78,14 @@ export const CHANNELS = {
   teamsUnwatch: 'teams:unwatch', // 방 탭 닫힘 → 방 WS 해제
   teamsTyping: 'teams:typing',
   teamsEvent: 'teams:event', // main → renderer (정규화된 실시간 이벤트)
+  // 모든 기능이 공유하는 계정별 OS 알림 정책/표시/클릭 deep-link.
+  notificationPreferences: 'notification:preferences',
+  notificationUpdate: 'notification:update',
+  notificationTest: 'notification:test',
+  notificationStatus: 'notification:status',
+  notificationContext: 'notification:context',
+  notificationNavigate: 'notification:navigate',
+  notificationConsumeTarget: 'notification:consumeTarget',
   // 첨부 — 업로드는 바이트를 받아 서버에 multipart 로 올리고, 저장/열기는
   // 내려받은 바이트를 디스크에 쓴다. 렌더러는 파일 경로를 만지지 않는다.
   /** 임의 텍스트를 **main 의 clipboard 로** 복사. 렌더러의 navigator.clipboard 는

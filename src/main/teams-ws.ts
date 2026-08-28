@@ -201,18 +201,16 @@ export class TeamsSocketHub {
   startUserSocket(): void {
     if (!this.deps || this.userSocket) return;
     const deps = this.deps;
-    this.userSocket = new Socket('/api/teams/ws/user', deps, (frame) => {
-      const type = String(frame.type ?? '');
-      if (type === 'message_notify') {
-        const message = safeMapMessage(frame.message);
-        const roomId = String(frame.room_id ?? message?.roomId ?? '');
-        if (message && roomId) deps.emit({ kind: 'notify', roomId, message });
-        return;
-      }
-      if (type === 'room_invited' || type === 'room_kicked' || type === 'room_updated') {
-        deps.emit({ kind: 'rooms_changed', roomId: String(frame.room_id ?? '') });
-      }
-    });
+    this.userSocket = new Socket(
+      '/api/teams/ws/user',
+      deps,
+      (frame) => handleUserFrame(frame, deps.emit),
+      (connected) => {
+        // 재연결된 동안 초대/강퇴 이벤트를 놓쳤을 수 있다. 연결이 살아난 즉시
+        // REST 목록을 한 번 맞추면 사용자가 수동 새로고침할 필요가 없다.
+        if (connected) deps.emit({ kind: 'rooms_changed', roomId: '', reason: 'updated' });
+      },
+    );
     this.userSocket.start();
   }
 
@@ -250,6 +248,49 @@ export class TeamsSocketHub {
    */
   sendTyping(roomId: string, typing: boolean): void {
     this.rooms.get(roomId)?.send({ type: typing ? 'typing_start' : 'typing_stop' });
+  }
+}
+
+/** 사용자 소켓 프레임 → 방 목록/알림 이벤트. 서버 버전별 별칭도 함께 받는다. */
+export function handleUserFrame(
+  frame: Record<string, unknown>,
+  emit: (event: TeamsEvent) => void,
+): void {
+  const type = String(frame.type ?? frame.event ?? '');
+  if (type === 'message_notify') {
+    const message = safeMapMessage(frame.message);
+    const roomId = String(frame.room_id ?? message?.roomId ?? '');
+    if (message && roomId) emit({ kind: 'notify', roomId, message });
+    return;
+  }
+
+  const nestedRoom =
+    frame.room && typeof frame.room === 'object'
+      ? (frame.room as Record<string, unknown>)
+      : undefined;
+  const roomId = String(frame.room_id ?? frame.roomId ?? nestedRoom?.id ?? '');
+  if (
+    type === 'room_invited' ||
+    type === 'room_added' ||
+    type === 'room_joined' ||
+    type === 'room_created'
+  ) {
+    emit({ kind: 'rooms_changed', roomId, reason: 'invited' });
+    return;
+  }
+  if (
+    type === 'room_kicked' ||
+    type === 'room_removed' ||
+    type === 'room_left' ||
+    type === 'room_deleted' ||
+    type === 'room_destroyed' ||
+    type === 'room_archived'
+  ) {
+    emit({ kind: 'rooms_changed', roomId, reason: 'removed' });
+    return;
+  }
+  if (type === 'room_updated') {
+    emit({ kind: 'rooms_changed', roomId, reason: 'updated' });
   }
 }
 
@@ -325,12 +366,68 @@ export function handleRoomFrame(
       emit({ kind: 'presence', roomId, onlineUserIds: ids });
       return;
     }
+    case 'member_added':
+    case 'member_joined': {
+      emit({ kind: 'members_changed', roomId, change: 'joined', ...memberChangeOf(frame) });
+      return;
+    }
+    case 'member_removed':
+    case 'member_left': {
+      emit({ kind: 'members_changed', roomId, change: 'left', ...memberChangeOf(frame) });
+      return;
+    }
+    case 'members_updated': {
+      emit({ kind: 'members_changed', roomId, change: 'updated' });
+      return;
+    }
     case 'room_updated': {
       emit({ kind: 'rooms_changed', roomId });
+      // 일부 서버 버전은 멤버 추가/제거도 room_updated 로만 알린다.
+      emit({ kind: 'members_changed', roomId });
+      return;
+    }
+    case 'room_deleted':
+    case 'room_destroyed':
+    case 'room_archived': {
+      // 서버 버전에 따라 사용자 소켓 대신 방 소켓으로 삭제를 알리기도 한다.
+      emit({ kind: 'rooms_changed', roomId, reason: 'removed' });
       return;
     }
     default:
       // pong 등 — 무시.
       return;
   }
+}
+
+/** 멤버 이벤트는 서버 버전에 따라 사용자 정보가 최상위 또는 member/user 안에 온다. */
+function memberChangeOf(frame: Record<string, unknown>): {
+  userId?: number;
+  username?: string;
+  occurredAt?: string;
+} {
+  const member =
+    frame.member && typeof frame.member === 'object'
+      ? (frame.member as Record<string, unknown>)
+      : undefined;
+  const user =
+    frame.user && typeof frame.user === 'object'
+      ? (frame.user as Record<string, unknown>)
+      : undefined;
+  const rawId = frame.user_id ?? member?.user_id ?? member?.id ?? user?.user_id ?? user?.id;
+  const parsedId = Number(rawId);
+  const userId = Number.isInteger(parsedId) && parsedId > 0 ? parsedId : undefined;
+  const username = String(
+    frame.username ??
+      member?.username ??
+      member?.user_name ??
+      user?.username ??
+      user?.user_name ??
+      '',
+  ).trim();
+  const occurredAt = String(frame.created_at ?? frame.occurred_at ?? frame.timestamp ?? '').trim();
+  return {
+    userId,
+    username: username || undefined,
+    occurredAt: occurredAt || undefined,
+  };
 }

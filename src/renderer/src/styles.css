@@ -3927,6 +3927,25 @@ button {
   font-size: 13px;
   font-weight: 500;
 }
+.notification-event-hint {
+  display: block;
+  margin-top: 3px;
+  font-weight: 400;
+}
+.notification-scope-menu {
+  min-width: 250px;
+}
+.notification-scope-hint {
+  padding: 8px 12px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  border-top: 1px solid var(--border-soft);
+}
+.switch input:disabled + .track {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 /* Toggle switch */
 .switch {
@@ -5610,6 +5629,117 @@ button.sm {
   background: none;
 }
 
+/* 방 헤더의 멤버 버튼과 현재 참여자 목록. */
+.teams-members-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.modal.teams-members-modal {
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(620px, calc(100vh - 48px));
+  padding: 0;
+  overflow: hidden;
+}
+.teams-members-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.teams-members-head h3,
+.teams-members-head p {
+  margin: 0;
+}
+.teams-members-head h3 {
+  font-size: 16px;
+}
+.teams-members-head p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.teams-members-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.teams-members-list {
+  max-height: min(500px, calc(100vh - 150px));
+  overflow-y: auto;
+  padding: 8px;
+}
+.teams-member-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 7px 9px;
+  border-radius: var(--radius-md);
+}
+.teams-member-row:hover {
+  background: var(--panel-2);
+}
+.teams-member-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.teams-member-name,
+.teams-member-account {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teams-member-name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.teams-member-account {
+  color: var(--muted);
+  font-size: 11px;
+}
+.teams-member-me,
+.teams-member-role {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 600;
+}
+.teams-member-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.teams-member-presence .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--gray-400);
+}
+.teams-member-presence.online {
+  color: #15803d;
+}
+.teams-member-presence.online .dot {
+  background: #22c55e;
+}
+[data-theme='dark'] .teams-member-presence.online {
+  color: #4ade80;
+}
+
 /* 연속 발화는 머리(아바타·이름) 없이 붙여 그린다. */
 .msg-row.grouped {
   margin-top: -6px;
@@ -5690,7 +5820,8 @@ button.sm {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 4px;
+  /* msg-col 의 기본 gap 과 합쳐져도 말풍선에 붙어 보이도록 살짝 당긴다. */
+  margin-top: -2px;
 }
 .teams-reaction {
   display: inline-flex;
@@ -6131,7 +6262,56 @@ button.sm {
   font-size: 10.5px;
 }
 
-/* ── 방 헤더의 ⋯ 메뉴 ─────────────────────────────────────────── */
+/* ── 대화 목록 행의 hover 설정 메뉴 ───────────────────────────── */
+.teams-room-item {
+  position: relative;
+  gap: 0;
+  padding: 0;
+  cursor: default;
+}
+.teams-room-open {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 46px 9px 10px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.teams-room-open:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.teams-menu-wrap.teams-room-item-menu {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  z-index: 2;
+  transform: translateY(-50%);
+}
+.teams-room-menu-trigger {
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    background-color 0.12s ease;
+}
+.teams-room-item:hover .teams-room-menu-trigger,
+.teams-room-item:focus-within .teams-room-menu-trigger,
+.teams-room-item.menu-open .teams-room-menu-trigger {
+  opacity: 1;
+  pointer-events: auto;
+}
+.teams-room-item:hover .teams-badge,
+.teams-room-item:focus-within .teams-badge,
+.teams-room-item.menu-open .teams-badge {
+  visibility: hidden;
+}
 .teams-menu-wrap {
   position: relative;
 }
@@ -6152,6 +6332,10 @@ button.sm {
   background: var(--panel);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
+.teams-menu.teams-room-floating-menu {
+  position: fixed;
+  width: 176px;
+}
 .teams-menu button {
   display: flex;
   align-items: center;
@@ -6168,6 +6352,13 @@ button.sm {
 }
 .teams-menu button:hover {
   background: var(--panel-2);
+}
+.teams-menu button:disabled {
+  color: var(--muted);
+  cursor: wait;
+}
+.teams-menu button:disabled:hover {
+  background: none;
 }
 .teams-menu button.danger {
   color: #b91c1c;

@@ -17,6 +17,8 @@ import { xgen, copyText } from '../bridge';
 import { sessionStore } from '../session';
 import { CONTEXT_LIMIT_CHOICES, teamsContextStore, useContextChip } from '../teams-context';
 import { browserSelectionStore, useBrowserSelections } from '../browser-selection-store';
+import { notificationStore, useNotifications } from '../notifications';
+import { notificationChatKey } from '../../../core/notifications';
 import { ShareToTeamsModal } from './ShareToTeams';
 import { TeamsRoomList } from './TeamsRoomPicker';
 import { useModalDismiss } from './use-modal-dismiss';
@@ -32,6 +34,8 @@ import type { AvatarState } from '../avatar/AvatarSlot';
 import { XgenMark } from '../brand/Logo';
 import {
   BrowserIcon,
+  BellIcon,
+  BellOffIcon,
   ChatIcon,
   CloseIcon,
   CopyIcon,
@@ -245,6 +249,7 @@ export const Chat: React.FC<{
   const messages = session.messages;
   const streaming = session.streaming;
   const loadingHistory = session.loadingHistory;
+  const notificationSnapshot = useNotifications();
 
   const [input, setInput] = useState('');
   // 로컬 그림 첨부 — 서버에 미리 업로드하지 않고, 전송 순간 멀티모달 content 로
@@ -282,6 +287,7 @@ export const Chat: React.FC<{
   const [mcpStatus, setMcpStatus] = useState<McpBridgeStatusLike | null>(null);
   const [mcpLogs, setMcpLogs] = useState<McpRuntimeLogEntryLike[]>([]);
   const [mcpLogsOpen, setMcpLogsOpen] = useState(false);
+  const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -884,6 +890,12 @@ export const Chat: React.FC<{
 
   const kind = AGENT_KIND[agent.workflowType ?? ''] ?? (agent.workflowType || 'Agent');
   const mcpIndicator = mcpChatStatus(mcpStatus);
+  const agentNotificationMuted = !!notificationSnapshot.profile.mutedAgents[agent.workflowId];
+  const chatNotificationMuted =
+    !!notificationSnapshot.profile.mutedChats[
+      notificationChatKey(agent.workflowId, session.interactionId)
+    ];
+  const effectiveNotificationMuted = agentNotificationMuted || chatNotificationMuted;
 
   return (
     <div className="chat">
@@ -903,6 +915,59 @@ export const Chat: React.FC<{
           </div>
         </div>
         <div className="chat-header-actions">
+          <div className="teams-menu-wrap">
+            <button
+              className="secondary"
+              onClick={() => setNotificationMenuOpen((open) => !open)}
+              title="이 에이전트와 대화의 알림 설정"
+              aria-label="알림 설정"
+              aria-expanded={notificationMenuOpen}
+            >
+              {effectiveNotificationMuted ? <BellOffIcon size={15} /> : <BellIcon size={15} />}
+            </button>
+            {notificationMenuOpen && (
+              <>
+                <div className="teams-menu-scrim" onClick={() => setNotificationMenuOpen(false)} />
+                <div className="teams-menu notification-scope-menu" role="menu">
+                  <button
+                    onClick={() => {
+                      setNotificationMenuOpen(false);
+                      void notificationStore.setChat(
+                        agent.workflowId,
+                        session.interactionId,
+                        !chatNotificationMuted,
+                        `${agent.workflowName} · 현재 대화`,
+                      );
+                    }}
+                  >
+                    {chatNotificationMuted ? <BellIcon size={14} /> : <BellOffIcon size={14} />}
+                    {chatNotificationMuted ? '이 대화 알림 켜기' : '이 대화 알림 끄기'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setNotificationMenuOpen(false);
+                      void notificationStore.setScope(
+                        'agent',
+                        agent.workflowId,
+                        !agentNotificationMuted,
+                        agent.workflowName,
+                      );
+                    }}
+                  >
+                    {agentNotificationMuted ? <BellIcon size={14} /> : <BellOffIcon size={14} />}
+                    {agentNotificationMuted
+                      ? '이 에이전트 알림 켜기'
+                      : '이 에이전트 알림 모두 끄기'}
+                  </button>
+                  {agentNotificationMuted && (
+                    <div className="notification-scope-hint">
+                      에이전트 음소거가 모든 하위 대화보다 우선합니다.
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
           {mcpDebug && (
             <button
               type="button"
