@@ -24,7 +24,9 @@ import {
   applyEdit,
   applyReactions,
   dropPending,
+  memberDepartureMessage,
   mergeMessages,
+  removeDepartedMember,
   settlePending,
   sortRooms,
   unreadCount,
@@ -85,6 +87,11 @@ export interface TeamsSnapshot {
 const PAGE_SIZE = 50;
 const TYPING_TIMEOUT_MS = 6_000;
 
+/** 서버 created_at 처럼 타임존 접미사 없는 로컬 시각. 새 안내가 대화 끝에 정렬된다. */
+function localTimestamp(now = new Date()): string {
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().replace(/Z$/, '');
+}
+
 function emptyRoom(): RoomState {
   return {
     messages: [],
@@ -125,6 +132,7 @@ class TeamsLiveStore {
   /** 계정 전환 뒤 이전 계정의 비동기 응답을 버리기 위한 세대. */
   private generation = 0;
   private memberRequestIds = new Map<string, number>();
+  private memberNoticeSequence = 0;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -325,7 +333,14 @@ class TeamsLiveStore {
     try {
       const members = await xgen.teams.members(roomId);
       if (generation !== this.generation || this.memberRequestIds.get(roomId) !== requestId) return;
-      this.patchRoom(roomId, { members, membersLoading: false });
+      const current = this.snapshot.byRoom[roomId] ?? emptyRoom();
+      const liveIds = new Set(members.map((member) => member.userId));
+      const departed = current.members.filter((member) => !liveIds.has(member.userId));
+      let messages = current.messages;
+      for (const member of departed) {
+        messages = mergeMessages(messages, [this.departureNotice(roomId, member)]);
+      }
+      this.patchRoom(roomId, { members, messages, membersLoading: false });
     } catch (e) {
       if (generation !== this.generation || this.memberRequestIds.get(roomId) !== requestId) return;
       this.patchRoom(roomId, {
@@ -333,6 +348,16 @@ class TeamsLiveStore {
         membersError: e instanceof Error ? e.message : '멤버 목록을 불러오지 못했습니다.',
       });
     }
+  }
+
+  private departureNotice(roomId: string, member: TeamsMember, occurredAt?: string): TeamsMessage {
+    this.memberNoticeSequence += 1;
+    return memberDepartureMessage(
+      roomId,
+      member,
+      occurredAt || localTimestamp(),
+      `${Date.now()}:${this.memberNoticeSequence}`,
+    );
   }
 
   /**
@@ -632,9 +657,35 @@ class TeamsLiveStore {
         });
         return;
       }
-      case 'members_changed':
+      case 'members_changed': {
+        const room = this.snapshot.byRoom[event.roomId];
+        if (room && event.change === 'left') {
+          const { members, departed } = removeDepartedMember(
+            room.members,
+            event.userId,
+            event.username,
+          );
+          if (departed) {
+            const typing = { ...room.typing };
+            delete typing[departed.userId];
+            const typingKey = `${event.roomId}:${departed.userId}`;
+            const typingTimer = this.typingTimers.get(typingKey);
+            if (typingTimer) clearTimeout(typingTimer);
+            this.typingTimers.delete(typingKey);
+            this.patchRoom(event.roomId, {
+              members,
+              typing,
+              messages: mergeMessages(room.messages, [
+                this.departureNotice(event.roomId, departed, event.occurredAt),
+              ]),
+            });
+          }
+        }
+        // 즉시 반영 뒤 REST 결과로 최종 정합성을 맞춘다. ID 없는 구형 이벤트도
+        // 이 조회의 전후 차이로 퇴장자를 찾아 같은 안내를 만든다.
         if (this.snapshot.byRoom[event.roomId]) void this.refreshMembers(event.roomId);
         return;
+      }
       case 'rooms_changed':
         if (event.reason === 'removed' && event.roomId) {
           // 삭제/강퇴/나가기는 목록 REST 왕복을 기다리지 않고 즉시 걷는다.

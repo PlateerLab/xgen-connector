@@ -5820,7 +5820,8 @@ button.sm {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 4px;
+  /* msg-col 의 기본 gap 과 합쳐져도 말풍선에 붙어 보이도록 살짝 당긴다. */
+  margin-top: -2px;
 }
 .teams-reaction {
   display: inline-flex;
