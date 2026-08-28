@@ -13,6 +13,7 @@ import {
   messageTime,
   removeDepartedMember,
   settlePending,
+  shouldShowRoomRefreshLoading,
   sortRooms,
   MAX_ROOM_MESSAGES,
   applyEdit,
@@ -213,6 +214,12 @@ test('filterRooms: 이름과 설명을 대소문자 없이 검색한다', () => 
     ['Random'],
   );
   assert.strictEqual(filterRooms(rooms, '  ').length, 2);
+});
+
+test('방 목록 갱신: 조회 완료된 빈 목록은 백그라운드 동기화 때 로딩 화면으로 바꾸지 않는다', () => {
+  assert.strictEqual(shouldShowRoomRefreshLoading(true, true), false);
+  assert.strictEqual(shouldShowRoomRefreshLoading(true, false), true);
+  assert.strictEqual(shouldShowRoomRefreshLoading(false, true), true);
 });
 
 test('directRoomNameForViewer: 1:1 방은 나를 제외한 상대 이름으로 보인다', () => {
