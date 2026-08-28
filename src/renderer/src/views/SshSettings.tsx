@@ -96,21 +96,14 @@ const SecretField: React.FC<{
 }> = ({ label, stored, value, onChange, multiline, placeholder }) => {
   const editing = value !== undefined;
   return (
-    <label className="field">
-      <span>
-        {label}
-        <span className="small muted" style={{ marginLeft: 8 }}>
-          {stored ? '설정됨' : '미설정'}
-        </span>
-        <button
-          type="button"
-          className="link"
-          style={{ marginLeft: 8 }}
-          onClick={() => onChange(editing ? undefined : '')}
-        >
+    <div className="field">
+      <div className="ssh-secret-head">
+        <span>{label}</span>
+        <span className="srv-badge">{stored ? '설정됨' : '미설정'}</span>
+        <button type="button" className="link" onClick={() => onChange(editing ? undefined : '')}>
           {editing ? '취소' : stored ? '변경' : '입력'}
         </button>
-      </span>
+      </div>
       {editing &&
         (multiline ? (
           <textarea
@@ -130,7 +123,7 @@ const SecretField: React.FC<{
       {editing && stored && (
         <span className="small muted">비워 두고 저장하면 기존 값이 지워집니다.</span>
       )}
-    </label>
+    </div>
   );
 };
 
@@ -144,7 +137,7 @@ const JumpEditor: React.FC<{
   const remaining = candidates.filter((c) => !value.includes(c));
   return (
     <div className="ssh-jump">
-      <div className="ssh-chain">
+      <div className="ssh-chain" style={{ marginBottom: 10 }}>
         <span className="ssh-chip muted">XGEN 서버</span>
         {value.map((hop) => (
           <React.Fragment key={hop}>
@@ -158,7 +151,7 @@ const JumpEditor: React.FC<{
 
       {value.map((hop, i) => (
         <div className="ssh-hop-row" key={hop}>
-          <span className="small muted">{i + 1}.</span>
+          <span className="ssh-hop-num">{i + 1}</span>
           <span className="ssh-hop-name">{hop}</span>
           <button
             type="button" className="link" disabled={i === 0}
@@ -349,59 +342,72 @@ export const SshSettings: React.FC = () => {
 
       <SettingsSection plain title="서버">
         {rowError && <p className="small notice-warn">{rowError}</p>}
-        {config.servers.length === 0 ? (
-          <p className="settings-hint">등록된 서버가 없습니다.</p>
-        ) : (
-          config.servers.map((server) => {
+        <div className="srv-list">
+          {config.servers.length === 0 && (
+            <div className="muted small pad">등록된 서버가 없습니다.</div>
+          )}
+          {config.servers.map((server) => {
             const result = results[server.name];
             return (
-              <div className="tool-card" key={server.name}>
-                <div className="tool-card-main">
-                  <div className="tool-card-text">
-                    <div className="tool-card-title">
-                      {server.name}
-                      <span className="small muted" style={{ marginLeft: 8 }}>{server.auth}</span>
-                      {!server.enabled && (
-                        <span className="small muted" style={{ marginLeft: 8 }}>사용 안 함</span>
-                      )}
-                    </div>
-                    <div className="tool-card-desc">
-                      {server.username}@{server.host}:{server.port}
-                      {server.jump_via.length > 0 && (
-                        <>
-                          {' · 경유 '}
-                          {server.jump_via.join(' → ')} → {server.name}
-                        </>
-                      )}
-                      {server.description ? ` — ${server.description}` : ''}
-                    </div>
-                    {result && (
-                      <div className={`small ${result.success ? 'notice-ok' : 'notice-warn'}`}>
-                        {result.success
-                          ? `접속 성공 (${Math.round(result.latency_ms ?? 0)}ms)`
-                          : `접속 실패 — ${result.error ?? ''}`}
-                        {result.hops && result.hops.length > 1 && (
-                          <div className="small muted">경로: {result.hops.join(' → ')}</div>
-                        )}
-                      </div>
+              <div className="srv-row" key={server.name}>
+                <label
+                  className="switch small-switch"
+                  title={server.enabled ? '사용' : '사용 안 함 (다른 서버의 경유지로는 계속 쓰입니다)'}
+                >
+                  <input
+                    type="checkbox"
+                    checked={server.enabled}
+                    onChange={(e) => void toggleServer(server, e.target.checked)}
+                  />
+                  <span className="track" />
+                </label>
+
+                <div className="srv-row-body">
+                  <div className="srv-row-name">
+                    {server.name}
+                    <span className="srv-badge">{server.auth}</span>
+                    {!server.enabled && <span className="srv-badge">경유 전용</span>}
+                    {server.description && (
+                      <span className="small muted">{server.description}</span>
                     )}
                   </div>
-                  <label className="switch">
-                    <input
-                      type="checkbox"
-                      checked={server.enabled}
-                      onChange={(e) => void toggleServer(server, e.target.checked)}
-                    />
-                    <span className="track" />
-                  </label>
+
+                  <div className="srv-row-addr">
+                    {server.username}@{server.host}:{server.port}
+                  </div>
+
+                  {/* 경유 경로 — 이 서버에만 있는 정보다. 주소만 보면 왜 안 되는지
+                      알 수 없으므로, 실제 다이얼 순서를 그대로 그린다. */}
+                  {server.jump_via.length > 0 && (
+                    <div className="srv-row-path">
+                      <span className="ssh-chip muted">XGEN 서버</span>
+                      {server.jump_via.map((hop) => (
+                        <React.Fragment key={hop}>
+                          <span className="ssh-arrow">→</span>
+                          <span className="ssh-chip">{hop}</span>
+                        </React.Fragment>
+                      ))}
+                      <span className="ssh-arrow">→</span>
+                      <span className="ssh-chip target">{server.name}</span>
+                    </div>
+                  )}
+
+                  {result && (
+                    <div className={`small mcp-test-result ${result.success ? 'notice-ok' : 'notice-warn'}`}>
+                      {result.success
+                        ? `접속 성공 (${Math.round(result.latency_ms ?? 0)}ms)`
+                        : `접속 실패 — ${result.error ?? ''}`}
+                    </div>
+                  )}
                 </div>
-                <div className="tool-card-body ssh-actions">
+
+                <div className="srv-row-actions">
                   <button
                     type="button" className="link"
                     disabled={testing === server.name}
                     onClick={() => void test(server)}
                   >
-                    {testing === server.name ? '접속 중…' : '연결 테스트'}
+                    {testing === server.name ? '접속 중…' : '테스트'}
                   </button>
                   <button type="button" className="link" onClick={() => setDraft(draftFrom(server))}>
                     편집
@@ -412,28 +418,34 @@ export const SshSettings: React.FC = () => {
                 </div>
               </div>
             );
-          })
-        )}
-        <div style={{ marginTop: 12 }}>
+          })}
+        </div>
+
+        <div className="row" style={{ marginTop: 8, gap: 6 }}>
           <button
             type="button"
-            className="primary"
+            className="secondary"
             disabled={config.servers.length >= config.limits.max_servers}
             onClick={() => { setSaveError(''); setDraft(draftFrom(null)); }}
           >
-            서버 추가
+            + 서버 추가
           </button>
+          {config.servers.length >= config.limits.max_servers && (
+            <span className="small muted">
+              최대 {config.limits.max_servers}대까지 등록할 수 있습니다.
+            </span>
+          )}
         </div>
       </SettingsSection>
 
       {draft && (
         <div className="modal-backdrop" onClick={() => setDraft(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal wide" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <h2>{draft.original === null ? '서버 추가' : '서버 편집'}</h2>
               <button className="link" onClick={() => setDraft(null)}>닫기</button>
             </div>
-            <div className="ssh-modal-body">
+            <div>
               <label className="field">
                 <span>이름 <span className="small muted">Agent 가 이 이름으로 지목합니다</span></span>
                 <input
@@ -476,7 +488,8 @@ export const SshSettings: React.FC = () => {
                 />
               </label>
 
-              <h3 className="settings-group-title" style={{ marginTop: 16 }}>인증</h3>
+              <div className="ssh-form-section">
+              <h3 className="settings-group-title">인증</h3>
               <p className="settings-hint">
                 비밀번호나 개인키 중 하나는 반드시 필요합니다. 둘 다 넣으면 키로 접속하고
                 비밀번호는 sudo 에 쓰입니다.
@@ -502,7 +515,10 @@ export const SshSettings: React.FC = () => {
                 onChange={(v) => setDraft({ ...draft, passphrase: v })}
               />
 
-              <h3 className="settings-group-title" style={{ marginTop: 16 }}>점프 경로</h3>
+              </div>
+
+              <div className="ssh-form-section">
+              <h3 className="settings-group-title">점프 경로</h3>
               <p className="settings-hint">
                 이 서버에 바로 닿지 않을 때, 거쳐 갈 서버를 순서대로 지정합니다.
                 등록된 다른 서버를 골라 씁니다.
@@ -514,7 +530,10 @@ export const SshSettings: React.FC = () => {
                 target={draft.name.trim()}
               />
 
-              <h3 className="settings-group-title" style={{ marginTop: 16 }}>고급</h3>
+              </div>
+
+              <div className="ssh-form-section">
+              <h3 className="settings-group-title">고급</h3>
               <div className="field-row">
                 <span>
                   호스트 키 검증
@@ -546,6 +565,8 @@ export const SshSettings: React.FC = () => {
                   />
                   <span className="track" />
                 </label>
+              </div>
+
               </div>
 
               {saveError && <p className="small notice-warn">{saveError}</p>}
