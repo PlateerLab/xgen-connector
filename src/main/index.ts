@@ -2484,6 +2484,25 @@ ipcMain.handle(CHANNELS.chatCancel, (_e, streamId: string) => {
   return true;
 });
 
+// [중지] → **서버에도** 알린다.
+//
+// 2026-09-08 부터 서버는 연결 끊김을 취소로 읽지 않는다(화면 잠금·절전·기기 이동이
+// 실행 중단이 되던 문제). 그래서 스트림만 끊으면 에이전트는 계속 돌고 토큰을 계속
+// 쓴다 — 사용자가 누른 [중지] 는 화면에만 들었다. best-effort: 못 닿아도 로컬은
+// 이미 멈췄고, 결과는 히스토리가 정정한다.
+ipcMain.handle(CHANNELS.chatStop, async (_e, interactionId: string) => {
+  if (!interactionId) return false;
+  try {
+    await getClient().agentData.stopExecution(interactionId);
+    return true;
+  } catch (err) {
+    void import('./diag-log').then(({ diag }) =>
+      diag('chat', `stop 서버 전달 실패(무시): ${(err as Error).message}`),
+    );
+    return false;
+  }
+});
+
 // '진행 중 대화' 삭제 → 서버 세션 RAM(executor + 라우팅)을 완전 정리한다. 이력은 보존.
 // best-effort — 서버 미도달/미인증이어도 로컬 삭제 UX 는 막지 않는다.
 ipcMain.handle(CHANNELS.chatEndSession, async (_e, workflowId: string, interactionId: string) => {

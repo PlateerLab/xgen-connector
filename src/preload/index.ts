@@ -478,6 +478,9 @@ const api = {
         },
       };
     },
+    /** [중지] — 서버에도 알린다. 연결을 끊는 것만으로는 서버가 멈추지 않는다. */
+    stop: (interactionId: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.chatStop, interactionId),
     /** '진행 중 대화' 삭제 시 서버 세션 RAM 을 완전 정리(evict). best-effort. */
     endSession: (workflowId: string, interactionId: string): Promise<boolean> =>
       ipcRenderer.invoke(CHANNELS.chatEndSession, workflowId, interactionId),

@@ -386,6 +386,19 @@ export class AgentDataApi {
     );
   }
 
+  /** 이 대화에서 도는 턴을 **사람의 뜻으로** 멈춘다.
+   *
+   *  2026-09-08 부터 서버는 연결 끊김을 취소로 읽지 않는다 — 화면 잠금·절전·기기
+   *  이동까지 실행 중단이 됐기 때문이다. 그 순간 [중지] 버튼이 서버에 닿을 길도
+   *  함께 사라졌다: 스트림만 끊으면 에이전트는 계속 돌고 토큰을 계속 쓴다.
+   *  이 호출이 그 길이다 — 정지는 연결이 아니라 **대화**를 향한다. */
+  stopExecution(interactionId: string): Promise<unknown> {
+    return this.http.post(
+      `/api/agentflow/execute/stop/${encodeURIComponent(interactionId)}`,
+      {},
+    );
+  }
+
   // ── 기본정보 ──────────────────────────────────────────────────
   /** 실행 없이 재구성한 턴 프롬프트 + 도구 표면(web/connector 둘 다). */
   basicInfo(workflowId: string): Promise<AgentBasicInfo> {

@@ -87,6 +87,14 @@ export interface SessionState {
  * 커넥터 로컬 세션의 idle 임계 — 이 시간(30분) 넘게 활동이 없으면 로컬 데몬이
  * 세션을 정리(evict)한다(사이드카 armIdle 기본값과 동일). 넘으면 '삭제 예정'.
  */
+/** 정지한 턴에 적는 문구.
+ *
+ *  서버가 execution_io 에 남기는 것과 **글자까지 같다**
+ *  (xgen-workflow: controller/workflow/utils/turn_outcome.INTERRUPTED_NOTE).
+ *  다르면 이력을 다시 읽는 순간 같은 턴의 설명이 바뀐다 — 화면과 기록이 두 말을
+ *  하면 어느 쪽도 못 믿는다. */
+export const TURN_STOPPED_NOTE = '[중단됨] 에이전트 실행이 중단되었습니다. 다시 시도해 주세요.';
+
 export const CONNECTOR_SESSION_IDLE_MS = 30 * 60_000;
 
 export type SessionDotState = 'active' | 'idle' | 'error';
@@ -644,15 +652,47 @@ export class SessionStore {
     this.emit();
   }
 
-  /** Stop the in-flight turn on `key` (the transcript so far is kept). */
+  /** Stop the in-flight turn on `key` (the transcript so far is kept).
+   *
+   *  두 가지를 **함께** 해야 한다:
+   *
+   *  1. 로컬 스트림을 끊는다 (화면이 즉시 멈춘다).
+   *  2. **서버에도 알린다.** 2026-09-08 부터 서버는 연결 끊김을 취소로 읽지
+   *     않는다 — 화면 잠금·절전·기기 이동까지 실행 중단이 됐기 때문이다.
+   *     그래서 1)만 하면 에이전트는 계속 돌고 토큰을 계속 쓴다: [중지] 가
+   *     화면에만 듣는 장식이 된다.
+   *
+   *  그리고 **왜 멈췄는지**를 그 자리에 적는다. 웹과 같은 문구를 쓴다 — 서버가
+   *  기록에 남기는 것과 글자가 다르면, 이력을 다시 읽는 순간 설명이 바뀐다. */
   stop(key: string): void {
     const rt = this.rt.get(key);
     rt?.cancel?.();
     if (rt) rt.cancel = null;
+
+    const s0 = this.map.get(key);
+    if (s0?.interactionId) {
+      try {
+        void xgen?.chat?.stop?.(s0.interactionId);
+      } catch {
+        /* 서버 미도달 — 로컬 정지는 이미 됐고 결과는 히스토리가 정정한다 */
+      }
+    }
+
     this.patch(key, (s) => {
       const messages = s.messages.slice();
       const last = messages[messages.length - 1];
-      if (last?.role === 'assistant') messages[messages.length - 1] = { ...last, streaming: false };
+      if (last?.role === 'assistant') {
+        const body = last.text || '';
+        messages[messages.length - 1] = {
+          ...last,
+          streaming: false,
+          text: body.includes(TURN_STOPPED_NOTE)
+            ? body
+            : body
+              ? `${body}\n\n${TURN_STOPPED_NOTE}`
+              : TURN_STOPPED_NOTE,
+        };
+      }
       return { ...s, messages, streaming: false, updatedAt: this.now() };
     });
     this.emit();
