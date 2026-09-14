@@ -114,7 +114,6 @@ export type ChatEvent =
   | { kind: 'log'; data: unknown }
   | { kind: 'execution_io'; executionIoId: number }
   | { kind: 'download'; data: Record<string, unknown> }
-  | { kind: 'ui_command'; surface: 'a2ui' | 'floui'; command: Record<string, unknown> }
   | { kind: 'quota'; level: 'warning' | 'exceeded'; data: Record<string, unknown> }
   | { kind: 'summary'; text: string; data: Record<string, unknown> }
   | { kind: 'error'; detail: string }

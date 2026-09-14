@@ -91,10 +91,6 @@ export function frameToChatEvent(
       return d ? { kind: 'execution_io', executionIoId: Number(d.execution_io_id ?? 0) } : null;
     case 'download_artifact':
       return d ? { kind: 'download', data: d } : null;
-    case 'a2ui_command':
-      return d ? { kind: 'ui_command', surface: 'a2ui', command: d } : null;
-    case 'floui_command':
-      return d ? { kind: 'ui_command', surface: 'floui', command: d } : null;
     case 'quota_warning':
       return d ? { kind: 'quota', level: 'warning', data: d } : null;
     case 'quota_exceeded':
