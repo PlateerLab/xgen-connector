@@ -23,7 +23,6 @@ function agent(workflowId: string, name = workflowId): Agent {
     isShared: false,
     isDeployed: false,
     isCompleted: true,
-    workflowType: 'canvas',
     description: '',
     username: '',
     fullName: '',
