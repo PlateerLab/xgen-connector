@@ -163,7 +163,7 @@ export interface SessionTransport {
     interactionId: string,
     name?: string,
   ): Promise<Array<{ input: string; output: string; attachments?: HistoryAttachment[] }>>;
-  /** Download one server-issued XGeny history reference into a renderer preview URL. */
+  /** Download one server-issued Geny history reference into a renderer preview URL. */
   historyImage?: (
     workflowId: string,
     attachment: HistoryAttachment,
@@ -563,7 +563,7 @@ export class SessionStore {
         pending.map(async (image, index) => {
           const decoded = imageBytes(image.dataUrl);
           if (decoded.bytes.byteLength > 20 * 1024 * 1024) {
-            throw new Error('XGeny 이미지 한 장은 20MiB를 넘을 수 없습니다.');
+            throw new Error('Geny 이미지 한 장은 20MiB를 넘을 수 없습니다.');
           }
           const attachmentId = `conn-${s.interactionId}-${index + 1}`;
           const result = await this.transport.uploadWorkspaceImage!({

@@ -10,7 +10,7 @@ import { xgen } from './bridge';
 import { SessionStore, type StoreSnapshot } from './session-store';
 import { browserStateStore } from './browser-state';
 import { teamsContextStore } from './teams-context';
-import { xgenyHistoryWorkspacePath } from '../../core/history';
+import { genyHistoryWorkspacePath } from '../../core/history';
 
 const HISTORY_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
@@ -28,7 +28,7 @@ export const sessionStore = new SessionStore({
   historyTurns: (workflowId, interactionId, name) =>
     xgen.history.turns(workflowId, interactionId, name),
   historyImage: async (workflowId, attachment) => {
-    const path = xgenyHistoryWorkspacePath(attachment);
+    const path = genyHistoryWorkspacePath(attachment);
     if (!path) return null;
     const file = await xgen.agentData.workspaceBinary(workflowId, path, 'chat_attachment');
     const responseMime = String(file.contentType || '')

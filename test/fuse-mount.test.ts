@@ -255,9 +255,9 @@ test('빈 잔재 폴더는 스스로 치우고, 내용 있는 것만 사용자�
 
   const dir = mkdtempSync(join(tmpdir(), 'pf-clean-'))
   // 예전 버전이 만들던 빈 에이전트 폴더 — 우리 잔재이므로 우리가 치운다
-  mkdirSync(join(dir, 'XGeny_copy'))
+  mkdirSync(join(dir, 'Geny_copy'))
   assert.equal(await preflight(dir), null, '빈 잔재를 치우지 못해 마운트가 막혔다')
-  assert.ok(!existsSync(join(dir, 'XGeny_copy')), '빈 잔재가 남아 있다')
+  assert.ok(!existsSync(join(dir, 'Geny_copy')), '빈 잔재가 남아 있다')
 
   // 내용이 있으면 사용자 파일일 수 있다 — 절대 지우지 않고 알린다
   mkdirSync(join(dir, '내 폴더'))
