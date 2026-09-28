@@ -291,7 +291,7 @@ const api = {
 
   /**
    * 로컬 실행 환경 — 설치 폴더의 Python 런타임(사이드카) + Claude Code / Codex CLI.
-   * 커넥터에서 시작한 Agent-XGeny 턴은 자동으로 이 환경에서 돈다(chatStart). 여기는
+   * 커넥터에서 시작한 Agent-Geny 턴은 자동으로 이 환경에서 돈다(chatStart). 여기는
    * 상태 표시·설치·서버 버전 수렴([설정 → 일반]).
    */
 

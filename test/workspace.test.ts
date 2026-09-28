@@ -46,11 +46,11 @@ test('에이전트 추가는 **파일시스템을 건드리지 않는다**', () 
   // 실제로 만들면 그 파일 때문에 FUSE 가 "비어 있지 않다"며 마운트를 거부한다.
   const h = home()
   let cfg: WorkspaceConfig = { agents: [] }
-  cfg = attachAgent(cfg, { id: 'p1', workflowId: 'wf-1', label: 'XGeny_copy' })
+  cfg = attachAgent(cfg, { id: 'p1', workflowId: 'wf-1', label: 'Geny_copy' })
   assert.equal(cfg.agents.length, 1)
-  assert.equal(cfg.agents[0].folder, 'XGeny_copy')
+  assert.equal(cfg.agents[0].folder, 'Geny_copy')
   assert.ok(
-    !existsSync(join(defaultRoot(h), 'XGeny_copy')),
+    !existsSync(join(defaultRoot(h), 'Geny_copy')),
     '에이전트 추가가 로컬에 폴더를 만들었다 — 마운트가 거부된다',
   )
 })
