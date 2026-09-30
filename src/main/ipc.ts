@@ -96,7 +96,7 @@ export const CHANNELS = {
   teamsOpenAttachment: 'teams:openAttachment',
   /** 첨부 원본 바이트 — 그림 미리보기용. 디스크를 거치지 않는다. */
   teamsReadAttachment: 'teams:readAttachment',
-  /** 워크스페이스(가상 드라이브)의 파일을 그대로 방에 올린다 — 에이전트 산출물 공유. */
+  /** 파일 저장소의 파일을 그대로 방에 올린다 — 탐색기에서 고른 파일 공유. */
   teamsShareWorkspaceFile: 'teams:shareWorkspaceFile',
 
   historyTurns: 'history:turns',
@@ -213,22 +213,10 @@ export const CHANNELS = {
   mcpRenameSecrets: 'mcp:renameSecrets',
   diagText: 'diag:text',
   diagCopy: 'diag:copy',
-  workspaceStatus: 'workspace:status',
-  workspaceStatusEvent: 'workspace:statusEvent',
-  workspaceAttach: 'workspace:attach',
-  workspaceDetach: 'workspace:detach',
-  workspaceOpen: 'workspace:open',
-  workspaceRoot: 'workspace:root',
-  workspaceSetRoot: 'workspace:setRoot',
-  workspaceSetEnabled: 'workspace:setEnabled',
-  workspaceRemount: 'workspace:remount',
-  workspaceRefresh: 'workspace:refresh',
-  /** 연결된 에이전트 목록만 서버에서 다시 읽는다 (파일 캐시는 건드리지 않는다). */
-  workspaceRefreshAgents: 'workspace:refresh-agents',
-  /** 가상 드라이브 한 폴더의 직계 자식 목록 — 인앱 탐색기 사이드바용. */
-  workspaceList: 'workspace:list',
-  /** 드라이브 안 경로 하나를 OS 기본 앱/파일 관리자로 연다. */
-  workspaceOpenPath: 'workspace:openPath',
+  /** 탐색기의 에이전트 섹션 — 이 계정의 개인 에이전트 (서버 목록). */
+  fsAgents: 'fs:agents',
+  /** 파일 저장소 한 폴더의 직계 자식 — 인앱 탐색기용 (서버 목록). */
+  fsCloudList: 'fs:cloud-list',
   mcpStatus: 'mcp:status',
   mcpStatusEvent: 'mcp:statusEvent',
 
@@ -244,22 +232,9 @@ export const CHANNELS = {
 
   openExternal: 'shell:openExternal',
 
-  // 로컬 동기화 — 에이전트 workspace 저장소 ↔ 로컬 도구 기본 작업 폴더
-  syncStatus: 'sync:status',
-  syncStatusEvent: 'sync:statusEvent',
-  syncNow: 'sync:now',
-  /** 동기화된 에이전트 폴더의 직계 자식 (인앱 탐색기용, 로컬 fs). */
-  syncList: 'sync:list',
-  /** 동기화된 에이전트 폴더 안 경로를 OS 로 연다. */
-  syncOpenPath: 'sync:openPath',
-
   // 로그인 시크릿 저장 상태 (키체인/암호화 저장 불가 표면화)
   secureStorageStatus: 'secure:storageStatus',
 
-  // 로컬 실행 환경(설치 폴더의 Python 런타임 + CLI) — 상태 조회 / 설치 / 진행 push /
-  // 서버 버전으로 수렴(sync). 커넥터-세션 턴은 chatStart 가 자동으로 이 환경(사이드카
-  // 데몬)에서 돌린다 — 별도 렌더러 IPC 없음.
-  // CLI 바이너리(codex / Claude Code) 프로비저닝 — 공식 배포처에서 로컬 설치.
   /** 설치 폴더 등 로컬 폴더를 OS 파일 관리자로 연다. */
   appOpenFolder: 'app:openFolder',
 } as const;

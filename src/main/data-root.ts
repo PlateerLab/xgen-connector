@@ -1,27 +1,27 @@
 /**
- * data-root — 커넥터의 **통합 데이터 루트 폴더** (`~/xgen-dex`).
+ * data-root — 커넥터의 **데이터 루트 폴더** (`~/xgen-dex`).
  *
  * ⚠ 이 기본값은 새 설치에만 적용된다 — 이미 부팅한 적이 있는 기존 사용자는
  * settleDataRoot 가 첫 부팅에 dataRoot 를 config 에 못박아 둬서(아래 참고)
  * 이 문자열이 바뀌어도 기존 데이터 폴더(예: ~/xgen-connector)를 그대로 쓴다.
  *
- * 커넥터가 만드는 모든 작업 자산이 한 지붕 아래 모인다:
- *
  *   <dataRoot>/                ← 기본 ~/xgen-dex (인스톨러/설정에서 변경 가능)
- *     workspace/               ← PC 컨트롤 작업 폴더 + 에이전트 로컬 동기화 루트
- *     cloud/                   ← 스토리지(가상 드라이브) 마운트 루트
- *     local-runtime/           ← 에이전트 로컬 실행 런타임(Python) + bin/(codex·claude CLI)
+ *     workspace/               ← PC 컨트롤(로컬 셸·파일 도구)의 기본 작업 폴더
+ *     install.log              ← 인스톨러(NSIS)와 앱이 이어 쓰는 설치 로그
  *
- * 결정 규칙(체크 해제 = 수정 가능):
- *   · 사용자가 명시한 경로(localShell.cwd / workspace.root / dataRoot)는 항상 존중.
+ * 예전의 cloud/(가상 드라이브)·local-runtime/(로컬 실행 런타임)은 더 이상 만들지
+ * 않는다. 이미 있는 폴더와 그 안의 파일은 건드리지 않는다.
+ *
+ * 결정 규칙:
+ *   · 사용자가 명시한 경로(localShell.cwd / dataRoot)는 항상 존중.
  *   · 미설정이면 dataRoot 파생 기본을 **첫 부팅에 config 에 채워** 이후에도
- *     안정적으로 같은 곳을 가리키게 한다(레이아웃이 조용히 이사하지 않게).
+ *     안정적으로 같은 곳을 가리키게 한다(폴더가 조용히 이사하지 않게).
  *
  * Windows 인스톨러(NSIS custom page)는 선택 결과를
  *   <userData>/install-options.json  =  { dataRoot? }
  * 로 남기고, 앱 첫 부팅이 consumeInstallOptions() 로 **한 번** 삼켜 config 에
  * 반영한 뒤 파일을 지운다. mac/linux 는 인스톨러 UI 가 없으므로 같은 기본이
- * 첫 부팅에 그대로 적용된다(= 기본 체크 상태).
+ * 첫 부팅에 그대로 적용된다.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -110,20 +110,15 @@ export interface InstallOptions {
   dataRoot?: string;
 }
 
-/** 통합 루트 — config.dataRoot 존중, 기본 ~/xgen-dex(새 설치만 — 위 파일 docstring 참고). */
+/** 데이터 루트 — config.dataRoot 존중, 기본 ~/xgen-dex(새 설치만 — 위 파일 docstring 참고). */
 export function resolveDataRoot(cfg: Pick<ConnectorConfig, 'dataRoot'>, home = homedir()): string {
   const r = (cfg.dataRoot ?? '').trim();
   return r ? resolve(r) : join(home, 'xgen-dex');
 }
 
+/** PC 컨트롤(로컬 셸·파일 도구)의 기본 작업 폴더. */
 export function workspaceDirOf(root: string): string {
   return join(root, 'workspace');
-}
-export function cloudDirOf(root: string): string {
-  return join(root, 'cloud');
-}
-export function runtimeDirOf(root: string): string {
-  return join(root, 'local-runtime');
 }
 
 /**
@@ -136,7 +131,7 @@ export function settleDataRoot(
 ): { root: string; patch: Partial<ConnectorConfig> } {
   const root = resolveDataRoot(cfg, home);
   const patch: Partial<ConnectorConfig> = {};
-  for (const d of [root, workspaceDirOf(root), cloudDirOf(root), runtimeDirOf(root)]) {
+  for (const d of [root, workspaceDirOf(root)]) {
     try {
       mkdirSync(d, { recursive: true });
     } catch {
@@ -144,13 +139,9 @@ export function settleDataRoot(
     }
   }
   if (!(cfg.dataRoot ?? '').trim()) patch.dataRoot = root;
-  // PC 컨트롤 작업 폴더(=에이전트 로컬 동기화 루트) 기본.
+  // PC 컨트롤 기본 작업 폴더.
   if (!(cfg.localShell?.cwd ?? '').trim()) {
     patch.localShell = { ...(cfg.localShell ?? {}), cwd: workspaceDirOf(root) };
-  }
-  // 스토리지(가상 드라이브) 루트 기본.
-  if (!(cfg.workspace?.root ?? '').trim()) {
-    patch.workspace = { agents: [], ...(cfg.workspace ?? {}), root: cloudDirOf(root) };
   }
   return { root, patch };
 }

@@ -3,7 +3,7 @@
 # electron-builder 소스로 직접 확인: guid = options.guid || UUID.v5(appId, ...) —
 # productName 과는 무관하다. 브랜드명(표시 이름)만 "XGen Dex"로 바뀌어도 이 값이
 # 그대로면 기존 사용자는 같은 앱으로 인식되어 제자리 업데이트되고, userData
-# 데이터 폴더(로그인 세션·로컬 런타임·동기화 상태)도 그대로 보존된다
+# 데이터 폴더(로그인 세션·설정)도 그대로 보존된다
 # (src/main/index.ts 최상단의 app.setName('XGEN-Connector') 참고 — Electron 은
 # userData 경로를 productName 이 아니라 app.name 에서 파생시키므로 별도로 고정해뒀다).
 appId: com.plateerlab.xgen.connector
@@ -38,8 +38,6 @@ files:
 asarUnpack:
   - '**/*.node'
   - '**/node_modules/keytar/**'
-  # FUSE 바인딩(가상 드라이브, Linux) — .node 는 asar 안에서 dlopen 이 안 된다.
-  - '**/node_modules/@cocalc/**'
   # ws + the MCP SDK spawn stdio subprocesses / load from disk — unpack so they
   # resolve outside the asar at runtime.
   - '**/node_modules/ws/**'
@@ -95,12 +93,6 @@ deb:
     - libgtk-3-0 | libgtk-3-0t64
     - libatspi2.0-0 | libatspi2.0-0t64
     - libayatana-appindicator3-1 | libappindicator3-1
-    # XGEN 워크스페이스(가상 드라이브). 근거는 추측이 아니라 바이너리다:
-    #   ldd fuse.node → libfuse.so.2   (애드온이 libfuse2 를 동적 링크)
-    #   /usr/bin/fusermount → setuid root  (비루트 마운트에 필수)
-    # Ubuntu 24.04 에서 libfuse2 는 libfuse2t64 로 개명됐다 — 둘 다 받는다.
-    - libfuse2 | libfuse2t64
-    - fuse3 | fuse
 win:
   target:
     - nsis
@@ -119,9 +111,7 @@ nsis:
   # 지정한다. 미지정 시 기본값은 sanitizedProductName(=productName 그대로,
   # 하이픈 포함)이라 바로가기가 "XGen-Dex"로 보인다.
   shortcutName: XGen Dex
-  # 설치 시 WebDAV 파일 크기 상한 해제 + WebClient 자동 시작 (관리자 단계).
-  # 기본 50MiB 상한에 걸리면 탐색기가 조용히 거부해 "파일이 안 열린다"로만
-  # 보인다 — 설치 때 한 번 올려 두는 것이 유일하게 깨끗한 지점이다.
+  # 설치 화면 로그·데이터 폴더 선택 (NSIS 사용자 정의 단계).
   include: build/installer.nsh
 mac:
   target:

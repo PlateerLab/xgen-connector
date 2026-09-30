@@ -228,8 +228,8 @@ const ExposedToolsPanel: React.FC<{
   const [openTool, setOpenTool] = useState<string | null>(null);
   const [showCalls, setShowCalls] = useState(false);
   // 이 패널은 **내가 등록한 외부 MCP 서버**의 도구만 보여준다. 커넥터 내장 도구(Shell·파일·
-  // 클립보드·브라우저)는 MCP 서버가 아니고, 기본 로컬 실행 경로에서는 에이전트가 런타임 자체
-  // 도구를 쓰므로 여기에 뜨는 것은 오해를 부른다 — 그 도구들은 PC 컨트롤/브라우저 탭에서 관리한다.
+  // 클립보드·브라우저)는 MCP 서버가 아니므로 여기에 뜨는 것은 오해를 부른다 — 그 도구들은
+  // PC 컨트롤/브라우저 탭에서 관리한다.
   // 'local'(내장) 서버와 내부 도구(`_` 접두)는 목록에서 제외한다.
   const isExposed = (name: string): boolean => !String(name || '').startsWith('_');
   const externals = (status?.servers ?? [])
@@ -626,7 +626,7 @@ export const McpSettings: React.FC<{ onClose: () => void; embedded?: boolean }> 
       .catch(() => undefined);
   };
 
-  // 본문은 모달/임베드(설정 [MCP] 탭) 양쪽에서 같은 것을 쓴다 — SyncSettings 동형.
+  // 본문은 모달/임베드(설정 [MCP] 탭) 양쪽에서 같은 것을 쓴다.
   const body = (
     <>
       <p className="small muted" style={{ margin: '0 0 8px' }}>

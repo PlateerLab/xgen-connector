@@ -11,7 +11,6 @@ import { HotkeyCapture } from './HotkeyCapture';
 import { SettingsSection } from './SettingsSection';
 import { SshSettings } from './SshSettings';
 import { McpSettings } from './McpSettings';
-import { SyncSettings } from './SyncSettings';
 import { VoiceSettings } from './VoiceSettings';
 import { Selector } from './Selector';
 import { notificationStore, useNotifications } from '../notifications';
@@ -33,7 +32,7 @@ type Theme = NonNullable<ConnectorConfig['theme']>;
 // 성격이 다른 두 기능이 섞여 있어 [PC 컨트롤](셸·파일)과 [MCP]로 가른다.
 type Tab =
   | 'connection' | 'general' | 'notifications' | 'avatar'
-  | 'browser' | 'pc' | 'mcp' | 'ssh' | 'storage';
+  | 'browser' | 'pc' | 'mcp' | 'ssh';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'connection', label: '연결' },
   { id: 'general', label: '일반' },
@@ -45,7 +44,6 @@ const TABS: { id: Tab; label: string }[] = [
   // SSH 는 이 PC 의 기능이 아니라 **XGEN 계정의 설정**이다 (접속은 서버가 연다).
   // 그래도 여기 두는 이유: 사용자는 "Agent 가 뭘 할 수 있나"를 이 창에서 찾는다.
   { id: 'ssh', label: 'SSH' },
-  { id: 'storage', label: '스토리지' },
 ];
 
 const NOTIFICATION_EVENTS: Array<{
@@ -90,6 +88,7 @@ export const Settings: React.FC<{
   // 탭으로 박혀 있을 때(embedded)는 Esc 로 닫을 대상이 아니다.
   useModalDismiss(onClose, !embedded);
   const [tab, setTab] = useState<Tab>('connection');
+  const [diagCopied, setDiagCopied] = useState(false);
   const [serverUrl, setServerUrl] = useState(config.serverUrl);
   const [allowPrivateCertificate, setAllowPrivateCertificate] = useState(
     config.allowPrivateCertificate ?? false,
@@ -248,7 +247,7 @@ export const Settings: React.FC<{
     setShellCwd(p);
     commitShell({ cwd: p });
   };
-  // 설치 폴더(통합 루트) 파생 기본 — PC 컨트롤/스토리지의 기본은 이 하위다.
+  // 설치 폴더(데이터 루트) 파생 기본 — PC 컨트롤의 기본 작업 폴더는 이 하위다.
   const installRoot = (config.dataRoot ?? '').trim() || '~/xgen-dex';
   const sep = installRoot.includes('\\') ? '\\' : '/';
   const defaultShellCwd = `${installRoot}${sep}workspace`;
@@ -344,7 +343,7 @@ export const Settings: React.FC<{
   // 임베드 안에서 렌더링돼도 창 전체를 덮는다).
   const voiceModal = showVoice ? <VoiceSettings onClose={() => setShowVoice(false)} /> : null;
 
-  // 본문(탭 줄 + 패널)은 모달/임베드가 같은 것을 쓴다 — SyncSettings 동형.
+  // 본문(탭 줄 + 패널)은 모달/임베드가 같은 것을 쓴다.
   const body = (
     <>
       <div className="settings-tabs" role="tablist">
@@ -639,6 +638,19 @@ export const Settings: React.FC<{
                 <div className="row">
                   <button className="secondary" onClick={() => void xgen.appctl.openFolder()}>
                     설치 폴더 열기
+                  </button>
+                  <button
+                    className="secondary"
+                    title="문제를 알릴 때 붙여 넣을 최근 기록을 복사합니다"
+                    onClick={() =>
+                      void xgen.diag.copy().then((r) => {
+                        if (!r.ok) return;
+                        setDiagCopied(true);
+                        setTimeout(() => setDiagCopied(false), 1600);
+                      })
+                    }
+                  >
+                    {diagCopied ? '복사됨' : '진단 로그 복사'}
                   </button>
                 </div>
               </div>
@@ -1060,12 +1072,10 @@ export const Settings: React.FC<{
                     로컬 도구 접근 (셸 · 파일) — 서버 실행 시 이 PC 프록시
                   </div>
                   <div className="tool-card-desc">
-                    켜면, 에이전트가 <b>서버(웹)에서 실행되거나 로컬 실행이 서버로 폴백된 상황</b>
-                    에서도 이 PC 의 셸(PowerShell/bash)·파일 읽기/쓰기·목록·검색·클립보드·알림으로
-                    "내 컴퓨터"를 직접 조작할 수 있습니다 — 커넥터가 자동으로 프록시가 됩니다(MCP
-                    설정과 무관, 이 스위치만으로 동작). 커넥터에서 그대로 <b>로컬 실행</b>되는 기본
-                    경우엔 에이전트가 이미 이 PC 에서 자기 런타임 도구로 직접 조작하므로 이 도구들은
-                    쓰이지 않습니다. 파일 도구는 아래 허용 폴더로 제한됩니다.
+                    켜면, 서버에서 실행되는 에이전트가 이 PC 의 셸(PowerShell/bash)·파일
+                    읽기/쓰기·목록·검색·클립보드·알림으로 "내 컴퓨터"를 직접 조작할 수 있습니다 —
+                    커넥터가 자동으로 프록시가 됩니다(MCP 설정과 무관, 이 스위치만으로 동작). 파일
+                    도구는 아래 허용 폴더로 제한됩니다.
                   </div>
                 </div>
                 <label className="switch">
@@ -1102,9 +1112,7 @@ export const Settings: React.FC<{
                       )}
                     </div>
                     <span className="small muted" style={{ marginTop: 4 }}>
-                      지정하면 <b>연결된 에이전트의 워크스페이스</b>가 이 폴더 아래로 동기화됩니다 —
-                      커넥터로 접속한 에이전트는 서버 sandbox 대신 그 폴더를 자기 작업 공간으로
-                      씁니다. (스토리지 탭에서 에이전트 연결)
+                      셸 명령이 시작하는 폴더입니다. 파일 도구의 허용 범위에도 항상 포함됩니다.
                     </span>
                   </div>
                   <div className="field">
@@ -1235,16 +1243,6 @@ export const Settings: React.FC<{
         {tab === 'mcp' && (
           <SettingsSection plain title="MCP 서버">
             <McpSettings embedded onClose={() => undefined} />
-          </SettingsSection>
-        )}
-
-        {/* ─── 스토리지 ─── */}
-        {/* 예전에는 카드 + [관리] 버튼을 한 번 더 눌러야 전체 설정이 떴다.
-              스토리지 탭이 곧 워크스페이스 동기화 화면이므로 본문을 그대로
-              임베드해 한 단계 클릭을 없앤다. */}
-        {tab === 'storage' && (
-          <SettingsSection plain title="스토리지">
-            <SyncSettings embedded />
           </SettingsSection>
         )}
       </div>

@@ -22,16 +22,12 @@ export default defineConfig({
     // rollup 이 lazy require 를 깨진 스텁으로 인라인해 첫 WS 프레임에서
     // `bufferUtil.mask is not a function` 이 터진다 (geny-connector 0.19.3
     // 실사고). ws 가 external 인 지금도 방어적으로 명시한다.
-    // electron-updater/chokidar/picomatch 는 externalizeDepsPlugin 이 처리하지만
-    // 명시해 회귀를 차단한다.
+    // electron-updater 는 externalizeDepsPlugin 이 처리하지만 명시해 회귀를
+    // 차단한다.
     build: {
       rollupOptions: {
-        // 진입점 둘. fuse-host 는 **별도 프로세스**로 실행되는 FUSE 마운트
-        // 호스트다 — Electron 메인에서 FUSE 네이티브를 직접 다루면 그쪽
-        // 크래시(SIGSEGV)가 앱 전체를 죽인다.
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
-          'fuse-host': resolve(__dirname, 'src/main/fuse-host.ts'),
         },
         external: [
           'keytar',
@@ -40,8 +36,6 @@ export default defineConfig({
           'utf-8-validate',
           '@modelcontextprotocol/sdk',
           'electron-updater',
-          'chokidar',
-          'picomatch',
         ],
       },
     },

@@ -1,6 +1,5 @@
 /** 내부 도구(_ 접두)는 "에이전트에 노출된 도구" 목록에서 제외된다 — 서버가 LLM 노출에서
- *  거르는 실행 브리지 라우트(_Exec/_WorkspaceInfo 등)라 모델이 부를 수 없고, 사용자에게
- *  불필요·혼란만 준다(자동 관리되는 로컬/서버 실행 환경의 내부 배관). */
+ *  거르는 내부 배관이라 모델이 부를 수 없고, 사용자에게 불필요·혼란만 준다. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -28,8 +27,8 @@ test('복사는 main clipboard(copyText)를 쓴다 — navigator.clipboard 직�
 });
 
 test('MCP 탭 패널은 외부 MCP 서버만 — 내장(local) 도구는 제외', () => {
-  // 기본 로컬 실행 경로에서 에이전트는 런타임 자체 도구를 쓰고, 커넥터 내장 도구는 로컬 턴에
-  // 주입되지 않는다. MCP 탭 패널은 내가 등록한 외부 MCP 서버만 보여준다('local' 제외).
+  // 커넥터 내장 도구는 MCP 서버가 아니다 — MCP 탭 패널은 내가 등록한 외부 MCP 서버만
+  // 보여준다('local' 제외).
   assert.match(SRC, /\.filter\(\(s\) => s\.name !== 'local'\)/);
   assert.doesNotMatch(SRC, /const builtin = /);
   assert.doesNotMatch(SRC, /builtinOpen/);

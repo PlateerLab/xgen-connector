@@ -75,51 +75,17 @@ The connector flattens all of this into the `ChatEvent` union (see
 - `GET /api/chat/io-logs?workflow_id=&interaction_id=&workflow_name=` → ordered turns.
 - `GET /api/interaction/list` → past conversations (`execution_meta_list`).
 
-## Local execution (connector-side agent turns)
+## File storage (explorer)
 
-See `docs/LOCAL_EXECUTION.md`. Endpoints used in addition to the chat stream:
+The sidebar explorer reads the server directly — nothing is mirrored to the PC.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/agentflow/geny-agent/local-runtime/manifest` | server runtime/CLI target versions |
-| GET | `/api/agentflow/geny-agent/{workflowId}/local-turn-context` | agent config + account credentials + admin settings + `graph` (canvas suppliers) + extra `options` |
-| POST | `/api/agentflow/geny-agent/{workflowId}/report-turn` | record a locally executed turn (text, tool events, usage, status) |
-| POST | `/api/agentflow/geny-memory/{workflowId}/rpc` | memory RPC used by the sidecar (shared vault) |
-
-Chat body extras: `client_surface: "connector"` (always), `execution_target: "sandbox"` (only when a turn could not run locally).
-
-`local-turn-context` response extras:
-```json
-{ "agent": {...}, "context": {...}, "protocol": 2,
-  "options": { "memory": [ { "role": "user", "content": "..." } ], "output_schema": {...} },
-  "graph": { "suppliers": [ { "port": "tools", "node_id": "n1", "node_type": "tool/mcp" } ],
-             "shipped": ["memory"], "unsupported": ["tools"], "local_supported": false } }
-```
-`graph.local_supported === false` → the connector falls back to the server (reason `graph_suppliers`).
-`HTTP 429` with `{"detail":{"code":"quota_exceeded","message":"...","usage":...,"limit":...}}` → the turn is
-**blocked** (status `{surface:"blocked", reason:"quota_exceeded", detail:message}` + `error` + `end`), no server fallback.
-
-### Sidecar turn request / events (connector ↔ `xgen_agent_runtime.host.sidecar`, protocol 2)
-
-Turn request `server` bridge carries the connector TLS policy:
-```json
-{ "op": "turn", "id": "...", "workspace_dir": "...", "provider": "codex", "text": "...",
-  "context": { "api_keys": {...}, "settings": {...} },
-  "server": { "url": "https://xgen.example", "token": "<jwt>", "tls": { "verify": false } },
-  "options": { "...agent params + server options", "workflow_id": "wf", "interaction_id": "i", "streaming": true } }
-```
-`tls.verify` is `false` when the connector setting "사설 인증서 허용" (`allowPrivateCertificate`) is on; the sidecar reads
-`server.tls.{verify, ca_file}`.
-
-Events: `started` · `chunk` · `tool` · `canvas_command` · `meta` · **`usage`** · `done` · `error` · `cancelled`.
-`usage` is a first-class event emitted once after the pipeline completes:
-```json
-{ "id": "...", "type": "usage",
-  "data": { "input_tokens": 120, "output_tokens": 45, "cache_read_tokens": 30, "cache_creation_tokens": null,
-            "total_cost_usd": 0.0012, "model": "gpt-5.3-codex", "provider": "codex" } }
-```
-The connector stores it as `TurnReport.usage` and sends it verbatim as `report-turn.usage` (the server records
-`output_data.usage` and the input/output token columns). It is not rendered in the chat.
+| GET | `/api/filestore/tree` | flat folder list (`full_path` resolves a storage-relative path to a folder) |
+| GET | `/api/filestore/root?page=&page_size=` | root folders + files, paged until `has_more` is false |
+| GET | `/api/filestore/folders/{id}/items?page=&page_size=` | one folder's subfolders + files, paged the same way |
+| GET | `/api/filestore/items/{id}/download` | raw bytes (Teams share from the explorer) |
+| GET | `/api/agentflow/geny-workspace/{workflowId}/storage/list` | an agent's workspace as a flat list (explorer agent sections) |
 
 ## Connector-hosted local MCP — caller context
 

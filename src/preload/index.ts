@@ -71,128 +71,13 @@ import type {
   BrowserState,
 } from '../core/browser';
 
-/** 로컬 실행 환경 상태(설정 화면) — 메인의 localRuntimeStatus 응답. */
-export interface LocalExecStatus {
-  enabled: boolean;
-  installed: boolean;
-  pythonPath: string;
-  version?: string;
-  sidecarOk?: boolean;
-  runtimeDir: string;
-  daemon: {
-    running: boolean;
-    pid?: number;
-    protocol?: number;
-    runtimeVersion?: string;
-    activeTurns: number;
-    lastError?: string;
-  };
-  cli: {
-    codex: { installed: boolean; path: string; version?: string };
-    claude: { installed: boolean; path: string; version?: string };
-  };
-  /** 서버가 알려준 목표 버전(없으면 서버 v1/미로그인). */
-  server: {
-    runtime?: string;
-    claude?: string | null;
-    codex?: string | null;
-    claudeEnabled?: boolean;
-    codexEnabled?: boolean;
-    /** 서버가 커넥터에 줄 수 있는 CLI 인증(서버 일원화): 'api_key' | 'setup_token' | 'credentials' | null(없음→서버 실행) */
-    claudeAuth?: { mode?: string; ready?: boolean; source?: string | null } | null;
-    codexAuth?: { mode?: string; ready?: boolean; source?: string | null } | null;
-    manifestAt?: number;
-  } | null;
-  converge: { running: boolean; lastRunAt?: number; lastError?: string; summary?: string };
-  /** 부팅 배선 단계 실패(있으면). */
-  bootErrors?: string[];
-  /** 앱 내장 번들 경로(<resources>/python) — 진단 표시용. */
-  bundlePath?: string | null;
-  isPackaged?: boolean;
-  /** 설치 로그 꼬리(인스톨러 + 앱) — 왜 실패했는지 화면에서 바로 본다. */
-  logs?: { path: string; lines: string[] }[];
-  /** 런타임 자가치유 사다리 상태 — 지금 어떤 런타임을 쓰는지(active) + 후보별 진단. */
-  ensure: {
-    phase: 'idle' | 'checking' | 'copying' | 'downloading' | 'ready' | 'failed';
-    message?: string;
-    lastError?: string;
-    lastRunAt?: number;
-    active?: { source: 'install' | 'bundle' | 'legacy'; python: string; version?: string };
-    candidates: {
-      source: 'install' | 'bundle' | 'legacy';
-      runtimeDir: string;
-      python: string;
-      exists: boolean;
-      healthy?: boolean;
-      version?: string;
-      error?: string;
-    }[];
-  };
-}
-
-/** 가상 드라이브 상태 (main workspace-manager.WorkspaceStatus 미러). */
-export interface WorkspaceStatusLike {
-  supported: boolean;
-  /** 사용자가 드라이브를 켜 두었는가. */
-  enabled: boolean;
-  /** 마운트를 막던 로컬 파일을 구해 낸 위치. */
-  rescued?: string;
-  reason?: string;
-  hint?: string;
-  mounted: boolean;
-  path?: string;
-  error?: string;
-  errorHint?: string;
-  /** 클라우드 스토리지가 꺼져 있는 사유 (오류가 아니다). */
-  storageOff?: string;
-  /** RAG 통제 — 이 PC 의 클라우드 연결이 관리자 승인 대기중/거절 상태. */
-  cloudApproval?: 'pending' | 'rejected';
-  cloudApprovalDetail?: string;
-  /**
-   * 이 PC 가 **재연결** 대상이다 — 서버가 이름 없이 알고 있다.
-   *
-   * ⚠ 이 두 필드를 여기서 빼먹으면 main 이 아무리 정확히 판정해도 **화면에는
-   * 아무 일도 일어나지 않는다.** 실제로 그랬다: 재연결 감지를 붙여 놓고
-   * 미러 타입에 옮기지 않아, 사용자는 자기 PC 가 루트에 파일을 흩뿌리고
-   * 있다는 사실을 끝까지 몰랐다.
-   */
-  needsReconnect?: boolean;
-  reconnectReason?: string;
-  /** 클라우드 안 이 PC 의 폴더 — `{클라우드}/{PC 이름}/(파일)`. */
-  homeFolder?: string;
-  agents: Array<{ workflowId: string; label: string; folder: string }>;
-}
-
-/** 인앱 탐색기 — 드라이브 폴더의 직계 자식 하나. */
+/** 인앱 탐색기 — 파일 저장소 폴더의 직계 자식 하나. */
 export interface WorkspaceEntryLike {
   name: string;
   isDir: boolean;
   size: number;
   /** epoch ms. */
   mtime: number;
-}
-
-/** 로컬 동기화 상태 (main local-sync-manager.LocalSyncStatus 미러). */
-export interface LocalSyncStatusLike {
-  enabled: boolean;
-  reason?: 'disabled' | 'no-root' | 'logged-out';
-  root?: string;
-  agents: Array<{
-    workflowId: string;
-    label: string;
-    folder: string;
-    dir: string;
-    syncing: boolean;
-    lastSyncAt?: number;
-    lastError?: string;
-    last?: {
-      downloaded: number;
-      uploaded: number;
-      deletedLocal: number;
-      deletedRemote: number;
-      conflicts: number;
-    };
-  }>;
 }
 
 /** Local-MCP bridge status pushed to the settings UI. */
@@ -560,7 +445,7 @@ const api = {
      */
     pickAndUpload: (roomId: string): Promise<TeamsAttachment[]> =>
       ipcRenderer.invoke(CHANNELS.teamsUploadAttachment, roomId),
-    /** 가상 드라이브의 파일(에이전트 산출물)을 그대로 방에 올린다. */
+    /** 파일 저장소의 파일을 그대로 방에 올린다 (`drivePath` = 저장소 상대 경로 `/폴더/파일`). */
     shareWorkspaceFile: (roomId: string, drivePath: string): Promise<TeamsAttachment> =>
       ipcRenderer.invoke(CHANNELS.teamsShareWorkspaceFile, roomId, drivePath),
     /** 다른 이름으로 저장. 사용자가 취소하면 null. */
@@ -748,60 +633,23 @@ const api = {
     quit: (): void => ipcRenderer.send(CHANNELS.appQuit),
   },
 
-  /** 가상 드라이브(WebDAV 마운트) 검증 — 이 컴퓨터에서 실제로 붙는지. */
-  workspace: {
-    diagText: (): Promise<string> => ipcRenderer.invoke(CHANNELS.diagText),
+  /** 진단 로그 — 설정 [일반]의 [진단 로그 복사]. */
+  diag: {
+    text: (): Promise<string> => ipcRenderer.invoke(CHANNELS.diagText),
     /** 진단 로그를 **main 의 clipboard 로** 복사 (렌더러 clipboard 는 막힐 수 있다). */
-    diagCopy: (): Promise<{ ok: boolean; chars: number }> => ipcRenderer.invoke(CHANNELS.diagCopy),
-
-    /** 실제 워크스페이스(가상 드라이브) — 에이전트 부착/해제 + 상태. */
-    status: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceStatus),
-    attach: (agent: { workflowId: string; label: string }): Promise<WorkspaceStatusLike> =>
-      ipcRenderer.invoke(CHANNELS.workspaceAttach, agent),
-    detach: (workflowId: string): Promise<WorkspaceStatusLike> =>
-      ipcRenderer.invoke(CHANNELS.workspaceDetach, workflowId),
-    open: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(CHANNELS.workspaceOpen),
-    root: (): Promise<string> => ipcRenderer.invoke(CHANNELS.workspaceRoot),
-    setRoot: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceSetRoot),
-    setEnabled: (enabled: boolean): Promise<WorkspaceStatusLike> =>
-      ipcRenderer.invoke(CHANNELS.workspaceSetEnabled, enabled),
-    /** 실패한 마운트를 걷고 다시 붙인다. */
-    remount: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceRemount),
-    /** 서버 상태를 지금 다시 읽는다 (캐시 폐기 + 보류 업로드 재시도). */
-    refresh: (): Promise<WorkspaceStatusLike> => ipcRenderer.invoke(CHANNELS.workspaceRefresh),
-    /** 연결된 에이전트 목록만 다시 읽는다 — 파일 캐시는 건드리지 않는다. */
-    refreshAgents: (): Promise<WorkspaceStatusLike> =>
-      ipcRenderer.invoke(CHANNELS.workspaceRefreshAgents),
-    /** 인앱 탐색기 — 드라이브(=클라우드 루트) 폴더의 직계 자식. */
-    list: (path: string): Promise<WorkspaceEntryLike[]> =>
-      ipcRenderer.invoke(CHANNELS.workspaceList, path),
-    /** 드라이브 안 경로를 OS 파일 관리자/기본 앱으로 연다 (마운트 시에만). */
-    openPath: (path: string): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke(CHANNELS.workspaceOpenPath, path),
-    onStatus: (cb: (s: WorkspaceStatusLike) => void): (() => void) => {
-      const h = (_e: unknown, s: WorkspaceStatusLike) => cb(s);
-      ipcRenderer.on(CHANNELS.workspaceStatusEvent, h);
-      return () => ipcRenderer.removeListener(CHANNELS.workspaceStatusEvent, h);
-    },
+    copy: (): Promise<{ ok: boolean; chars: number }> => ipcRenderer.invoke(CHANNELS.diagCopy),
   },
 
-  /** 로컬 동기화 — 에이전트 workspace 저장소 ↔ 로컬 도구 기본 작업 폴더. */
-  sync: {
-    status: (): Promise<LocalSyncStatusLike> => ipcRenderer.invoke(CHANNELS.syncStatus),
-    /** 지금 동기화 — workflowId 없으면 전부. */
-    now: (workflowId?: string): Promise<LocalSyncStatusLike> =>
-      ipcRenderer.invoke(CHANNELS.syncNow, workflowId),
-    /** 동기화된 에이전트 폴더의 직계 자식 (로컬 실파일). */
-    list: (workflowId: string, rel?: string): Promise<WorkspaceEntryLike[]> =>
-      ipcRenderer.invoke(CHANNELS.syncList, workflowId, rel ?? ''),
-    /** 동기화 폴더 안 경로를 OS 로 연다. */
-    openPath: (workflowId: string, rel?: string): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke(CHANNELS.syncOpenPath, workflowId, rel ?? ''),
-    onStatus: (cb: (s: LocalSyncStatusLike) => void): (() => void) => {
-      const h = (_e: unknown, s: LocalSyncStatusLike) => cb(s);
-      ipcRenderer.on(CHANNELS.syncStatusEvent, h);
-      return () => ipcRenderer.removeListener(CHANNELS.syncStatusEvent, h);
-    },
+  /** XGen 저장소 — 탐색기가 서버의 파일 저장소·에이전트 목록을 읽는다. */
+  storage: {
+    /** 탐색기의 에이전트 섹션 — 이 계정의 개인 에이전트. */
+    agents: (): Promise<Array<{ workflowId: string; label: string }>> =>
+      ipcRenderer.invoke(CHANNELS.fsAgents),
+    /** 한 폴더의 직계 자식 ('a/b' 는 저장소 상대 경로, '' 는 루트). */
+    cloudList: (
+      rel?: string,
+    ): Promise<{ ok: boolean; entries: WorkspaceEntryLike[]; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.fsCloudList, rel ?? ''),
   },
 
   /** Local MCP — host MCP servers here and bridge their tools to your agents. */
