@@ -166,10 +166,10 @@ export function shellConfig(cfg: LocalShellConfig | undefined): Required<LocalSh
   const listed = Array.isArray(c.allowedRoots)
     ? c.allowedRoots.map((r) => String(r).trim()).filter(Boolean)
     : [];
-  // 기본 작업 폴더는 **항상** 파일 도구의 허용 범위에 든다 — 에이전트
-  // 워크스페이스가 그 아래로 동기화되는데(local-sync) 허용 폴더 목록이 홈이나
-  // 다른 곳만 가리키면, 에이전트는 자기 워크스페이스조차 못 읽는다. 목록이
-  // 비어 있으면 기본(홈)도 유지한다 — cwd 하나로 좁히면 홈이 막힌다.
+  // 기본 작업 폴더는 **항상** 파일 도구의 허용 범위에 든다 — 셸 명령이 그
+  // 폴더에서 시작하는데 허용 폴더 목록이 홈이나 다른 곳만 가리키면, 셸이 만든
+  // 파일을 파일 도구가 못 읽는다. 목록이 비어 있으면 기본(홈)도 유지한다 —
+  // cwd 하나로 좁히면 홈이 막힌다.
   const allowedRoots = cwd ? [...(listed.length ? listed : ['~']), cwd] : listed;
   return {
     enabled: c.enabled === true, // opt-in (default OFF) — 로컬 셸은 명시적으로 켜야 한다
@@ -339,18 +339,17 @@ export function shapeResult(
 }
 
 /**
- * 동기화된 에이전트 워크스페이스 안내 — 도구 설명에 붙는 공통 문장.
+ * 로컬 PC 도구의 실행 위치 안내 — 도구 설명에 붙는 공통 문장.
  *
- * 커넥터 세션의 에이전트는 서버 sandbox 가 아니라 **이 PC 의 폴더**를 자기
- * 워크스페이스로 쓴다(local-sync 가 서버 저장소와 맞춘다). 모델이 어느 도구를
- * 고를지는 이 설명이 전부이므로, 여기서 명시적으로 알려야 로컬 도구를 쓴다.
+ * 서버 작업 공간(sandbox)의 도구(Bash/Read/Write)와 사용자 PC 의 물리 경로를
+ * 구분한다. 이 PC 와 서버 작업 공간은 파일을 주고받지 않는다(동기화 없음) —
+ * 모델이 어느 도구를 고를지는 이 설명이 전부이므로 여기서 분명히 한다.
  */
-export const SYNCED_WORKSPACE_NOTE =
-  `\nAGENT WORKSPACE ON THIS COMPUTER: when connected through this desktop connector, ` +
-  `your own agent workspace is synced to a LOCAL folder — under the configured default ` +
-  `working folder, one subfolder per connected agent (named after the agent). PREFER ` +
-  `working there with these local tools; every change syncs back to your server ` +
-  `workspace automatically, so web sessions and the sandbox see the same files.`;
+export const LOCAL_SURFACE_NOTE =
+  `\nEXECUTION SURFACE: the user's own computer running this desktop connector. Paths ` +
+  `belong to that computer; file tools are limited to the folders the user allowed in the ` +
+  `connector settings. It does not share files, processes or network ports with your ` +
+  `server sandbox or agent workspace.`;
 
 /** The Shell tool schema advertised to the agent. */
 /** McpAddServer — 이 PC(커넥터 로컬)에 MCP 서버를 등록/갱신하고 그 도구를 지금 세션
@@ -440,7 +439,7 @@ export function shellToolSchema(): LocalToolSchema {
       `through its native shell (${nativeShellLabel()}), as the logged-in user. This is the ` +
       `physical machine — NOT the cloud workspace/sandbox. Use it to operate that computer: run ` +
       `scripts, read/write local files, inspect the system, launch apps.` +
-      SYNCED_WORKSPACE_NOTE +
+      LOCAL_SURFACE_NOTE +
       `\n` +
       `IMPORTANT for reliability:\n` +
       `• Non-interactive only — stdin is closed, so REPLs/prompts (bash, python with no args, ` +
@@ -786,7 +785,7 @@ export function readFileToolSchema(): LocalToolSchema {
       "Read a text file on the USER'S OWN COMPUTER (the local desktop), within the " +
       'allowed folders. Prefer this over `Shell cat` — it distinguishes “not found” ' +
       'from “no permission” cleanly. Returns UTF-8 text (truncated at maxBytes).' +
-      SYNCED_WORKSPACE_NOTE,
+      LOCAL_SURFACE_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
@@ -810,7 +809,7 @@ export function writeFileToolSchema(): LocalToolSchema {
     description:
       "Write (or append to) a text file on the USER'S OWN COMPUTER, within the allowed " +
       'folders. Creates parent directories as needed. Prefer this over shell redirection.' +
-      SYNCED_WORKSPACE_NOTE,
+      LOCAL_SURFACE_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
@@ -831,7 +830,7 @@ export function listDirToolSchema(): LocalToolSchema {
     name: LIST_DIR_TOOL,
     description:
       "List a directory on the USER'S OWN COMPUTER (within allowed folders). Shows type/size/name." +
-      SYNCED_WORKSPACE_NOTE,
+      LOCAL_SURFACE_NOTE,
     inputSchema: {
       type: 'object',
       properties: { path: { type: 'string', description: 'Directory path (default: home).' } },
@@ -893,8 +892,6 @@ export function notifyToolSchema(): LocalToolSchema {
 export class LocalToolProvider {
   private cfg: Required<LocalShellConfig> = shellConfig(undefined);
   private delegate: LocalToolDelegate | null = null;
-  /** 서버 런타임이 이 PC 를 실행 환경으로 쓰는 내부 브리지 (workspace-bridge-tools). */
-  private workspaceBridge: LocalToolDelegate | null = null;
   /** main 의 공통 NotificationCenter. 주입해 Node 단위 테스트는 Electron 을 요구하지 않는다. */
   private notificationHandler: LocalNotificationHandler | null = null;
   /** 로컬 MCP 자기관리(McpAddServer/McpRemoveServer/McpListServers). 로컬 MCP 가 켜져
@@ -904,11 +901,6 @@ export class LocalToolProvider {
   configure(cfg: LocalShellConfig | undefined, delegate?: LocalToolDelegate): void {
     this.cfg = shellConfig(cfg);
     this.delegate = delegate ?? null;
-  }
-
-  /** 워크스페이스 브리지 배선 — 로컬 동기화 매니저가 준비된 뒤 한 번 건다. */
-  configureWorkspaceBridge(bridge: LocalToolDelegate | null): void {
-    this.workspaceBridge = bridge;
   }
 
   configureNotificationHandler(handler: LocalNotificationHandler | null): void {
@@ -940,14 +932,10 @@ export class LocalToolProvider {
           notifyToolSchema(),
         ]
       : [];
-    // 워크스페이스 브리지(_Exec 등)는 로컬 도구와 같은 능력 등급이므로 같은
-    // 스위치에 묶인다. `_` 접두라 서버가 LLM 노출에서 걸러낸다 — 카탈로그에는
-    // 실려야 서버 어댑터가 존재를 확인한다.
-    const bridge = this.cfg.enabled ? (this.workspaceBridge?.advertise() ?? []) : [];
     // MCP 자기관리 도구는 로컬 셸(cfg.enabled) 과 무관하게 로컬 MCP 스위치로 게이트된다
     // (delegate 가 스스로 판단) — 로컬 MCP 만 켜도 에이전트가 서버를 추가/제거할 수 있다.
     const mcpAdmin = this.mcpAdmin?.advertise() ?? [];
-    return [...shell, ...bridge, ...mcpAdmin, ...(this.delegate?.advertise() ?? [])];
+    return [...shell, ...mcpAdmin, ...(this.delegate?.advertise() ?? [])];
   }
 
   async callTool(
@@ -959,7 +947,6 @@ export class LocalToolProvider {
     // MCP 자기관리 도구는 로컬 셸 게이트 이전에 처리(로컬 MCP 스위치로만 게이트됨).
     if (this.mcpAdmin?.owns(tool)) return this.mcpAdmin.callTool(tool, args);
     if (!this.cfg.enabled) throw new Error('로컬 도구 접근이 꺼져 있습니다 (설정 > 로컬 도구).');
-    if (this.workspaceBridge?.owns(tool)) return this.workspaceBridge.callTool(tool, args);
     if (tool === SHELL_TOOL) return this.shell(args);
     if (tool === SHELL_JOB_TOOL) return this.shellJob(args);
     if (tool === OPEN_TOOL) return this.open(args);

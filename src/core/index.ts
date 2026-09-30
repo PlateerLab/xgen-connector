@@ -24,6 +24,7 @@ import { AgentsApi } from './agents';
 import { AuthApi } from './auth';
 import { AvatarsApi } from './avatars';
 import { ChatApi } from './chat';
+import { FilestoreApi } from './filestore';
 import { HistoryApi } from './history';
 import { PreferencesApi } from './preferences';
 import { SshApi } from './ssh';
@@ -41,8 +42,8 @@ export interface XgenClientOptions {
   /**
    * 액세스 토큰이 **회전**될 때마다 호출된다 (로그인 / restore 의 validate 회전 /
    * ensureFreshAuth). 게이트웨이는 회전 시 **이전 토큰의 세션 키를 삭제**하므로,
-   * 호스트는 이 콜백으로 keychain 을 즉시 갱신해야 다른 소비자(WS 브릿지·
-   * 워크스페이스 동기화)가 폐기된 토큰으로 접속하다 403 을 맞지 않는다.
+   * 호스트는 이 콜백으로 keychain 을 즉시 갱신해야 다른 소비자(MCP 브릿지·
+   * Teams 소켓)가 폐기된 토큰으로 접속하다 403 을 맞지 않는다.
    */
   onTokensRotated?: (accessToken: string, refreshToken?: string) => void;
 }
@@ -59,6 +60,7 @@ export class XgenClient {
   readonly avatars: AvatarsApi;
   readonly voice: VoiceApi;
   readonly agentData: AgentDataApi;
+  readonly filestore: FilestoreApi;
 
   private refreshToken?: string;
   private readonly onTokensRotated?: (accessToken: string, refreshToken?: string) => void;
@@ -85,6 +87,7 @@ export class XgenClient {
     this.avatars = new AvatarsApi(this.http);
     this.voice = new VoiceApi(this.http);
     this.agentData = new AgentDataApi(this.http);
+    this.filestore = new FilestoreApi(this.http);
   }
 
   setBaseUrl(baseUrl: string): void {
@@ -191,7 +194,7 @@ export class XgenClient {
    * 액세스 토큰을 회전시키고 새 토큰을 돌려준다. 실패(refresh 토큰 없음/거부)면
    * null — 그때는 진짜 재로그인 대상이다.
    *
-   * single-flight: WS 브릿지·워크스페이스 동기화·HTTP 가 동시에 401 을 맞아도
+   * single-flight: WS 브릿지·Teams 소켓·HTTP 가 동시에 401 을 맞아도
    * refresh 는 한 번만 나간다 (게이트웨이는 refresh 마다 이전 세션을 지우므로,
    * 동시 refresh 는 서로의 새 토큰을 폐기하는 경쟁이 된다).
    *
@@ -240,6 +243,8 @@ export { ApiError } from './client';
 export { SseParser } from './sse';
 export { frameToChatEvent } from './chat';
 export { sha256Hex } from './hash';
+export { FilestoreApi } from './filestore';
+export type { FilestoreFolder, FilestoreItem } from './filestore';
 export type { StoreAvatar } from './avatars';
 // Agent ↔ Teams 다리 — 컨텍스트 봉투와 공유 출처 표식. 렌더러와 메인이 같은
 // 형식을 써야 하므로 core 를 통해서만 노출한다.

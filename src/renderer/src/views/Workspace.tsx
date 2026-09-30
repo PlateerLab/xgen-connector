@@ -1013,7 +1013,13 @@ export const Workspace: React.FC<{
           className="panel-host"
           style={{ display: sideView === 'explorer' ? undefined : 'none' }}
         >
-          <ExplorerPanel onOpenSettings={openSettings} myName={user.username || '나'} />
+          <ExplorerPanel
+            myName={user.username || '나'}
+            onOpenFile={(kind, workflowId, _rel, _name, title) => {
+              // 에이전트 파일은 그 에이전트 뷰어의 [스토리지] 탭에서 본다.
+              if (kind === 'agent') openAgentViewer(workflowId, title, 'storage');
+            }}
+          />
         </div>
         <div className="panel-host" style={{ display: sideView === 'teams' ? undefined : 'none' }}>
           <TeamsPanel

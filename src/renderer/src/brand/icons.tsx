@@ -250,7 +250,7 @@ export const ChevronDownIcon: React.FC<P> = ({ size = 16, className }) => (
     <path d="m6 9 6 6 6-6" />
   </svg>
 );
-/** XgenCloud 섹션 — 클라우드 스토리지. */
+/** 탐색기 [파일 저장소] 섹션. */
 export const CloudIcon: React.FC<P> = ({ size = 15, className }) => (
   <svg {...base(size)} className={className}>
     <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />

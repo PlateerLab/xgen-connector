@@ -1078,7 +1078,7 @@ export const Chat: React.FC<{
                     className={`exec-surface ${m.surface}`}
                     title={
                       m.surface === 'connector_local'
-                        ? `이 PC 의 로컬 실행 환경(커넥터 사이드카)에서 실행 중 — 기억·파일은 서버와 공유${m.surfaceNote ? ` (${m.surfaceNote})` : ''}`
+                        ? `이 PC 에서 실행 중${m.surfaceNote ? ` (${m.surfaceNote})` : ''}`
                         : m.surface === 'blocked'
                           ? `실행이 차단되었습니다${m.surfaceNote ? ` — ${m.surfaceNote}` : ''}`
                           : `서버 sandbox 에서 실행${m.surfaceNote ? ` — ${m.surfaceNote}` : ''}`

@@ -1344,7 +1344,7 @@ button {
   overflow-y: auto;
   padding-bottom: 8px;
 }
-/* 섹션 헤더 — [XgenCloud], [<에이전트>]. 접기 가능. */
+/* 섹션 헤더 — [파일 저장소], [<에이전트>]. 접기 가능. */
 .section-head {
   display: flex;
   align-items: center;
@@ -1373,7 +1373,7 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 동기화 오류 배지 — 섹션 헤더 우측의 작은 경고. */
+/* 읽기 오류 배지 — 섹션 헤더 우측의 작은 경고. */
 .section-err {
   flex-shrink: 0;
   width: 14px;
@@ -1387,12 +1387,6 @@ button {
   align-items: center;
   justify-content: center;
   margin-left: 4px;
-}
-.foot-sep {
-  width: 1px;
-  align-self: stretch;
-  background: var(--border);
-  flex-shrink: 0;
 }
 .section-loading {
   width: 6px;
@@ -1461,72 +1455,6 @@ button {
   font-size: 11px;
   color: var(--muted);
   flex-shrink: 0;
-}
-/* 드라이브가 안 서는 사유 + 조치 버튼. */
-.explorer-notice {
-  margin: 10px 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--panel-2);
-  font-size: 12.5px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.explorer-notice p {
-  margin: 0;
-}
-.explorer-notice.error-tone {
-  border-color: var(--error-border);
-  background: var(--error-bg);
-}
-.primary-sm {
-  align-self: flex-start;
-  background: var(--primary);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.primary-sm:hover {
-  filter: brightness(1.06);
-}
-/* 마운트 상태 푸터 — 경로는 뒤가 중요하니 앞을 …로 줄인다. */
-.explorer-foot {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-secondary);
-  min-width: 0;
-}
-.mount-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--gray-400);
-  flex-shrink: 0;
-}
-.mount-dot.on {
-  background: var(--success);
-}
-/* 앞부분 말줄임 — rtl 방향 + plaintext 로 표시 순서는 그대로 둔다.
-   (나중에 "연결된 폴더" 경로 헤더에도 그대로 쓴다.) */
-.path-ellipsis {
-  direction: rtl;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  unicode-bidi: plaintext;
-  min-width: 0;
 }
 
 /* ─── Main pane / welcome ─── */
@@ -5154,79 +5082,6 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* ── 워크스페이스 동기화 페어링 행 (SyncSettings) ──
-   .card 는 로그인 카드(고정 400px·대형 패딩)라 재사용 금지 — 모달 폭을 꽉
-   쓰는 전용 행 카드. 헤더(이름·상태)/경로/푸터(카운터·액션) 3단 스택. */
-.sync-pair {
-  width: 100%;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 12px 14px;
-  margin-bottom: 10px;
-}
-.sync-pair-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.sync-pair-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 8px;
-  flex: 0 0 auto;
-}
-.sync-pair-name {
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-}
-.sync-pair-state {
-  flex: 0 0 auto;
-  white-space: nowrap;
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-}
-.sync-pair-path {
-  margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sync-pair-meta {
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sync-pair-error {
-  margin-top: 4px;
-  color: #dc2626;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sync-pair-foot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-.sync-pair-foot button {
-  padding: 4px 10px;
-  font-size: 12px;
 }
 
 /* MCP 표준 JSON 붙여넣기 — 성공 알림 + 모노스페이스 입력 */

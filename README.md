@@ -52,8 +52,10 @@ enter your **XGEN server URL** and **account**, then pick an agent and chat.
     per room+range asks for confirmation stating exactly how many messages go out.
   - **Agent → Teams**: any finished answer can be shared into a room, carrying a
     provenance header so the room can jump back to the source conversation.
-  - **탐색기 → Teams**: agent output on the virtual drive can be attached to a
-    room directly from the file tree.
+  - **탐색기 → Teams**: a file in the file storage can be attached to a room
+    directly from the explorer tree.
+- **탐색기 (explorer)** — the sidebar shows the XGen file storage and each of your
+  agents' workspaces straight from the server (nothing is synced to this PC).
 - **Two-panel tabs** — drag chat, browser and avatar tabs between groups or onto
   a left/right/top/bottom edge. At most two groups stay live; the divider,
   direction, tab order and group focus are restored after restart.
@@ -106,6 +108,7 @@ src/
     history.ts   io-logs + interaction list
     teams.ts     /api/teams/* — rooms, messages, members, attachments
     teams-bridge.ts  Agent↔Teams 다리 — 컨텍스트 봉투 + 공유 출처 표식 (순수)
+    filestore.ts /api/filestore/* — 탐색기 폴더 목록(쪽 단위) + 항목 다운로드
     index.ts     XgenClient facade
   main/        # Electron main: window, connector.json config, keychain, updater, IPC
                # browser runtime, one-page CDP proxies, agent-browser command queues
@@ -133,6 +136,7 @@ the typed `window.xgen` bridge.
 | Teams members     | `GET                                                                                                            | POST /api/teams/rooms/{id}/members`, `GET /api/teams/users/search`                  |
 | Teams realtime    | `WS /api/teams/ws/{roomId}` (room), `WS /api/teams/ws/user` (notifications)                                     |
 | Teams attachments | `POST /api/teams/rooms/{id}/attachments/upload` (multipart `file`), `GET …/attachments/{storage_key}?filename=` |
+| File storage      | `GET /api/filestore/tree`, `GET /api/filestore/root`, `GET /api/filestore/folders/{id}/items`, `GET /api/filestore/items/{id}/download` |
 
 All authenticated calls send `Authorization: Bearer <access_token>` (including
 the SSE stream). Continue a conversation by reusing the same `interaction_id`.

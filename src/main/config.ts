@@ -38,16 +38,6 @@ export interface McpServerConfig {
 }
 
 export interface ConnectorConfig {
-  /**
-   * 가상 드라이브 워크스페이스 — **계정별로 따로 둔다** (키: `<serverUrl>|<userId>`).
-   *
-   * 예전에는 전역 `workspace` 하나였다. 그러면 계정을 바꿔 로그인해도 이전 계정의
-   * 루트·부착 에이전트를 그대로 물고, 두 계정이 같은 폴더를 클라우드로 가리켜
-   * 서로의 파일을 덮어쓴다 (실기 신고).
-   */
-  workspaces?: Record<string, WorkspacePersistConfig>;
-  /** @deprecated 전역 단일 워크스페이스. 최초 로그인 시 workspaces 로 이관된다. */
-  workspace?: WorkspacePersistConfig;
   /** Gateway origin, e.g. "https://xgen.example.com". Empty on first run. */
   serverUrl: string;
   /** 설정된 서버에서 사설 CA 신뢰 실패만 예외로 허용한다. 기본 false. */
@@ -128,12 +118,10 @@ export interface ConnectorConfig {
    * 켜져 있으면 로컬 MCP 서버가 하나도 없어도 브릿지가 떠서 이 도구를 광고한다.
    */
   localShell?: LocalShellPersistConfig;
-  /** 통합 데이터 루트(기본 ~/xgen-dex) — workspace/·cloud/ 의 부모.
-   *  인스톨러 선택 또는 설정에서 변경. 개별 경로 명시가 항상 우선. */
+  /** 데이터 루트(기본 ~/xgen-dex) — PC 컨트롤 기본 작업 폴더(workspace/)와 설치
+   *  로그(install.log)가 놓이는 곳. 인스톨러에서 고르고, 첫 부팅이 config 에
+   *  못박는다(data-root.ts). 개별 경로 명시(localShell.cwd)가 항상 우선. */
   dataRoot?: string;
-  /** Workspace 동기화 페어링 (에이전트 workflow ↔ 로컬 폴더). */
-  /** 이 설치본의 안정 디바이스 id (최초 1회 생성) — 동기화 텔레메트리/충돌 사본 이름. */
-  deviceId?: string;
   /** Linux 전용: 오버레이 클릭 통과 옵트인 ({forward:true} 미지원 플랫폼 안전장치). */
   linuxClickThrough?: boolean;
   /** 메인 창 크롬 상태와 두 패널 탭 배치. */
@@ -209,19 +197,6 @@ export interface LocalShellPersistConfig {
   allowedRoots?: string[];
 }
 
-/** XGEN 워크스페이스(가상 드라이브) 영속 형태 — workspace.WorkspaceConfig 미러. */
-export interface WorkspacePersistConfig {
-  root?: string;
-  agents: Array<{
-    id: string;
-    workflowId: string;
-    label: string;
-    folder: string;
-    paused?: boolean;
-    pausedReason?: string;
-  }>;
-}
-
 const DEFAULTS: ConnectorConfig = {
   serverUrl: '',
   allowPrivateCertificate: false,
@@ -244,9 +219,17 @@ function configPath(): string {
   return join(dir, 'connector.json');
 }
 
+/**
+ * 이제 아무도 읽지 않는 옛 키 — 읽을 때 걷어 내서 다음 저장에 파일에서도 사라지게 한다.
+ * (가상 드라이브·로컬 동기화 시절의 계정별 워크스페이스 `workspaces` 와 그 이전의
+ * 전역 `workspace`)
+ */
+const RETIRED_KEYS = ['workspace', 'workspaces'];
+
 export function loadConfig(): ConnectorConfig {
   try {
     const raw = JSON.parse(readFileSync(configPath(), 'utf-8'));
+    if (raw && typeof raw === 'object') for (const k of RETIRED_KEYS) delete raw[k];
     return { ...DEFAULTS, ...raw };
   } catch {
     return { ...DEFAULTS, serverUrl: process.env.XGEN_SERVER_URL || DEFAULTS.serverUrl };
@@ -262,6 +245,11 @@ export function saveConfig(patch: Partial<ConnectorConfig>): ConnectorConfig {
 /** 저장된 로컬 설정을 제거해 다음 실행에서 배포 기본값부터 다시 시작한다. */
 export function resetConfig(): void {
   rmSync(configPath(), { force: true });
+}
+
+/** 계정 키 — `${serverUrl}|${userId}`. 이 PC 에 계정별로 남기는 설정(알림 등)의 키다. */
+export function accountKey(serverUrl: string, userId: string | number): string {
+  return `${String(serverUrl || '').replace(/\/+$/, '')}|${String(userId ?? '')}`;
 }
 
 /** Server-URL 정규화 (geny-connector 동형):
